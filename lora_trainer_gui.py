@@ -5966,6 +5966,28 @@ class LoRATrainerGUI:
         ttk.Button(button_frame, text="View Samples Gallery", command=self.open_samples_gallery).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(button_frame, text="Open Samples Folder", command=self.open_samples_folder).pack(side=tk.LEFT)
 
+        # Structured trainer progress, separate from the Run controls to match the
+        # existing Progress card on the Captions tab.
+        progress_card = self._start_section_card(outer, "Progress", None)
+        progress_row = tk.Frame(progress_card, bg=COLORS["bg_surface"])
+        progress_row.pack(fill=tk.X)
+        self.training_progress_var = tk.DoubleVar(value=0.0)
+        self.training_progress_text_var = tk.StringVar(value="Idle")
+        self.training_progress_bar = tk.Canvas(
+            progress_row, width=300, height=18, bg=COLORS["bg_deep"],
+            highlightthickness=0, bd=0)
+        self._training_progress_fill = self.training_progress_bar.create_rectangle(
+            0, 0, 0, 18, fill="#2E8B57", outline="")
+        self._training_progress_percent = self.training_progress_bar.create_text(
+            150, 9, text="0%", fill=COLORS["text_primary"],
+            font=(FONT_FAMILY, 9, "bold"))
+        self.training_progress_bar.pack(side=tk.LEFT, padx=(0, 12))
+        self.training_progress_label = tk.Label(
+            progress_row, textvariable=self.training_progress_text_var,
+            bg=COLORS["bg_surface"], fg=COLORS["text_explain"],
+            font=(FONT_FAMILY, 10), anchor=tk.W)
+        self.training_progress_label.pack(side=tk.LEFT)
+
         # === Console Output card ===
         console_card = self._start_section_card(outer, "Console Output", None)
         self.console_frame = tk.Frame(console_card, bg=COLORS["bg_surface"])
@@ -30382,10 +30404,73 @@ class LoRATrainerGUI:
         else:
             self.user_scrolled = False
 
+    def _set_training_progress_phase(self, text, *, percent=None):
+        if percent is not None and hasattr(self, "training_progress_var"):
+            self._draw_training_progress(percent)
+        if hasattr(self, "training_progress_text_var"):
+            self.training_progress_text_var.set(text)
+
+    def _draw_training_progress(self, percent):
+        """Draw a seamless fill with its percentage centred over the bar."""
+        percent = max(0.0, min(100.0, float(percent)))
+        self.training_progress_var.set(percent)
+        if not hasattr(self, "training_progress_bar"):
+            return
+        width = 300
+        self.training_progress_bar.coords(
+            self._training_progress_fill, 0, 0, width * percent / 100.0, 18)
+        self.training_progress_bar.itemconfigure(
+            self._training_progress_percent, text=f"{percent:.0f}%")
+
+    def _consume_training_progress(self, line):
+        """Update the card from the trainers' existing console output."""
+        from fizgig.training.progress import TrainingProgressTracker
+
+        tracker = getattr(self, "_training_progress_tracker", None)
+        if tracker is None:
+            tracker = self._training_progress_tracker = TrainingProgressTracker(
+                self.settings.get("MAX_TRAIN_EPOCHS", 1))
+        update = tracker.consume(line)
+        if update is None:
+            return False
+
+        if update["kind"] == "preview":
+            epoch = update.get("epoch") or tracker.current_epoch
+            suffix = f" for Epoch {epoch}" if epoch is not None else ""
+            if update["phase"] == "start":
+                text = f"Generating preview{suffix}…"
+            elif update["phase"] == "complete":
+                text = "Preview complete — resuming training…"
+            else:
+                text = "Preview failed — resuming training…"
+            self._set_training_progress_phase(text)
+            return True
+
+        step = update["step"]
+        total_steps = update["total_steps"]
+        loss = update.get("average_loss_text")
+        loss_text = "Loss —" if loss is None else f"Loss {loss}"
+        prefix = ("RefMod" if update["kind"] == "refmod"
+                  else f"Epoch {update['epoch']}/{update['total_epochs']}")
+        text = (f"{prefix}  •  Step {step}/{total_steps}  •  "
+                f"{update['speed_text']}  •  {loss_text}  •  ETA {update['eta_text']}")
+        self._draw_training_progress(
+            100.0 * max(0, min(step, total_steps)) / total_steps)
+        self.training_progress_text_var.set(text)
+        self._training_progress_last_text = text
+        return True
+
     def update_console(self, line):
         """Update training console — only auto-scroll if user was already at the bottom.
         Uses the widget's own yview() position as the authoritative signal; the older
         self.user_scrolled flag sometimes got out of sync with actual widget state."""
+        self._consume_training_progress(line)
+        if "Starting cache preparation" in line:
+            self._set_training_progress_phase("Preparing latent cache…", percent=0)
+        elif "Starting text encoder caching" in line:
+            self._set_training_progress_phase("Caching text embeddings…", percent=0)
+        elif "Starting training" in line or "training without caching" in line:
+            self._set_training_progress_phase("Starting training…", percent=0)
         self._append_global_log(line)
         try:
             at_bottom = self.console_output.yview()[1] >= 0.999
@@ -31266,6 +31351,11 @@ class LoRATrainerGUI:
         self.console_output.configure(state="normal")
         self.console_output.delete(1.0, tk.END)
         self.console_output.configure(state="disabled")
+        from fizgig.training.progress import TrainingProgressTracker
+        self._training_progress_tracker = TrainingProgressTracker(
+            self.settings.get("MAX_TRAIN_EPOCHS", 1))
+        self._training_progress_last_text = ""
+        self._set_training_progress_phase("Preparing run…", percent=0)
 
         if getattr(self, "_caption_worker_released_for_training", False):
             self._caption_worker_released_for_training = False
@@ -33067,6 +33157,13 @@ class LoRATrainerGUI:
                 )
         else:
             self.training_state = "idle"
+        if return_code == 0 and was_state == "running":
+            self._set_training_progress_phase("Training complete", percent=100)
+        elif self.training_state == "paused":
+            _last = getattr(self, "_training_progress_last_text", "")
+            self._set_training_progress_phase(f"Paused  •  {_last}" if _last else "Paused")
+        elif return_code != 0:
+            self._set_training_progress_phase("Training stopped or failed")
         # A finished run must never leave its resume path armed: the next "fresh" Start
         # would silently continue the old LoRA from its saved state (restored optimizer/
         # RNG/scheduler) under a new output name, and skip re-caching a changed dataset.
@@ -33263,6 +33360,7 @@ class LoRATrainerGUI:
                 self.training_thread.join(timeout=1)
                 self.training_thread = None
             self.update_console("Training stopped\n")
+            self._set_training_progress_phase("Training stopped")
         else:
             self.update_console("No active process to stop\n")
 
