@@ -411,9 +411,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                description: str = "") -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
-    Previews: one set from the RAW mod before any step (epoch 0 — what the node's own
-    extractor would give you) and one from the finished mod, plus every `preview_every`
-    steps in between; so the run's sample folder IS the raw-vs-optimised A/B."""
+    One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
+    node extractor's own result); otherwise the optimised mod. Previews: one set before any
+    step (epoch 0) and one from the finished mod, plus every `preview_every` steps between."""
     import argparse
     from fizgig.dataset.config import (BlueprintGenerator, ConfigSanitizer,
                                        generate_dataset_group_by_blueprint, load_user_config)
@@ -466,15 +466,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         logger.info(f"[preview] pre-encoding {len(sample_prompts)} sample prompt(s)...")
         encoded = encode_sample_prompts(te_path, sample_prompts, device=device, quantize=True)
 
-    raw_path = None
     tags = [f"{n_img} img, {n_st} clip stills", "fizgig"]
-    if steps > 0:
-        # the encode-only twin, for the A/B (and it is exactly what the node's extractor makes)
-        raw_path = save_refmod(os.path.join(output_dir, output_name + "_raw"), mod0, name=output_name + "_raw",
-                               mode=mode, pool=pool_label, optimize_steps=0, source_shape=source_shape,
-                               tags=tags, description=description,
-                               extra={"ss_refmod_steps": "0", "ss_refmod_refs": str(len(refs))})
-        logger.info(f"[refmod] wrote the encode-only twin: {raw_path}")
 
     dit, base_mode, n_swap = plan_and_load_dit(dit_path, device=device, dtype=dtype,
                                                base_quant=base_quant, blocks_to_swap=blocks_to_swap, mp=mp)

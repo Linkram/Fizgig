@@ -4126,9 +4126,10 @@ class LoRATrainerGUI:
                       "model for the chosen steps, so it carries more of the subject than a "
                       "plain encode. Grid is the mod's size in latent cells (8×8 stacks with "
                       "other mods; 16×16 is the balance; Full keeps the first reference's "
-                      "canvas). Output: <name>.safetensors plus <name>_raw (the encode-only "
-                      "twin) in the LoRA output folder — copy to ComfyUI/models/refmods/. "
-                      "Previews: epoch 0 is the raw mod, the last is the optimised one. Mods "
+                      "canvas). Steps 0 makes a plain encode-only mod. Output: one file, "
+                      "<name>.safetensors, in the LoRA output folder — copy it to "
+                      "ComfyUI/models/refmods/. Previews: epoch 0 is before optimising, the "
+                      "last is the finished mod. Mods "
                       "ride H3's Reference (ref2va) model — Training Base switches to it here, "
                       "and that is the model to load in ComfyUI with the mod."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
