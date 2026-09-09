@@ -413,6 +413,21 @@ ARCHITECTURES = {
     },
 }
 
+# MiniMax H3 RefMod (9 Sep 2026): the same family (caches, paths, Training Base, previews) with
+# a different job — no LoRA; the dataset's references become a RefMod file (the community
+# ComfyUI-MiniMaxH3Mod format) whose latent is OPTIMISED against the frozen H3 base rather than
+# just VAE-encoded. Two controls (Grid, Steps); every other Training-tab section hides. The
+# entry keeps is_minimax so every MiniMax code path (cache commands, validation, sample
+# defaults) applies unchanged; is_refmod routes the launch to minimax_refmod.py.
+ARCHITECTURES["MiniMax H3 RefMod"] = {
+    **ARCHITECTURES["MiniMax H3"],
+    "is_refmod": True,
+    "train_script": "src/fizgig/scripts/minimax_refmod.py",
+    "lora_name_suffix": "refmod",
+    "sample_width_default": 768,
+    "sample_height_default": 768,
+}
+
 # Saved configs written before 3.6.1 carry the old label. Every lookup here is a .get() that
 # falls back to Klein, so without an alias a MiniMax preset would silently come back as a Klein
 # one - wrong family, no error. The alias points at the same config; _canon_arch maps it forward
@@ -1005,6 +1020,34 @@ MINIMAX_BUILT_IN_PRESETS = {
     _MM_FAST_KEY: MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
     **MINIMAX_BUILT_IN_PRESETS,
 }
+
+# MiniMax H3 RefMod: the two controls, plus the clip still ON (each clip lends its sharpest
+# face as a reference). Spread from Fast so the hidden MiniMax fields hold sane values.
+REFMOD_GRID_OPTIONS = ["8×8 (64 tokens, stackable)", "16×16 (256 tokens, recommended)",
+                       "32×32 (1024 tokens)", "Full reference (encode canvas)"]
+REFMOD_STEP_OPTIONS = ["0 (encode only — same as the ComfyUI extractor)", "200 (recommended)",
+                       "500", "1000"]
+REFMOD_BUILT_IN_PRESETS = {
+    "✨ MiniMax H3 RefMod (16×16, 200 steps)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[1],
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
+        "MINIMAX_CLIP_STILL": True,
+    },
+}
+
+
+def refmod_grid_value(label) -> str:
+    """'16×16 (256 tokens, recommended)' -> '16'; 'Full reference ...' -> 'full'."""
+    s = str(label or "").strip()
+    if not s or s.lower().startswith("full"):
+        return "full"
+    return s.split("×")[0].split("x")[0].strip() or "16"
+
+
+def refmod_steps_value(label) -> str:
+    s = str(label or "").strip().split(" ")[0]
+    return s if s.isdigit() else "200"
 
 # Directory for dataset configurations
 DATASET_DIR = os.path.join(os.path.dirname(__file__), "dataset")
@@ -4057,6 +4100,41 @@ class LoRATrainerGUI:
             if not self._is_minimax_arch():
                 self._minimax_sample_note.pack_forget()
 
+            # MiniMax H3 RefMod: the whole job is two dropdowns, shown here in place of the
+            # Training-tab sections (which _apply_refmod_visibility hides). Registered in
+            # self.entries so presets, last-train and the queue carry them like any field.
+            self._refmod_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_frame, text="Grid:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_GRID"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_GRID_OPTIONS), state="readonly", width=30)
+            self.entries["MINIMAX_REFMOD_GRID"].set(
+                str(self.settings.get("MINIMAX_REFMOD_GRID", REFMOD_GRID_OPTIONS[1])))
+            self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT, padx=(0, 18))
+            tk.Label(self._refmod_frame, text="Steps:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), state="readonly", width=42)
+            self.entries["MINIMAX_REFMOD_STEPS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_STEP_OPTIONS[1])))
+            self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT)
+            self._refmod_hint = tk.Label(
+                model_card,
+                text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
+                      "nodes load like a LoRA. Fizgig builds it from the dataset's photos and "
+                      "clip stills (up to 8), then OPTIMISES the latent against the frozen H3 "
+                      "model for the chosen steps, so it carries more of the subject than a "
+                      "plain encode. Grid is the mod's size in latent cells (8×8 stacks with "
+                      "other mods; 16×16 is the balance; Full keeps the first reference's "
+                      "canvas). Output: <name>.safetensors plus <name>_raw (the encode-only "
+                      "twin) in the LoRA output folder — copy to ComfyUI/models/refmods/. "
+                      "Previews: epoch 0 is the raw mod, the last is the optimised one."),
+                font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
+                bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
+            if self._is_refmod_arch():
+                self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
+                self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
+
         # === Presets card ===
         preset_card = self._start_section_card(
             outer, "Presets",
@@ -5677,6 +5755,8 @@ class LoRATrainerGUI:
         defaults entry (Klein's block/timestep/adaptive presets don't apply); everything
         else gets the full Klein built-in set."""
         cfg = ARCHITECTURES.get(arch, {})
+        if cfg.get("is_refmod"):
+            return REFMOD_BUILT_IN_PRESETS
         if cfg.get("is_minimax"):
             return MINIMAX_BUILT_IN_PRESETS
         return KREA2_BUILT_IN_PRESETS if cfg.get("is_krea2") else BUILT_IN_PRESETS
@@ -7369,6 +7449,9 @@ class LoRATrainerGUI:
     def _is_minimax_arch(self) -> bool:
         return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_minimax", False)
 
+    def _is_refmod_arch(self) -> bool:
+        return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_refmod", False)
+
     def _set_widget_visible(self, w, show: bool):
         """Show/hide a single widget, working for both grid- and pack-managed widgets.
         grid widgets use grid_remove()/grid() (position preserved); pack widgets stash their
@@ -8042,6 +8125,38 @@ class LoRATrainerGUI:
         # are wired); its unwired fields are hidden individually above.
         self._set_training_section_visible("optimizer", "scheduler", True)
         self._set_training_section_visible("timestep", "optimizer", not native)
+        self._apply_refmod_visibility()
+
+    def _apply_refmod_visibility(self):
+        """MiniMax H3 RefMod: the Training tab is Output + the RefMod card. Every other
+        collapsible section hides; leaving the entry re-packs them in canonical order
+        (training, memory, timestep/optimizer/scheduler as the family rules above left them)."""
+        is_refmod = self._is_refmod_arch()
+        _fr = getattr(self, "_refmod_frame", None)
+        _hint = getattr(self, "_refmod_hint", None)
+        if _fr is not None:
+            if is_refmod and not _fr.winfo_manager():
+                _note = getattr(self, "_minimax_sample_note", None)
+                _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
+                _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
+                _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
+            elif not is_refmod and _fr.winfo_manager():
+                _fr.pack_forget()
+                _hint.pack_forget()
+        if not getattr(self, "collapsible_sections", None):
+            return
+        if is_refmod:
+            for k in ("training", "memory", "timestep", "optimizer", "scheduler"):
+                self._set_training_section_visible(k, "", False)
+            return
+        # re-show what this method may have hidden, in order (the tail of
+        # _apply_training_arch_visibility already settled timestep/optimizer/scheduler)
+        secs = self.collapsible_sections
+        for key, before in (("scheduler", ""), ("optimizer", "scheduler"), ("memory", "optimizer"),
+                            ("training", "memory")):
+            sec = secs.get(key)
+            if sec is not None and not sec.winfo_manager():
+                self._set_training_section_visible(key, before, True)
 
     # ── Problem Images window (per-image loss watch) ────────────────────
 
@@ -28514,6 +28629,10 @@ class LoRATrainerGUI:
             "MINIMAX_BLOCK_LIMIT": self.entries["MINIMAX_BLOCK_LIMIT"].get(),
             "MINIMAX_LR_WARMUP": self.entries["MINIMAX_LR_WARMUP"].get(),
             "MINIMAX_EMA": self.entries["MINIMAX_EMA"].get(),
+            "MINIMAX_REFMOD_GRID": (self.entries["MINIMAX_REFMOD_GRID"].get()
+                                    if "MINIMAX_REFMOD_GRID" in self.entries else ""),
+            "MINIMAX_REFMOD_STEPS": (self.entries["MINIMAX_REFMOD_STEPS"].get()
+                                     if "MINIMAX_REFMOD_STEPS" in self.entries else ""),
             "KREA2_EMA": self.entries["KREA2_EMA"].get(),
             "MINIMAX_ADAPTER_RAMP": self.entries["MINIMAX_ADAPTER_RAMP"].get(),
             "MINIMAX_CAPTION_DROPOUT": self.entries["MINIMAX_CAPTION_DROPOUT"].get(),
@@ -28739,6 +28858,8 @@ class LoRATrainerGUI:
             if bool(getattr(self, "krea2_finetune_var", None) and self.krea2_finetune_var.get()):
                 self._launched_ft_family = "krea2"
             return self._build_krea2_train_command()
+        if config.get("is_refmod"):
+            return self._build_minimax_refmod_command()
         if config.get("is_minimax"):
             if bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get()):
                 self._launched_ft_family = "minimax"
@@ -29621,6 +29742,55 @@ class LoRATrainerGUI:
                     cmd += ["--sample_prompts", prompt_file]
                 if ref_img:
                     cmd += ["--sample_ref_image", ref_img]
+        return cmd
+
+    def _build_minimax_refmod_command(self):
+        """MiniMax H3 RefMod: minimax_refmod.py over the same caches and model paths as an H3
+        LoRA run. Two settings (Grid, Steps); the Training Base dropdown picks the DiT; the
+        Samples tab supplies still previews (frames/sound never apply — a mod is a reference
+        for stills and clips alike, and the preview shows what it carries)."""
+        _dit = (self._krea2_pref("minimax_ref_dit")
+                if (self.settings.get("MINIMAX_TRAIN_BASE") == "ref2va" and self._krea2_pref("minimax_ref_dit"))
+                else self._krea2_pref("minimax_dit"))
+        cmd = [
+            self._venv_python(),
+            self._krea2_script("minimax_refmod.py"),
+            "--dit", _dit,
+            "--dataset_config", self.settings["DATASET_CONFIG"],
+            "--output_dir", self.settings["LORA_OUTPUT_DIR"],
+            "--output_name", self.settings["LORA_NAME"],
+            "--grid", refmod_grid_value(self.settings.get("MINIMAX_REFMOD_GRID")),
+            "--steps", refmod_steps_value(self.settings.get("MINIMAX_REFMOD_STEPS")),
+            "--seed", str(self.settings.get("SEED", 42) or 42),
+        ]
+        _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
+        cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
+        cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]
+        if self.sample_enabled_var.get():
+            prompt_file = self._write_krea2_sample_prompts("minimax_prompts.txt")
+            _te = self._krea2_pref("minimax_text_encoder")
+            if prompt_file and _te:
+                try:
+                    _seed = str(int(self.sample_seed_var.get().strip()))
+                except (ValueError, AttributeError):
+                    _seed = str(self.settings.get("SAMPLE_SEED", 42))
+                cmd += ["--sample_prompts", prompt_file,
+                        "--sample_width", (self.sample_width_var.get().strip() or "768"),
+                        "--sample_height", (self.sample_height_var.get().strip() or "768"),
+                        "--sample_seed", _seed,
+                        "--text_encoder", _te,
+                        "--vae", self._krea2_pref("minimax_vae")]
+                _turbo = self._krea2_pref("minimax_turbo_lora")
+                if _turbo and os.path.isfile(_turbo):
+                    _ts = str(getattr(self, "sample_steps_var", None) and self.sample_steps_var.get() or "").strip()
+                    cmd += ["--turbo_lora_path", _turbo, "--sample_steps", _ts if _ts.isdigit() else "8"]
+                else:
+                    _st = str(getattr(self, "sample_steps_var", None) and self.sample_steps_var.get() or "").strip()
+                    if _st.isdigit():
+                        cmd += ["--sample_steps", _st]
+            elif not _te:
+                self.update_console("[samples] previews need the Qwen3-VL-32B text encoder path "
+                                    "(Preferences) — the mod still builds, without previews\n")
         return cmd
 
     def _build_minimax_train_command(self):
