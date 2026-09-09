@@ -4128,7 +4128,9 @@ class LoRATrainerGUI:
                       "other mods; 16×16 is the balance; Full keeps the first reference's "
                       "canvas). Output: <name>.safetensors plus <name>_raw (the encode-only "
                       "twin) in the LoRA output folder — copy to ComfyUI/models/refmods/. "
-                      "Previews: epoch 0 is the raw mod, the last is the optimised one."),
+                      "Previews: epoch 0 is the raw mod, the last is the optimised one. Mods "
+                      "ride H3's Reference (ref2va) model — Training Base switches to it here, "
+                      "and that is the model to load in ComfyUI with the mod."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             if self._is_refmod_arch():
@@ -8134,6 +8136,21 @@ class LoRATrainerGUI:
         is_refmod = self._is_refmod_arch()
         _fr = getattr(self, "_refmod_frame", None)
         _hint = getattr(self, "_refmod_hint", None)
+        if is_refmod:
+            # A mod rides the model's native ref2va path at generation (the node pack appends
+            # it as a reference block), and only the Reference fine-tune was trained to read
+            # reference blocks — so the mod is optimised against ref2va. Switch the Training
+            # Base there when the path is set; fl2va stays selectable for an experiment.
+            try:
+                _bv = getattr(self, "minimax_train_base_var", None)
+                if (_bv is not None and minimax_train_base(_bv.get()) != "ref2va"
+                        and self._krea2_pref("minimax_ref_dit")):
+                    _bv.set(MINIMAX_TRAIN_BASE_OPTIONS[1])
+                    self.update_console("[refmod] Training Base -> Reference (ref2va): a RefMod "
+                                        "rides the ref2va path at generation, so it is optimised "
+                                        "against that model\n")
+            except Exception:
+                pass
         if _fr is not None:
             if is_refmod and not _fr.winfo_manager():
                 _note = getattr(self, "_minimax_sample_note", None)
