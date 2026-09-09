@@ -8161,20 +8161,44 @@ class LoRATrainerGUI:
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
                 _hint.pack_forget()
-        if not getattr(self, "collapsible_sections", None):
+        secs = getattr(self, "collapsible_sections", None)
+        if not secs or "output" not in secs:
             return
         if is_refmod:
             for k in ("training", "memory", "timestep", "optimizer", "scheduler"):
                 self._set_training_section_visible(k, "", False)
             return
-        # re-show what this method may have hidden, in order (the tail of
-        # _apply_training_arch_visibility already settled timestep/optimizer/scheduler)
-        secs = self.collapsible_sections
-        for key, before in (("scheduler", ""), ("optimizer", "scheduler"), ("memory", "optimizer"),
-                            ("training", "memory")):
-            sec = secs.get(key)
-            if sec is not None and not sec.winfo_manager():
-                self._set_training_section_visible(key, before, True)
+        # Re-pack every section in canonical order, each in front of the first NON-section
+        # widget that follows Output (the button rows / console below the sections). A bare
+        # pack() lands at the bottom of the tab — under those rows — which is exactly the
+        # scrambled layout leaving RefMod produced (Peter, 9 Sep 2026).
+        try:
+            parent = secs["output"].master
+            sec_ids = {id(s) for s in secs.values()}
+            anchor, past_output = None, False
+            for w in parent.pack_slaves():
+                if w is secs["output"]:
+                    past_output = True
+                    continue
+                if past_output and id(w) not in sec_ids:
+                    anchor = w
+                    break
+            native = self._is_krea2_arch() or self._is_minimax_arch()
+            for key in ("training", "memory", "timestep", "optimizer", "scheduler"):
+                sec = secs.get(key)
+                if sec is None:
+                    continue
+                if key == "timestep" and native:
+                    if sec.winfo_manager():
+                        sec.pack_forget()
+                    continue
+                sec.pack_forget()
+                if anchor is not None:
+                    sec.pack(fill=tk.X, padx=36, pady=(0, 16), before=anchor)
+                else:
+                    sec.pack(fill=tk.X, padx=36, pady=(0, 16))
+        except Exception:
+            pass
 
     # ── Problem Images window (per-image loss watch) ────────────────────
 

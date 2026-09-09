@@ -135,6 +135,26 @@ try:
     app.architecture_var.set("Flux 2 Klein Base 9B"); app._on_architecture_selected(); root.update()
     ck("Klein: all five sections packed", all(app.collapsible_sections[k].winfo_manager()
                                             for k in ("training", "memory", "timestep", "optimizer", "scheduler")))
+    # the layout bug (Peter, 9 Sep): leaving RefMod re-packed the sections UNDER the button rows.
+    # Pin: after RefMod -> H3 and RefMod -> Klein the pack order equals a fresh tab's.
+    secs = app.collapsible_sections
+    names = {id(v): k for k, v in secs.items()}
+    parent = secs["output"].master
+
+    def _order():
+        return [names.get(id(w), "other") for w in parent.pack_slaves()]
+    fresh_klein = _order()
+    app.architecture_var.set("MiniMax H3 RefMod"); app._on_architecture_selected(); root.update()
+    app.architecture_var.set("Flux 2 Klein Base 9B"); app._on_architecture_selected(); root.update()
+    ck("RefMod -> Klein: section order identical to fresh (sections above the button rows)",
+       _order() == fresh_klein, _order())
+    app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
+    h3_order = _order()
+    app.architecture_var.set("MiniMax H3 RefMod"); app._on_architecture_selected(); root.update()
+    app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
+    ck("RefMod -> MiniMax H3: section order identical to a direct H3 switch", _order() == h3_order, _order())
+    ck("sections sit before the first non-section widget after Output",
+       _order().index("scheduler") < max(i for i, n in enumerate(_order()) if n == "other"))
     root.destroy()
 except tk.TclError as e:
     print(f"skip  GUI (no display: {e})")
