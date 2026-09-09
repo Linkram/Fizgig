@@ -29,16 +29,16 @@ def setup_parser():
                    help="'full' (default) keeps every reference on the first reference's latent "
                         "canvas — the mode that carries a face; 8 / 16 / 32 average-pool to that "
                         "many latent cells on the long edge (small, stackable, concept-level).")
-    p.add_argument("--sigma_min", type=float, default=None,
-                   help="optimise only at noise levels in [sigma_min, sigma_max] (default: H3's "
-                        "own shift-12 density)")
-    p.add_argument("--sigma_max", type=float, default=None)
+    p.add_argument("--sigma_min", type=float, default=0.2,
+                   help="optimise only at noise levels in [sigma_min, sigma_max] (default 0.2-0.8, "
+                        "measured; -1 for both = H3's own shift-12 density)")
+    p.add_argument("--sigma_max", type=float, default=0.8)
     p.add_argument("--steps", type=int, default=200,
                    help="optimisation steps against the frozen base (0 = encode only, the "
                         "node extractor's own result)")
-    p.add_argument("--lr", type=float, default=5e-3, help="latent-space AdamW rate (default 5e-3)")
-    p.add_argument("--pull", type=float, default=0.5,
-                   help="weight of the L2 pull toward the initial encode (default 0.5)")
+    p.add_argument("--lr", type=float, default=1e-3, help="latent-space AdamW rate (default 1e-3, measured)")
+    p.add_argument("--pull", type=float, default=2.0,
+                   help="weight of the L2 pull toward the initial encode (default 2.0, measured)")
     p.add_argument("--max_refs", type=int, default=8, help="references stacked into the mod (default 8)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--base_quant", default="auto", help="auto / int8 / nf4 / hqq")
@@ -82,7 +82,7 @@ def main():
                sample_seed=a.sample_seed, preview_every=a.preview_every,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, init_from=a.init_from,
-               sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min is not None and a.sigma_max is not None else None))
+               sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 
 
 if __name__ == "__main__":

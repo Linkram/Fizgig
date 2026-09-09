@@ -254,13 +254,25 @@ def refmod_step_loss(dit, mod: torch.Tensor, latents: torch.Tensor, text: torch.
     return F.mse_loss(pred.float(), (x0 - noise).float()), float(sigma.reshape(-1)[0])
 
 
-def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = 5e-3,
-                    pull: float = 0.5, device="cuda", dtype=torch.bfloat16, seed: int = 42,
+DEFAULT_LR = 1e-3
+DEFAULT_PULL = 2.0
+DEFAULT_SIGMA_RANGE = (0.2, 0.8)
+
+
+def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = DEFAULT_LR,
+                    pull: float = DEFAULT_PULL, device="cuda", dtype=torch.bfloat16, seed: int = 42,
                     uncond_text: Optional[torch.Tensor] = None, uncond_frac: float = 0.1,
                     warmup: int = 20, log_every: int = 10, on_step=None,
                     target: Optional[torch.Tensor] = None, shared_epoch=None,
-                    sigma_range=None) -> torch.Tensor:
+                    sigma_range=DEFAULT_SIGMA_RANGE) -> torch.Tensor:
     """Optimise the mod latent against the frozen H3 loss over the dataset's stills.
+
+    Defaults are the measured recipe (mbacc photos, 10 Sep 2026, ref2va, Full canvas, 4 seeds,
+    ArcFace vs the dataset): lr 1e-3, pull 2.0, noise window 0.2-0.8 put every seed at or
+    above the raw encode on portrait prompts (70 vs 66) and +5.5 on four off-dataset scene
+    prompts (58.7 vs 53.2). lr 5e-3 / pull 0.5 on H3's full shift-12 density LOST fidelity
+    (55): at the top of that schedule the loss is about global structure, and pushing the
+    reference rows to serve it costs the face detail they exist to carry.
 
     pull is the weight of an L2 term toward the initial encode: it keeps the mod a reference
     (on the VAE manifold, so the node's blur-toward-itself strength control still means what
@@ -409,7 +421,7 @@ def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, ou
 # ─── the run ─────────────────────────────────────────────────────────────────────────────────
 
 def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_path: str,
-               grid: Optional[int] = None, steps: int = 200, lr: float = 5e-3, pull: float = 0.5,
+               grid: Optional[int] = None, steps: int = 200, lr: float = DEFAULT_LR, pull: float = DEFAULT_PULL,
                max_refs: int = MAX_REFS_DEFAULT, seed: int = 42, base_quant: str = "auto",
                blocks_to_swap="auto", vae_path: Optional[str] = None,
                te_path: Optional[str] = None, sample_prompts: Optional[List[str]] = None,
@@ -417,7 +429,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                sample_seed: int = 42, preview_every: int = 0,
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
-               sigma_range=None) -> str:
+               sigma_range=DEFAULT_SIGMA_RANGE) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
