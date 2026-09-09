@@ -1023,14 +1023,14 @@ MINIMAX_BUILT_IN_PRESETS = {
 
 # MiniMax H3 RefMod: the two controls, plus the clip still ON (each clip lends its sharpest
 # face as a reference). Spread from Fast so the hidden MiniMax fields hold sane values.
-REFMOD_GRID_OPTIONS = ["8×8 (64 tokens, stackable)", "16×16 (256 tokens, recommended)",
-                       "32×32 (1024 tokens)", "Full reference (encode canvas)"]
+REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32×32 (1024 tokens)",
+                       "16×16 (256 tokens, concept-level)", "8×8 (64 tokens, stackable)"]
 REFMOD_STEP_OPTIONS = ["0 (encode only — same as the ComfyUI extractor)", "200 (recommended)",
                        "500", "1000"]
 REFMOD_BUILT_IN_PRESETS = {
-    "✨ MiniMax H3 RefMod (16×16, 200 steps)": {
+    "✨ MiniMax H3 RefMod (Full reference, 200 steps)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
-        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[1],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
         "MINIMAX_CLIP_STILL": True,
     },
@@ -4109,7 +4109,7 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_GRID"] = ttk.Combobox(
                 self._refmod_frame, values=list(REFMOD_GRID_OPTIONS), state="readonly", width=30)
             self.entries["MINIMAX_REFMOD_GRID"].set(
-                str(self.settings.get("MINIMAX_REFMOD_GRID", REFMOD_GRID_OPTIONS[1])))
+                str(self.settings.get("MINIMAX_REFMOD_GRID", REFMOD_GRID_OPTIONS[0])))
             self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT, padx=(0, 18))
             tk.Label(self._refmod_frame, text="Steps:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
@@ -4124,9 +4124,10 @@ class LoRATrainerGUI:
                       "nodes load like a LoRA. Fizgig builds it from the dataset's photos and "
                       "clip stills (up to 8), then OPTIMISES the latent against the frozen H3 "
                       "model for the chosen steps, so it carries more of the subject than a "
-                      "plain encode. Grid is the mod's size in latent cells (8×8 stacks with "
-                      "other mods; 16×16 is the balance; Full keeps the first reference's "
-                      "canvas). Steps 0 makes a plain encode-only mod. Output: one file, "
+                      "plain encode. Grid: Full keeps every reference at its latent size on "
+                      "the first reference's canvas — the only setting that carries a face "
+                      "(measured); the pooled grids are small, stackable, concept-level mods. "
+                      "Steps 0 makes a plain encode-only mod. Output: one file, "
                       "<name>.safetensors, in the LoRA output folder — copy it to "
                       "ComfyUI/models/refmods/. Previews: epoch 0 is before optimising, the "
                       "last is the finished mod. Mods "

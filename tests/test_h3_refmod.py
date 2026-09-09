@@ -105,11 +105,11 @@ cfg = g.ARCHITECTURES["MiniMax H3 RefMod"]
 ck("entry is MiniMax (caches, paths) + is_refmod, script minimax_refmod.py, suffix refmod",
    cfg.get("is_minimax") and cfg.get("is_refmod") and cfg["train_script"].endswith("minimax_refmod.py")
    and cfg["lora_name_suffix"] == "refmod")
-ck("grid/steps label parsing", g.refmod_grid_value("16×16 (256 tokens, recommended)") == "16"
-   and g.refmod_grid_value("Full reference (encode canvas)") == "full" and g.refmod_grid_value("8×8 (64 tokens, stackable)") == "8"
+ck("grid/steps label parsing", g.refmod_grid_value("16×16 (256 tokens, concept-level)") == "16"
+   and g.refmod_grid_value("Full reference (recommended — carries the face)") == "full" and g.refmod_grid_value("8×8 (64 tokens, stackable)") == "8"
    and g.refmod_steps_value("200 (recommended)") == "200" and g.refmod_steps_value("0 (encode only — same as the ComfyUI extractor)") == "0")
 pr = next(iter(g.REFMOD_BUILT_IN_PRESETS.values()))
-ck("the one preset: 16x16, 200 steps, clip still on", pr["MINIMAX_REFMOD_GRID"].startswith("16×16")
+ck("the one preset: Full reference, 200 steps, clip still on", pr["MINIMAX_REFMOD_GRID"].startswith("Full")
    and pr["MINIMAX_REFMOD_STEPS"].startswith("200") and pr.get("MINIMAX_CLIP_STILL") is True)
 try:
     root = tk.Tk(); root.withdraw()

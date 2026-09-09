@@ -228,7 +228,8 @@ def plan_and_load_dit(dit_path: str, *, device, dtype, base_quant: str = "auto",
 # ─── the optimisation ────────────────────────────────────────────────────────────────────────
 
 def refmod_step_loss(dit, mod: torch.Tensor, latents: torch.Tensor, text: torch.Tensor, *,
-                     device, dtype, shift=None, generator=None, seed: int = 0):
+                     device, dtype, shift=None, generator=None, seed: int = 0,
+                     sigma_range=None):
     """One flow-matching loss with the mod riding as the reference block. `mod` is the
     parameter ([1, 24, T, gh, gw] fp32, requires_grad); grads reach it through the DiT's
     condition rows (the frozen base only supplies dX)."""
@@ -241,7 +242,11 @@ def refmod_step_loss(dit, mod: torch.Tensor, latents: torch.Tensor, text: torch.
         x0 = x0[..., :Hc, :Wc].contiguous()
     noise = torch.randn(x0.shape, device=device, generator=generator, dtype=torch.float32)
     tokens = (x0.shape[-2] // _ph) * (x0.shape[-1] // _pw)
-    sigma = sample_sigmas(1, device, shift=shift, generator=generator, image_tokens=tokens)
+    if sigma_range:
+        lo, hi = float(sigma_range[0]), float(sigma_range[1])
+        sigma = lo + (hi - lo) * torch.rand(1, device=device, generator=generator)
+    else:
+        sigma = sample_sigmas(1, device, shift=shift, generator=generator, image_tokens=tokens)
     s = sigma.reshape(1, 1, 1, 1, 1)
     noised = (1.0 - s) * x0 + s * noise
     t = (1.0 - sigma).to(device)
@@ -253,7 +258,8 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = 5
                     pull: float = 0.5, device="cuda", dtype=torch.bfloat16, seed: int = 42,
                     uncond_text: Optional[torch.Tensor] = None, uncond_frac: float = 0.1,
                     warmup: int = 20, log_every: int = 10, on_step=None,
-                    target: Optional[torch.Tensor] = None) -> torch.Tensor:
+                    target: Optional[torch.Tensor] = None, shared_epoch=None,
+                    sigma_range=None) -> torch.Tensor:
     """Optimise the mod latent against the frozen H3 loss over the dataset's stills.
 
     pull is the weight of an L2 term toward the initial encode: it keeps the mod a reference
@@ -269,7 +275,9 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = 5
     torch.manual_seed(seed)
     random.seed(seed)
     gen = torch.Generator(device=device).manual_seed(seed)
-    shared_epoch = Value("i", 0)
+    # the SAME counter the dataset group was built with — its buckets assert on it
+    if shared_epoch is None:
+        shared_epoch = getattr(group, "_fizgig_shared_epoch", None) or Value("i", 0)
     loader = DataLoader(group, batch_size=1, shuffle=True, collate_fn=_Collator(shared_epoch, group),
                         num_workers=0)
     target = (target if target is not None else mod0).detach().to(device, torch.float32)
@@ -298,7 +306,7 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = 5
                 g["lr"] = lr * min(1.0, (step + 1) / float(max(1, warmup)))
             with torch.autocast("cuda", enabled=False):
                 loss, sig = refmod_step_loss(dit, param, latents, text, device=device, dtype=dtype,
-                                             generator=gen, seed=seed)
+                                             generator=gen, seed=seed, sigma_range=sigma_range)
                 total = loss + pull * F.mse_loss(param, target) if pull > 0 else loss
             opt.zero_grad(set_to_none=True)
             total.backward()
@@ -401,14 +409,15 @@ def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, ou
 # ─── the run ─────────────────────────────────────────────────────────────────────────────────
 
 def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_path: str,
-               grid: Optional[int] = 16, steps: int = 200, lr: float = 5e-3, pull: float = 0.5,
+               grid: Optional[int] = None, steps: int = 200, lr: float = 5e-3, pull: float = 0.5,
                max_refs: int = MAX_REFS_DEFAULT, seed: int = 42, base_quant: str = "auto",
                blocks_to_swap="auto", vae_path: Optional[str] = None,
                te_path: Optional[str] = None, sample_prompts: Optional[List[str]] = None,
                sample_width: int = 768, sample_height: int = 768, sample_steps: int = 20,
                sample_seed: int = 42, preview_every: int = 0,
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
-               description: str = "") -> str:
+               description: str = "", init_from: Optional[str] = None,
+               sigma_range=None) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -431,8 +440,10 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     user_config = load_user_config(dataset_config)
     blueprint = BlueprintGenerator(ConfigSanitizer()).generate(
         user_config, argparse.Namespace(), architecture=ARCHITECTURE_MINIMAX)
+    shared_epoch = Value("i", 0)
     group = generate_dataset_group_by_blueprint(
-        blueprint.dataset_group, training=True, num_timestep_buckets=None, shared_epoch=Value("i", 0))
+        blueprint.dataset_group, training=True, num_timestep_buckets=None, shared_epoch=shared_epoch)
+    group._fizgig_shared_epoch = shared_epoch
     if group.num_train_items == 0:
         raise RuntimeError("No training items — run the MiniMax cache steps first.")
     cache_dirs = [getattr(ds, "cache_directory", "") for ds in group.datasets]
@@ -442,14 +453,23 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                            "'Also train the sharpest face still').")
     n_img = sum(1 for r in refs if r[2] == "photo")
     n_st = len(refs) - n_img
-    logger.info(f"[refmod] {len(refs)} reference(s): {n_img} photo(s), {n_st} clip still(s) — "
-                + ", ".join(r[0] for r in refs))
-    mod0, pool_label = build_mod(refs, grid)
-    mode = "training" if grid is not None else "encode"
-    logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {token_count(mod0)} tokens, "
-                f"mode {mode})")
-    source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
     mp = max((r[1].shape[-2] * 16) * (r[1].shape[-1] * 16) for r in refs) / 1e6
+    if init_from:
+        # start from an existing mod (re-preview it, or keep optimising it)
+        mod0, _m0 = load_refmod(init_from)
+        pool_label = str(_m0.get("pool", "")) or f"{mod0.shape[2]}x{mod0.shape[3]}x{mod0.shape[4]}"
+        mode = str(_m0.get("mode", "training"))
+        source_shape = str(_m0.get("source_shape", ""))
+        logger.info(f"[refmod] starting from {init_from}: mod {tuple(mod0.shape)} "
+                    f"({token_count(mod0)} tokens, {_m0.get('optimize_steps', 0)} prior steps)")
+    else:
+        logger.info(f"[refmod] {len(refs)} reference(s): {n_img} photo(s), {n_st} clip still(s) — "
+                    + ", ".join(r[0] for r in refs))
+        mod0, pool_label = build_mod(refs, grid)
+        mode = "training" if grid is not None else "encode"
+        logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {token_count(mod0)} tokens, "
+                    f"mode {mode})")
+        source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
 
     uncond_text = None
     for d in cache_dirs:
@@ -498,7 +518,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                     f"(lr {lr:g}, pull {pull:g}, base {base_mode}, swap {n_swap})")
         mod = _optimize_with_previews(dit, group, mod0, steps=steps, lr=lr, pull=pull, device=device,
                                       dtype=dtype, seed=seed, uncond_text=uncond_text,
-                                      preview_every=preview_every, preview_fn=_preview)
+                                      preview_every=preview_every, preview_fn=_preview,
+                                      sigma_range=sigma_range)
         _preview(mod, int(math.ceil(steps / float(preview_every))) if preview_every else 1)
 
     out = save_refmod(os.path.join(output_dir, output_name), mod, name=output_name, mode=mode,
@@ -514,11 +535,11 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
 
 
 def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype, seed, uncond_text,
-                            preview_every, preview_fn):
+                            preview_every, preview_fn, sigma_range=None):
     """optimize_refmod in chunks so interim previews render from the live latent."""
     if not preview_every or preview_every >= steps:
         return optimize_refmod(dit, group, mod0, steps=steps, lr=lr, pull=pull, device=device,
-                               dtype=dtype, seed=seed, uncond_text=uncond_text)
+                               dtype=dtype, seed=seed, uncond_text=uncond_text, sigma_range=sigma_range)
     # chunked: each chunk restarts the optimizer state but keeps the latent — a small price,
     # and it keeps optimize_refmod itself simple. Warm-up only on the first chunk.
     mod = mod0
@@ -528,7 +549,7 @@ def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype,
         n = min(preview_every, steps - done)
         mod = optimize_refmod(dit, group, mod, steps=n, lr=lr, pull=pull, device=device, dtype=dtype,
                               seed=seed + k, uncond_text=uncond_text, warmup=(20 if k == 0 else 1),
-                              target=mod0)
+                              target=mod0, sigma_range=sigma_range)
         done += n
         k += 1
         if done < steps:

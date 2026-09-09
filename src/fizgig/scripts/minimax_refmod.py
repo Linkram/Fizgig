@@ -25,9 +25,14 @@ def setup_parser():
     p.add_argument("--dataset_config", required=True)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--output_name", required=True)
-    p.add_argument("--grid", default="16",
-                   help="latent cells on the mod's long edge: 8 / 16 / 32, or 'full' for the "
-                        "first reference's full latent canvas (encode mode). Default 16.")
+    p.add_argument("--grid", default="full",
+                   help="'full' (default) keeps every reference on the first reference's latent "
+                        "canvas — the mode that carries a face; 8 / 16 / 32 average-pool to that "
+                        "many latent cells on the long edge (small, stackable, concept-level).")
+    p.add_argument("--sigma_min", type=float, default=None,
+                   help="optimise only at noise levels in [sigma_min, sigma_max] (default: H3's "
+                        "own shift-12 density)")
+    p.add_argument("--sigma_max", type=float, default=None)
     p.add_argument("--steps", type=int, default=200,
                    help="optimisation steps against the frozen base (0 = encode only, the "
                         "node extractor's own result)")
@@ -50,6 +55,9 @@ def setup_parser():
     p.add_argument("--turbo_lora_path", default=None, help="Turbo LoRA for few-step previews")
     p.add_argument("--turbo_lora_strength", type=float, default=1.0)
     p.add_argument("--description", default="", help="stored in the mod (the loaders can emit it)")
+    p.add_argument("--init_from", default=None,
+                   help="start from an existing mod file instead of the caches (re-preview it "
+                        "with --steps 0, or keep optimising it)")
     return p
 
 
@@ -73,7 +81,8 @@ def main():
                sample_width=a.sample_width, sample_height=a.sample_height, sample_steps=a.sample_steps,
                sample_seed=a.sample_seed, preview_every=a.preview_every,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
-               description=a.description)
+               description=a.description, init_from=a.init_from,
+               sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min is not None and a.sigma_max is not None else None))
 
 
 if __name__ == "__main__":
