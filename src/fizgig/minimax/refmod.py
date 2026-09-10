@@ -163,6 +163,26 @@ def attach_mod_to_file(path: str, latent: torch.Tensor, *, name: str, pool: str,
     return path
 
 
+def blur_latent(z: torch.Tensor, factor: int = 8) -> torch.Tensor:
+    """The node pack's weakening target: a heavy spatial low-pass of the latent itself."""
+    if z.dim() != 5:
+        return z
+    t, h, w = z.shape[2], z.shape[3], z.shape[4]
+    sh, sw = max(1, h // factor), max(1, w // factor)
+    down = F.adaptive_avg_pool3d(z.float(), (t, sh, sw))
+    up = F.interpolate(down, size=(t, h, w), mode="trilinear", align_corners=False)
+    return up.to(z.dtype)
+
+
+def apply_ref_strength(z: torch.Tensor, strength: float) -> torch.Tensor:
+    """Reference strength as the node pack defines it: 1.0 = the latent as stored; below that,
+    mixed toward a blurred copy of itself (on-manifold, detail shed); <= 0 = no reference."""
+    s = float(strength)
+    if s >= 1.0:
+        return z
+    return s * z + (1.0 - s) * blur_latent(z)
+
+
 def aspect_grid(pool: int, aspect_hw: float) -> Tuple[int, int]:
     """Even (h, w) latent grid whose long edge is `pool` and whose aspect matches the source —
     the node's own rule (a portrait pooled into a square grid comes out "fat")."""

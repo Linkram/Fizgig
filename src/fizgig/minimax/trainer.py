@@ -2423,6 +2423,7 @@ def train_minimax(
     refmod_refs: int = 8,
     refmod_train_on_refs: bool = False,     # keep the references in the training set
     refmod_description: str = "",
+    refmod_preview_strength: float = 1.0,   # previews: the mod at this reference strength (node rule)
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
 ):
@@ -2618,6 +2619,12 @@ def train_minimax(
             else:
                 logger.info(f"[refmod] {_rm} reference still(s) held out — the LoRA trains on the other "
                             f"{_left} item(s)")
+        from fizgig.minimax.refmod import apply_ref_strength
+        _refmod_preview = (apply_ref_strength(_refmod, refmod_preview_strength)
+                           if float(refmod_preview_strength) < 1.0 else _refmod)
+        if float(refmod_preview_strength) < 1.0:
+            logger.info(f"[refmod] previews use the mod at reference strength {float(refmod_preview_strength):g} "
+                        f"(training always sees it at 1.0)")
         _refmod_info = {"pool": _pool, "tokens": _tok, "refs": len(_refs),
                         "source_shape": " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in _refs),
                         "tags": [f"{_n_img} img, {len(_refs) - _n_img} clip stills", "fizgig companion lora"]}
@@ -4573,7 +4580,7 @@ def train_minimax(
                             seed=_seed + i, device=device, dtype=dtype, log_steps=True,
                             num_frames=_frames, on_slow_step=_slow_step_notice,
                             return_audio=True,
-                            ref_latents=([_refmod.to(device, dtype)] if _refmod is not None else None))
+                            ref_latents=([_refmod_preview.to(device, dtype)] if _refmod is not None else None))
                         break
                     except (torch.cuda.OutOfMemoryError,
                             getattr(torch, "AcceleratorError", torch.cuda.OutOfMemoryError),

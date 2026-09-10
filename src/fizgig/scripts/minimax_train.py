@@ -312,6 +312,9 @@ def setup_parser() -> argparse.ArgumentParser:
     p.add_argument("--refmod_train_on_refs", action="store_true",
                    help="keep the reference stills IN the training set (default: held out)")
     p.add_argument("--refmod_description", default="", help="stored in the mod's header")
+    p.add_argument("--refmod_preview_strength", type=float, default=1.0,
+                   help="RefMod mode previews: reference strength 0-1 (the node pack's rule: below 1 "
+                        "the latent mixes toward a blurred copy of itself); training always uses 1.0")
     p.add_argument("--reg_lr_multiplier", type=float, default=0.2,
                    help="Fine-tune only: LR multiplier for images in a dataset block marked "
                         "`is_reg = true`. They anchor the model's prior rather than teaching "
@@ -430,6 +433,7 @@ def main():
         refmod_refs=args.refmod_refs,
         refmod_train_on_refs=args.refmod_train_on_refs,
         refmod_description=args.refmod_description,
+        refmod_preview_strength=args.refmod_preview_strength,
     )
 
 
