@@ -2426,6 +2426,9 @@ def train_minimax(
                                             # all anyway"); False holds the references out
     refmod_description: str = "",
     refmod_preview_strength: float = 1.0,   # previews: the mod at this reference strength (node rule)
+    refmod_train_with_ref: bool = True,     # False = the LoRA trains WITHOUT the mod in the conditioning
+                                            # (an ordinary LoRA that must learn the face itself); the
+                                            # mod still rides in previews and in the pair file
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
 ):
@@ -2626,7 +2629,10 @@ def train_minimax(
                            if float(refmod_preview_strength) < 1.0 else _refmod)
         if float(refmod_preview_strength) < 1.0:
             logger.info(f"[refmod] previews use the mod at reference strength {float(refmod_preview_strength):g} "
-                        f"(training always sees it at 1.0)")
+                        f"(training sees it at 1.0)")
+        if not refmod_train_with_ref:
+            logger.info("[refmod] the LoRA trains WITHOUT the mod in the conditioning — an ordinary LoRA "
+                        "that learns the face itself; the mod joins it in previews and in the file")
         _refmod_info = {"pool": _pool, "tokens": _tok, "refs": len(_refs),
                         "source_shape": " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in _refs),
                         "tags": [f"{_n_img} img, {len(_refs) - _n_img} clip stills", "fizgig companion lora"]}
@@ -5232,7 +5238,8 @@ def train_minimax(
                                                  video_weight=0.0 if _is_voice else 1.0,
                                                  parts_out=_audio_parts,
                                                  ref_latents=([_refmod.to(device, torch.float32)]
-                                                              if _refmod is not None else None))
+                                                              if (_refmod is not None and refmod_train_with_ref)
+                                                              else None))
                 if _is_voice:
                     # Its own ledger. The clip ledger's "video err" is a real number about real
                     # footage; a voice item's video term is its error against the placeholder —

@@ -313,6 +313,10 @@ def setup_parser() -> argparse.ArgumentParser:
                    help="hold the reference stills OUT of the LoRA's training set (default: the LoRA "
                         "trains on every still, references included)")
     p.add_argument("--refmod_description", default="", help="stored in the mod's header")
+    p.add_argument("--refmod_no_ref_in_training", dest="refmod_train_with_ref", action="store_false",
+                   help="RefMod mode: train the LoRA WITHOUT the mod in the conditioning (an ordinary "
+                        "LoRA that must learn the face itself); the mod still rides in previews and "
+                        "in the pair file. Default: the mod rides during training too.")
     p.add_argument("--refmod_preview_strength", type=float, default=1.0,
                    help="RefMod mode previews: reference strength 0-1 (the node pack's rule: below 1 "
                         "the latent mixes toward a blurred copy of itself); training always uses 1.0")
@@ -435,6 +439,7 @@ def main():
         refmod_train_on_refs=args.refmod_train_on_refs,
         refmod_description=args.refmod_description,
         refmod_preview_strength=args.refmod_preview_strength,
+        refmod_train_with_ref=args.refmod_train_with_ref,
     )
 
 
