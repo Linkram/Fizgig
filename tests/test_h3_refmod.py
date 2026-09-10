@@ -215,8 +215,8 @@ ck("grid/steps label parsing", g.refmod_grid_value("16×16 (256 tokens, concept-
    and g.refmod_grid_value("Full reference (recommended — carries the face)") == "full" and g.refmod_grid_value("8×8 (64 tokens, stackable)") == "8"
    and g.refmod_steps_value("200 (recommended)") == "200" and g.refmod_steps_value("0 (encode only — same as the ComfyUI extractor)") == "0")
 pr = next(iter(g.REFMOD_BUILT_IN_PRESETS.values()))
-ck("the one preset: Full reference, 200 steps, clip still on", pr["MINIMAX_REFMOD_GRID"].startswith("Full")
-   and pr["MINIMAX_REFMOD_STEPS"].startswith("200") and pr.get("MINIMAX_CLIP_STILL") is True)
+ck("the one preset: Full reference, Steps 0, Companion LoRA On, clip still on", pr["MINIMAX_REFMOD_GRID"].startswith("Full")
+   and pr["MINIMAX_REFMOD_STEPS"].startswith("0") and pr["MINIMAX_REFMOD_LORA"] == "On" and pr.get("MINIMAX_CLIP_STILL") is True)
 try:
     root = tk.Tk(); root.withdraw()
     app = g.LoRATrainerGUI(root)
@@ -229,13 +229,17 @@ try:
        and app._refmod_frame.winfo_manager() and app._minimax_base_frame.winfo_manager())
     ck("RefMod preset applied on entry", app.custom_preset_var.get().startswith("✨ MiniMax H3 RefMod"))
     app.settings.update({"DATASET_CONFIG": "d.toml", "LORA_OUTPUT_DIR": "out", "LORA_NAME": "s_refmod", "SEED": "7",
-                         "MINIMAX_REFMOD_GRID": "8×8 (64 tokens, stackable)", "MINIMAX_REFMOD_STEPS": "500"})
+                         "MINIMAX_REFMOD_GRID": "8×8 (64 tokens, stackable)", "MINIMAX_REFMOD_STEPS": "500",
+                         "MINIMAX_REFMOD_LORA": app.entries["MINIMAX_REFMOD_LORA"].get(),
+                         **{k: app.entries[k].get() for k in g.REFMOD_DEFAULTS}})
     app.sample_enabled_var.set(False)
     c = [str(x) for x in app._build_minimax_refmod_command()]
     ck("builder: minimax_refmod.py --grid 8 --steps 500, no LoRA flags",
        c[1].endswith("minimax_refmod.py") and c[c.index("--grid") + 1] == "8" and c[c.index("--steps") + 1] == "500"
        and "--network_dim" not in c and "--learning_rate" not in c)
-    ck("Companion LoRA Off -> no --companion_lora_epochs", "--companion_lora_epochs" not in c)
+    ck("preset defaults on the command line: companion LoRA rank 2, 2 epochs, 2e-4; refs held out",
+       c[c.index("--companion_lora_epochs") + 1] == "2" and c[c.index("--companion_lora_rank") + 1] == "2"
+       and c[c.index("--companion_lora_lr") + 1] == "2e-4" and "--train_on_refs" not in c)
     per, total = app.refmod_token_estimate("Full reference (recommended — carries the face)", "8", "0.25")
     ck("token estimate: Full at 0.25 MP ≈ 244 per ref, 8 refs ≈ 1,952 (under the 5,120 cap)", per == 244 and total == 1952)
     per16, tot16 = app.refmod_token_estimate("16×16 (256 tokens, concept-level)", "16", "0.25")
@@ -249,10 +253,12 @@ try:
     ck("the standard-RefMod reference block is on the card and names their defaults",
        app._refmod_std_hint.winfo_manager() and "16 images" in app._refmod_std_hint.cget("text")
        and "1024" in app._refmod_std_hint.cget("text") and "5,120" in app._refmod_std_hint.cget("text"))
-    ck("all three rows on the card; LoRA default Off; every knob registered",
+    ck("all three rows on the card; LoRA default On; every knob registered",
        app._refmod_lora_frame.winfo_manager() and app._refmod_opt_frame.winfo_manager()
-       and app.entries["MINIMAX_REFMOD_LORA"].get() == "Off"
+       and app.entries["MINIMAX_REFMOD_LORA"].get() == "On"
        and all(k in app.entries for k in g.REFMOD_DEFAULTS))
+    ck("Steps default is 0 (plain encode) with the LoRA on",
+       app.entries["MINIMAX_REFMOD_STEPS"].get().startswith("0"))
     ck("defaults -> the measured recipe on the command line",
        c[c.index("--max_refs") + 1] == "8" and c[c.index("--lr") + 1] == "1e-3" and c[c.index("--pull") + 1] == "2.0"
        and c[c.index("--sigma_min") + 1] == "0.2" and c[c.index("--sigma_max") + 1] == "0.8")

@@ -1025,7 +1025,7 @@ MINIMAX_BUILT_IN_PRESETS = {
 # face as a reference). Spread from Fast so the hidden MiniMax fields hold sane values.
 REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32×32 (1024 tokens)",
                        "16×16 (256 tokens, concept-level)", "8×8 (64 tokens, stackable)"]
-REFMOD_STEP_OPTIONS = ["0 (encode only — same as the ComfyUI extractor)", "200 (recommended)",
+REFMOD_STEP_OPTIONS = ["0 (plain encode — recommended with the Companion LoRA)", "200 (mod-only optimisation)",
                        "500", "1000"]
 # Companion LoRA: a rank-2 LoRA trained for N epochs WITH the mod in the conditioning, stored in
 # the same file (the standard RefMod loader ignores it; the Fizgig ComfyUI node loads both).
@@ -1043,11 +1043,13 @@ REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_LORA_LR": "2e-4",
 }
 REFMOD_BUILT_IN_PRESETS = {
-    "✨ MiniMax H3 RefMod (Full reference, 200 steps)": {
+    # The measured recipe (10 Sep 2026): a plain Full-canvas mod + a rank-2 companion LoRA trained
+    # on the OTHER stills (references held out). Optimising the latent as well overshoots.
+    "✨ MiniMax H3 RefMod (Full reference + companion LoRA)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
-        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
-        "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[0],
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[1],
         **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
     },
@@ -4170,7 +4172,7 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
                 self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), width=34)
             self.entries["MINIMAX_REFMOD_STEPS"].set(
-                str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_STEP_OPTIONS[1])))
+                str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_STEP_OPTIONS[0])))
             self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT, padx=(0, 18))
             tk.Label(self._refmod_frame, text="References:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
@@ -4208,7 +4210,7 @@ class LoRATrainerGUI:
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_LORA"] = ttk.Combobox(
                 self._refmod_lora_frame, values=list(REFMOD_LORA_OPTIONS), state="readonly", width=5)
-            _lv = str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[0]))
+            _lv = str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[1]))
             self.entries["MINIMAX_REFMOD_LORA"].set("On" if refmod_lora_on(_lv) else "Off")
             self.entries["MINIMAX_REFMOD_LORA"].pack(side=tk.LEFT, padx=(0, 16))
             for _lab, _key, _w in (("Rank:", "MINIMAX_REFMOD_LORA_RANK", 4), ("Epochs:", "MINIMAX_REFMOD_LORA_EPOCHS", 4),
@@ -4222,9 +4224,12 @@ class LoRATrainerGUI:
                 model_card,
                 text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
                       "nodes load like a LoRA. Fizgig builds it from the dataset's photos and "
-                      "clip stills (up to 8), then OPTIMISES the latent against the frozen H3 "
-                      "model for the chosen steps, so it carries more of the subject than a "
-                      "plain encode. Grid: Full keeps every reference at its latent size on "
+                      "clip stills, and by default pairs it with a rank-2 Companion LoRA trained "
+                      "on the OTHER stills (the references are held out) — measured: the "
+                      "strongest carry of the subject into new scenes. Steps above 0 instead "
+                      "optimise the mod's latent against the frozen H3 model (a modest mod-only "
+                      "gain; don't combine with the LoRA, the two overshoot). Grid: Full keeps "
+                      "every reference at its latent size on "
                       "the first reference's canvas — the only setting that carries a face "
                       "(measured); the pooled grids are small, stackable, concept-level mods. "
                       "Steps 0 makes a plain encode-only mod; any number can be typed. "
