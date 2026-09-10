@@ -4230,11 +4230,33 @@ class LoRATrainerGUI:
                       "and that is the model to load in ComfyUI with the mod."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
+            # The standard node pack's own defaults and ranges (ComfyUI-MiniMaxH3Mod, Extract /
+            # Load nodes, read from its source 10 Sep 2026), so every dial above can be judged
+            # against what a regular RefMod is.
+            self._refmod_std_hint = tk.Label(
+                model_card,
+                text=("Standard RefMod for comparison (ComfyUI-MiniMaxH3Mod Extract node): "
+                      "up to 16 images + 8 videos per mod; mode 'training' (pooled) by default, "
+                      "'encode' (full) is what its README says to use for people; reference "
+                      "resolution 1024 px short edge (range 256-2048); pool grid 16×16 "
+                      "(range 2-64, must be even; the README says pool 32 at least for a "
+                      "face); its 'identity' refinement 500 model-free steps (0-2000) — not "
+                      "the same thing as Steps here, which run against the H3 model; token cap "
+                      "5,120 (0 = off, max 65,536). Load node: strength 0-1 (its retention "
+                      "presets: 1.0 fully preserved, 0.7 partially, 0.4 attribute transfer, "
+                      "0.15 weak), copies 1-10. Popular settings: encode at 1024 with 8-20 "
+                      "images for a character; pooled 16×16 for a concept or motion to stack "
+                      "with others. Here: Full = their encode at your dataset's resolution "
+                      "(0.25 MP ≈ 240 tokens per reference, 8 references ≈ 1,900 tokens); "
+                      "16×16 = their pooled default; References 16 = their per-mod maximum."),
+                font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"],
+                bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
                 self._refmod_opt_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_lora_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
+                self._refmod_std_hint.pack(anchor=tk.W, pady=(6, 0))
 
         # === Presets card ===
         preset_card = self._start_section_card(
@@ -8237,6 +8259,7 @@ class LoRATrainerGUI:
         _ofr = getattr(self, "_refmod_opt_frame", None)
         _lfr = getattr(self, "_refmod_lora_frame", None)
         _hint = getattr(self, "_refmod_hint", None)
+        _std = getattr(self, "_refmod_std_hint", None)
         if is_refmod:
             # A mod rides the model's native ref2va path at generation (the node pack appends
             # it as a reference block), and only the Reference fine-tune was trained to read
@@ -8262,6 +8285,8 @@ class LoRATrainerGUI:
                 if _lfr is not None:
                     _lfr.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
+                if _std is not None:
+                    _std.pack(anchor=tk.W, pady=(6, 0), **_kw)
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
                 if _ofr is not None:
@@ -8269,6 +8294,8 @@ class LoRATrainerGUI:
                 if _lfr is not None:
                     _lfr.pack_forget()
                 _hint.pack_forget()
+                if _std is not None:
+                    _std.pack_forget()
         secs = getattr(self, "collapsible_sections", None)
         if not secs or "output" not in secs:
             return

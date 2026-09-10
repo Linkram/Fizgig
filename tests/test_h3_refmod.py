@@ -219,6 +219,9 @@ try:
        c[1].endswith("minimax_refmod.py") and c[c.index("--grid") + 1] == "8" and c[c.index("--steps") + 1] == "500"
        and "--network_dim" not in c and "--learning_rate" not in c)
     ck("Companion LoRA Off -> no --companion_lora_epochs", "--companion_lora_epochs" not in c)
+    ck("the standard-RefMod reference block is on the card and names their defaults",
+       app._refmod_std_hint.winfo_manager() and "16 images" in app._refmod_std_hint.cget("text")
+       and "1024" in app._refmod_std_hint.cget("text") and "5,120" in app._refmod_std_hint.cget("text"))
     ck("all three rows on the card; LoRA default Off; every knob registered",
        app._refmod_lora_frame.winfo_manager() and app._refmod_opt_frame.winfo_manager()
        and app.entries["MINIMAX_REFMOD_LORA"].get() == "Off"
