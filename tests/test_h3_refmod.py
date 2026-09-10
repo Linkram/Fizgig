@@ -336,7 +336,7 @@ from fizgig.minimax import trainer as _tr  # noqa: E402
 _ts = inspect.getsource(_tr.train_minimax)
 ck("train_minimax: builds the mod from the caches, trains on every still by default, rides it on every step and preview, attaches it to every save",
    "refmod_out: str = None" in _ts and "collect_refs(_cache_dirs" in _ts and "exclude_refs_from_training(group" in _ts
-   and _ts.count("ref_latents=([_refmod.to(device") == 2 and _ts.count("_attach_refmod(") >= 3)
+   and _ts.count("ref_latents=([_refmod") == 2 and "refmod_train_on_refs: bool = True" in _ts and _ts.count("_attach_refmod(") >= 3)
 ck("compute_loss takes ref_latents and passes it to the model on both branches",
    "ref_latents=None" in inspect.getsource(_tr.compute_loss) and inspect.getsource(_tr.compute_loss).count("**_ref_kw") == 2)
 from fizgig.minimax.refmod import attach_mod_to_file  # noqa: E402
