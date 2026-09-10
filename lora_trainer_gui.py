@@ -4179,6 +4179,18 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_REFS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_REFS", REFMOD_DEFAULTS["MINIMAX_REFMOD_REFS"])))
             self.entries["MINIMAX_REFMOD_REFS"].pack(side=tk.LEFT)
+            # Live token estimate against the node pack's default extractor cap (5,120).
+            self._refmod_tokens_lbl = tk.Label(self._refmod_frame, text="", font=(FONT_FAMILY, 9),
+                                               fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
+            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 0))
+            for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
+                self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
+                self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
+            try:
+                self.dataset_megapixels_var.trace_add("write", lambda *a: self._refresh_refmod_tokens())
+            except Exception:
+                pass
+            self._refresh_refmod_tokens()
 
             # Row 2 — the mod optimiser's knobs (free text; blank = the measured default).
             self._refmod_opt_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
@@ -7574,6 +7586,46 @@ class LoRATrainerGUI:
 
     def _is_refmod_arch(self) -> bool:
         return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_refmod", False)
+
+    REFMOD_TOKEN_CAP = 5120      # the node pack's Extract default max_tokens
+
+    def refmod_token_estimate(self, grid_label, refs_label, megapixels):
+        """(tokens per reference, total or None when 'all') for the card's live readout.
+        Full: a reference at the dataset's Target Megapixels is (W/16/2)*(H/16/2) tokens — MP*1e6/1024;
+        a pooled grid g is about (g/2)^2 (aspect-corrected grids are a little smaller)."""
+        g = refmod_grid_value(grid_label)
+        try:
+            mp = float(str(megapixels or "0.25").split(" ")[0])
+        except ValueError:
+            mp = 0.25
+        per = int(round(mp * 1e6 / 1024.0)) if g == "full" else max(1, (int(g) // 2) ** 2)
+        r = str(refs_label or "8").strip().lower()
+        if r.startswith("all"):
+            return per, None
+        try:
+            return per, per * max(1, int(float(r)))
+        except ValueError:
+            return per, per * 8
+
+    def _refresh_refmod_tokens(self):
+        lbl = getattr(self, "_refmod_tokens_lbl", None)
+        if lbl is None:
+            return
+        try:
+            per, total = self.refmod_token_estimate(
+                self.entries["MINIMAX_REFMOD_GRID"].get(), self.entries["MINIMAX_REFMOD_REFS"].get(),
+                getattr(self, "dataset_megapixels_var", None) and self.dataset_megapixels_var.get())
+            cap = self.REFMOD_TOKEN_CAP
+            if total is None:
+                lbl.config(text=f"≈ {per:,} tokens per reference (standard cap {cap:,} ≈ {max(1, cap // per)} refs)",
+                           fg=COLORS["text_secondary"])
+            else:
+                over = total > cap
+                lbl.config(text=f"≈ {total:,} tokens ({per:,} per ref; standard cap {cap:,}"
+                                + (" — OVER" if over else "") + ")",
+                           fg=COLORS["warning"] if over else COLORS["text_secondary"])
+        except Exception:
+            pass
 
     def _set_widget_visible(self, w, show: bool):
         """Show/hide a single widget, working for both grid- and pack-managed widgets.

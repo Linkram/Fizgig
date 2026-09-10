@@ -219,6 +219,16 @@ try:
        c[1].endswith("minimax_refmod.py") and c[c.index("--grid") + 1] == "8" and c[c.index("--steps") + 1] == "500"
        and "--network_dim" not in c and "--learning_rate" not in c)
     ck("Companion LoRA Off -> no --companion_lora_epochs", "--companion_lora_epochs" not in c)
+    per, total = app.refmod_token_estimate("Full reference (recommended — carries the face)", "8", "0.25")
+    ck("token estimate: Full at 0.25 MP ≈ 244 per ref, 8 refs ≈ 1,952 (under the 5,120 cap)", per == 244 and total == 1952)
+    per16, tot16 = app.refmod_token_estimate("16×16 (256 tokens, concept-level)", "16", "0.25")
+    ck("token estimate: 16x16 grid = 64 per ref", per16 == 64 and tot16 == 1024)
+    _, tot_all = app.refmod_token_estimate("Full reference (recommended — carries the face)", "all", "1.0")
+    ck("token estimate: 'all' gives per-ref only", tot_all is None)
+    app.entries["MINIMAX_REFMOD_REFS"].set("all"); app._refresh_refmod_tokens()
+    ck("live readout shows per-reference figure and how many refs the cap allows",
+       "per reference" in app._refmod_tokens_lbl.cget("text"))
+    app.entries["MINIMAX_REFMOD_REFS"].set("8"); app._refresh_refmod_tokens()
     ck("the standard-RefMod reference block is on the card and names their defaults",
        app._refmod_std_hint.winfo_manager() and "16 images" in app._refmod_std_hint.cget("text")
        and "1024" in app._refmod_std_hint.cget("text") and "5,120" in app._refmod_std_hint.cget("text"))

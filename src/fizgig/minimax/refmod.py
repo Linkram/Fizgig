@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 NODE_META_KEY = "refmod_meta"
 NODE_FORMAT_VERSION = 2
+NODE_TOKEN_CAP = 5120        # the node pack's Extract default `max_tokens`; its loader does not cap
 ARCH = "minimaxh3"
 MAX_REFS_DEFAULT = 8
 
@@ -586,8 +587,15 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                     + ", ".join(r[0] for r in refs))
         mod0, pool_label = build_mod(refs, grid)
         mode = "training" if grid is not None else "encode"
-        logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {token_count(mod0)} tokens, "
-                    f"mode {mode})")
+        _tok = token_count(mod0)
+        logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {_tok} tokens, "
+                    f"mode {mode}) — the node pack's extractor caps at {NODE_TOKEN_CAP} by default")
+        if _tok > NODE_TOKEN_CAP:
+            logger.warning(f"[refmod] {_tok} tokens is ABOVE the standard extractor's default cap "
+                           f"({NODE_TOKEN_CAP}). The loaders don't refuse it, but every one of "
+                           f"those tokens rides in the sequence at each sampling step — slower and "
+                           f"more VRAM at generation. Fewer References or a pooled Grid brings it "
+                           f"down.")
         source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
 
     uncond_text = None
