@@ -1027,14 +1027,28 @@ REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32�
                        "16×16 (256 tokens, concept-level)", "8×8 (64 tokens, stackable)"]
 REFMOD_STEP_OPTIONS = ["0 (encode only — same as the ComfyUI extractor)", "200 (recommended)",
                        "500", "1000"]
+# Companion LoRA: a rank-2 LoRA trained for N epochs WITH the mod in the conditioning, stored in
+# the same file (the standard RefMod loader ignores it; the Fizgig ComfyUI node loads both).
+REFMOD_LORA_OPTIONS = ["Off", "Rank 2, 2 epochs", "Rank 2, 4 epochs"]
 REFMOD_BUILT_IN_PRESETS = {
     "✨ MiniMax H3 RefMod (Full reference, 200 steps)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
+        "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[0],
         "MINIMAX_CLIP_STILL": True,
     },
 }
+
+
+def refmod_lora_epochs(label) -> str:
+    """'Rank 2, 2 epochs' -> '2'; 'Off' / anything else -> '0'."""
+    s = str(label or "").strip().lower()
+    if not s or s.startswith("off"):
+        return "0"
+    import re as _re
+    m = _re.search(r"(\d+)\s*epoch", s)
+    return m.group(1) if m else "0"
 
 
 def refmod_grid_value(label) -> str:
@@ -4118,6 +4132,14 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_STEPS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_STEP_OPTIONS[1])))
             self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT)
+            self._refmod_lora_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_lora_frame, text="Companion LoRA:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_LORA"] = ttk.Combobox(
+                self._refmod_lora_frame, values=list(REFMOD_LORA_OPTIONS), state="readonly", width=18)
+            self.entries["MINIMAX_REFMOD_LORA"].set(
+                str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[0])))
+            self.entries["MINIMAX_REFMOD_LORA"].pack(side=tk.LEFT)
             self._refmod_hint = tk.Label(
                 model_card,
                 text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
@@ -4129,14 +4151,19 @@ class LoRATrainerGUI:
                       "(measured); the pooled grids are small, stackable, concept-level mods. "
                       "Steps 0 makes a plain encode-only mod. Output: one file, "
                       "<name>.safetensors, in the LoRA output folder — copy it to "
-                      "ComfyUI/models/refmods/. Previews: epoch 0 is before optimising, the "
-                      "last is the finished mod. Mods "
+                      "ComfyUI/models/refmods/. Previews: epoch 0 is before optimising, then "
+                      "the finished mod, then (with a Companion LoRA) the mod plus LoRA. "
+                      "Companion LoRA: a rank-2 LoRA trained with the mod in the conditioning, "
+                      "stored IN the same file — the standard Load H3 RefMods node ignores it, "
+                      "the Fizgig H3 RefMod node (comfyui_nodes/ComfyUI-Fizgig-RefMod in the "
+                      "Fizgig folder) loads both. Mods "
                       "ride H3's Reference (ref2va) model — Training Base switches to it here, "
                       "and that is the model to load in ComfyUI with the mod."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
+                self._refmod_lora_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
 
         # === Presets card ===
@@ -8137,6 +8164,7 @@ class LoRATrainerGUI:
         (training, memory, timestep/optimizer/scheduler as the family rules above left them)."""
         is_refmod = self._is_refmod_arch()
         _fr = getattr(self, "_refmod_frame", None)
+        _lfr = getattr(self, "_refmod_lora_frame", None)
         _hint = getattr(self, "_refmod_hint", None)
         if is_refmod:
             # A mod rides the model's native ref2va path at generation (the node pack appends
@@ -8158,9 +8186,13 @@ class LoRATrainerGUI:
                 _note = getattr(self, "_minimax_sample_note", None)
                 _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
                 _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
+                if _lfr is not None:
+                    _lfr.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
+                if _lfr is not None:
+                    _lfr.pack_forget()
                 _hint.pack_forget()
         secs = getattr(self, "collapsible_sections", None)
         if not secs or "output" not in secs:
@@ -28676,6 +28708,8 @@ class LoRATrainerGUI:
                                     if "MINIMAX_REFMOD_GRID" in self.entries else ""),
             "MINIMAX_REFMOD_STEPS": (self.entries["MINIMAX_REFMOD_STEPS"].get()
                                      if "MINIMAX_REFMOD_STEPS" in self.entries else ""),
+            "MINIMAX_REFMOD_LORA": (self.entries["MINIMAX_REFMOD_LORA"].get()
+                                    if "MINIMAX_REFMOD_LORA" in self.entries else ""),
             "KREA2_EMA": self.entries["KREA2_EMA"].get(),
             "MINIMAX_ADAPTER_RAMP": self.entries["MINIMAX_ADAPTER_RAMP"].get(),
             "MINIMAX_CAPTION_DROPOUT": self.entries["MINIMAX_CAPTION_DROPOUT"].get(),
@@ -29806,6 +29840,9 @@ class LoRATrainerGUI:
             "--steps", refmod_steps_value(self.settings.get("MINIMAX_REFMOD_STEPS")),
             "--seed", str(self.settings.get("SEED", 42) or 42),
         ]
+        _cle = refmod_lora_epochs(self.settings.get("MINIMAX_REFMOD_LORA"))
+        if _cle != "0":
+            cmd += ["--companion_lora_epochs", _cle]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]

@@ -67,7 +67,8 @@ with tempfile.TemporaryDirectory() as td:
     p = save_refmod(os.path.join(td, "subj"), mod, name="subj", mode="training", pool=label,
                     optimize_steps=200, source_shape="1x42x22 +1x40x24 +1x42x22",
                     tags=["0 img, 3 clip stills", "fizgig optimised"], extra={"ss_refmod_steps": "200"})
-    lat, meta = load_refmod(p)
+    lat, meta, lsd = load_refmod(p)
+    ck("a mod without a LoRA half loads with lora_sd None", lsd is None)
     ck("round trip: latent [1,24,3,16,8] fp16 on disk, meta kind video / latent_t 3 / mode training / v2",
        tuple(lat.shape) == (1, 24, 3, 16, 8) and meta["kind"] == "video" and meta["latent_t"] == 3
        and meta["mode"] == "training" and meta["_format_version"] == NODE_FORMAT_VERSION
@@ -93,8 +94,31 @@ with tempfile.TemporaryDirectory() as td:
         print("skip  node pack reader (set FIZGIG_REFMOD_NODE_CORE=<path to core.py>)")
     # a single-image mod is kind image
     p1 = save_refmod(os.path.join(td, "one"), mod[:, :, :1], name="one", mode="training", pool="1x16x8", optimize_steps=0)
-    _, meta1 = load_refmod(p1)
+    _, meta1, _ = load_refmod(p1)
     ck("single reference -> kind image, latent_t 1", meta1["kind"] == "image" and meta1["latent_t"] == 1)
+    # the superset file: mod + a companion LoRA in ONE safetensors
+    fake_lora = {"lora_unet_blocks_0_attn_q.lora_down.weight": torch.randn(2, 5376, dtype=torch.bfloat16),
+                 "lora_unet_blocks_0_attn_q.lora_up.weight": torch.zeros(5376, 2, dtype=torch.bfloat16),
+                 "lora_unet_blocks_0_attn_q.alpha": torch.tensor(2.0)}
+    p2 = save_refmod(os.path.join(td, "pair"), mod, name="pair", mode="training", pool=label, optimize_steps=200,
+                     extra={"ss_refmod_lora": "1", "ss_network_dim": "2"}, lora_sd=fake_lora)
+    lat2, meta2, lsd2 = load_refmod(p2)
+    ck("pair file: latent + 3 lora_unet_* tensors, our reader returns both halves",
+       tuple(lat2.shape) == (1, 24, 3, 16, 8) and lsd2 is not None and set(lsd2) == set(fake_lora)
+       and meta2["kind"] == "video")
+    with safe_open(p2, "pt") as f:
+        ck("pair file header still carries refmod_meta (v2) + ss_refmod_lora",
+           NODE_META_KEY in f.metadata() and f.metadata().get("ss_refmod_lora") == "1")
+    try:
+        save_refmod(os.path.join(td, "bad"), mod, name="bad", mode="training", pool=label, optimize_steps=0,
+                    lora_sd={"latent": torch.zeros(1)})
+        ck("a LoRA dict may not carry non-lora_unet keys", False)
+    except ValueError:
+        ck("a LoRA dict may not carry non-lora_unet keys", True)
+    if node_core and os.path.isfile(node_core):
+        m2 = core.H3RefMod.load(p2[:-len(".safetensors")])
+        ck("node pack's reader loads the PAIR file unchanged (ignores the LoRA tensors): kind video, 96 tokens",
+           m2.kind == "video" and m2.token_count == 96 and tuple(m2.latent.shape) == (1, 24, 3, 16, 8))
 
 # --- the GUI: a Base Model entry, two controls, everything else hidden ---------------------------
 import tkinter as tk  # noqa: E402
@@ -129,6 +153,16 @@ try:
     ck("builder: minimax_refmod.py --grid 8 --steps 500, no LoRA flags",
        c[1].endswith("minimax_refmod.py") and c[c.index("--grid") + 1] == "8" and c[c.index("--steps") + 1] == "500"
        and "--network_dim" not in c and "--learning_rate" not in c)
+    ck("Companion LoRA Off -> no --companion_lora_epochs", "--companion_lora_epochs" not in c)
+    ck("Companion LoRA control is on the card, registered, default Off",
+       app._refmod_lora_frame.winfo_manager() and "MINIMAX_REFMOD_LORA" in app.entries
+       and app.entries["MINIMAX_REFMOD_LORA"].get() == "Off")
+    app.settings["MINIMAX_REFMOD_LORA"] = "Rank 2, 2 epochs"
+    c2 = [str(x) for x in app._build_minimax_refmod_command()]
+    ck("Companion LoRA 'Rank 2, 2 epochs' -> --companion_lora_epochs 2",
+       "--companion_lora_epochs" in c2 and c2[c2.index("--companion_lora_epochs") + 1] == "2")
+    ck("label parsing", g.refmod_lora_epochs("Rank 2, 4 epochs") == "4" and g.refmod_lora_epochs("Off") == "0"
+       and g.refmod_lora_epochs("") == "0")
     app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
     back = [k for k in ("training", "memory", "optimizer", "scheduler") if app.collapsible_sections[k].winfo_manager()]
     ck("back on MiniMax H3: sections return, card hidden", len(back) == 4 and not app._refmod_frame.winfo_manager())
