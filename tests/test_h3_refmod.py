@@ -62,6 +62,23 @@ full, label_f = build_mod(refs, None)
 ck("full mode: every ref on the FIRST ref's even canvas", tuple(full.shape) == (1, 24, 3, 42, 22))
 ck("full mode label names pixels (WxH)", "352x672" in label_f, label_f)
 
+# --- reference stills held out of training ----------------------------------------------------------
+from fizgig.minimax.refmod import exclude_refs_from_training  # noqa: E402
+from fizgig.dataset.image_dataset import BucketBatchManager  # noqa: E402
+import types as _types  # noqa: E402
+_items = [_types.SimpleNamespace(latent_cache_path=f"C:/c/{n}_minimaxh3.safetensors") for n in ("a", "b", "c", "d", "e")]
+_ds = _types.SimpleNamespace(batch_manager=BucketBatchManager({(496, 496): _items[:3], (512, 384): _items[3:]}, 1), num_train_items=5)
+_grp = _types.SimpleNamespace(datasets=[_ds], num_train_items=5)
+_rm, _left = exclude_refs_from_training(_grp, ["a", "d", "zzz"])
+ck("exclude_refs: 2 of 5 removed, 3 remain, buckets rebuilt", (_rm, _left) == (2, 3) and len(_ds.batch_manager) == 3
+   and all(os.path.basename(i.latent_cache_path)[0] in "bce" for b in _ds.batch_manager.buckets.values() for i in b))
+_rm2, _left2 = exclude_refs_from_training(_grp, ["b", "c", "e"])
+ck("exclude_refs: removing everything leaves 0 (the run then keeps the refs in and says so)", (_rm2, _left2) == (3, 0))
+src_run = inspect.getsource(trainer_refmod := __import__("fizgig.minimax.refmod", fromlist=["run_refmod"]).run_refmod)
+ck("run_refmod holds the refs out by default and only when something trains",
+   "exclude_refs: bool = True" in inspect.getsource(trainer_refmod)
+   and "if exclude_refs and (steps > 0 or companion_lora_epochs > 0):" in src_run)
+
 # --- the file: the node pack's own reader loads it ---------------------------------------------
 with tempfile.TemporaryDirectory() as td:
     p = save_refmod(os.path.join(td, "subj"), mod, name="subj", mode="training", pool=label,

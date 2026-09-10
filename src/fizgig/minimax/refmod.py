@@ -87,6 +87,39 @@ def collect_refs(cache_dirs, max_refs: int = MAX_REFS_DEFAULT) -> List[Tuple[str
     return refs
 
 
+def exclude_refs_from_training(group, ref_stems) -> Tuple[int, int]:
+    """Hold the reference stills OUT of the training set: the mod optimiser and the companion
+    LoRA must not train on the very photos the mod shows the model (Peter, 10 Sep 2026 — the
+    LoRA would just learn to copy what the reference block already carries). Rebuilds each
+    dataset's bucket manager without those items. A clip shares its still's cache file, so a
+    clip whose still is a reference goes too (clips are skipped by the optimisers anyway).
+    Returns (items removed, items remaining)."""
+    from fizgig.dataset.image_dataset import BucketBatchManager
+    stems = set(ref_stems)
+    suffix = f"_{ARCH}.safetensors"
+    removed = 0
+    for ds in group.datasets:
+        bm = getattr(ds, "batch_manager", None)
+        if bm is None:
+            continue
+        kept = {}
+        for reso, items in bm.buckets.items():
+            keep = []
+            for it in items:
+                base = os.path.basename(getattr(it, "latent_cache_path", "") or "")
+                stem = base[: -len(suffix)] if base.endswith(suffix) else base
+                if stem in stems:
+                    removed += 1
+                else:
+                    keep.append(it)
+            if keep:
+                kept[reso] = keep
+        ds.batch_manager = BucketBatchManager(kept, bm.batch_size, num_timestep_buckets=bm.num_timestep_buckets)
+        ds.num_train_items = sum(len(b) for b in kept.values())
+    group.num_train_items = sum(getattr(ds, "num_train_items", 0) for ds in group.datasets)
+    return removed, group.num_train_items
+
+
 def aspect_grid(pool: int, aspect_hw: float) -> Tuple[int, int]:
     """Even (h, w) latent grid whose long edge is `pool` and whose aspect matches the source —
     the node's own rule (a portrait pooled into a square grid comes out "fat")."""
@@ -533,7 +566,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, companion_lora_epochs: int = 0,
-               companion_lora_lr: float = COMPANION_LR, companion_lora_rank: int = COMPANION_DIM) -> str:
+               companion_lora_lr: float = COMPANION_LR, companion_lora_rank: int = COMPANION_DIM,
+               exclude_refs: bool = True) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -597,6 +631,19 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                            f"more VRAM at generation. Fewer References or a pooled Grid brings it "
                            f"down.")
         source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
+
+    if exclude_refs and (steps > 0 or companion_lora_epochs > 0):
+        _rm, _left = exclude_refs_from_training(group, [r[0] for r in refs])
+        if _left <= 0:
+            logger.warning(f"[refmod] every still in the dataset is a reference — nothing would be "
+                           f"left to train on, so the references stay in the training set")
+            # rebuild is destructive; reload the group as it was
+            group = generate_dataset_group_by_blueprint(
+                blueprint.dataset_group, training=True, num_timestep_buckets=None, shared_epoch=shared_epoch)
+            group._fizgig_shared_epoch = shared_epoch
+        else:
+            logger.info(f"[refmod] {_rm} reference still(s) held out of training — the optimiser and "
+                        f"the companion LoRA train on the other {_left} item(s)")
 
     uncond_text = None
     for d in cache_dirs:

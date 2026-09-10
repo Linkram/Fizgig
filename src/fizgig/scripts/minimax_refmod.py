@@ -61,6 +61,10 @@ def setup_parser():
                         "node loads both halves, the standard RefMod loader still reads the mod)")
     p.add_argument("--companion_lora_lr", type=float, default=2e-4)
     p.add_argument("--companion_lora_rank", type=int, default=2, help="companion LoRA rank (alpha = rank)")
+    p.add_argument("--train_on_refs", action="store_true",
+                   help="keep the reference stills IN the training set (default: they are held out, "
+                        "so the optimiser and the companion LoRA never train on the photos the mod "
+                        "already shows the model)")
     p.add_argument("--init_from", default=None,
                    help="start from an existing mod file instead of the caches (re-preview it "
                         "with --steps 0, or keep optimising it)")
@@ -89,7 +93,7 @@ def main():
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, init_from=a.init_from,
                companion_lora_epochs=a.companion_lora_epochs, companion_lora_lr=a.companion_lora_lr,
-               companion_lora_rank=a.companion_lora_rank,
+               companion_lora_rank=a.companion_lora_rank, exclude_refs=not a.train_on_refs,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 
 
