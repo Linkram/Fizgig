@@ -213,8 +213,8 @@ ck("entry is MiniMax (caches, paths) + is_refmod, suffix refmod",
 ck("grid label parsing", g.refmod_grid_value("16×16 (256 tokens, concept-level)") == "16"
    and g.refmod_grid_value("Full reference (recommended — carries the face)") == "full" and g.refmod_grid_value("8×8 (64 tokens, stackable)") == "8")
 pr = next(iter(g.REFMOD_BUILT_IN_PRESETS.values()))
-ck("the one preset: Full reference, Companion LoRA On (rank 2, 2 epochs, 2e-4), clip still on",
-   pr["MINIMAX_REFMOD_GRID"].startswith("Full") and pr["MINIMAX_REFMOD_LORA"] == "On"
+ck("the one preset: Full reference, 16 refs, Companion LoRA Off (rank 2, 2 epochs, 2e-4 when on), clip still on",
+   pr["MINIMAX_REFMOD_GRID"].startswith("Full") and pr["MINIMAX_REFMOD_LORA"] == "Off" and pr["MINIMAX_REFMOD_REFS"] == "16"
    and pr["MINIMAX_REFMOD_LORA_RANK"] == "2" and pr["MINIMAX_REFMOD_LORA_EPOCHS"] == "2"
    and pr["MINIMAX_REFMOD_LORA_LR"] == "2e-4" and pr.get("MINIMAX_CLIP_STILL") is True)
 ck("parsers: legacy 'Rank 2, 2 epochs' label reads as On; junk numbers fall back",
@@ -236,10 +236,10 @@ try:
     ck("RefMod preset applied on entry", app.custom_preset_var.get().startswith("✨ MiniMax H3 RefMod"))
     ck("Target MP on the card shares the Dataset section's variable",
        str(app._refmod_mp_combo.cget("textvariable")) == str(app.dataset_megapixels_var))
-    ck("card defaults: LoRA On, rank 2, epochs 2, LR 2e-4, refs 8",
-       app.entries["MINIMAX_REFMOD_LORA"].get() == "On" and app.entries["MINIMAX_REFMOD_LORA_RANK"].get() == "2"
+    ck("card defaults: LoRA Off, rank 2, epochs 2, LR 2e-4, refs 16",
+       app.entries["MINIMAX_REFMOD_LORA"].get() == "Off" and app.entries["MINIMAX_REFMOD_LORA_RANK"].get() == "2"
        and app.entries["MINIMAX_REFMOD_LORA_EPOCHS"].get() == "2" and app.entries["MINIMAX_REFMOD_LORA_LR"].get() == "2e-4"
-       and app.entries["MINIMAX_REFMOD_REFS"].get() == "8")
+       and app.entries["MINIMAX_REFMOD_REFS"].get() == "16")
     per, total = app.refmod_token_estimate("Full reference (recommended — carries the face)", "8", "0.25")
     ck("token estimate: Full at 0.25 MP ≈ 244 per ref, 8 refs ≈ 1,952 (under the 5,120 cap)", per == 244 and total == 1952)
     _, tot_all = app.refmod_token_estimate("Full reference (recommended — carries the face)", "all", "1.0")
@@ -256,9 +256,9 @@ try:
     app.sample_enabled_var.set(False)
     before = dict(app.settings)
     c = [str(x) for x in app._build_minimax_refmod_command()]
-    ck("LoRA On -> minimax_train.py in RefMod mode: --refmod_out <out>/<name>.safetensors, --refmod_grid full, --refmod_refs 8",
+    ck("LoRA On -> minimax_train.py in RefMod mode: --refmod_out <out>/<name>.safetensors, --refmod_grid full, --refmod_refs 16",
        c[1].endswith("minimax_train.py") and c[c.index("--refmod_out") + 1].replace("\\", "/").endswith("out/s_refmod.safetensors")
-       and c[c.index("--refmod_grid") + 1] == "full" and c[c.index("--refmod_refs") + 1] == "8")
+       and c[c.index("--refmod_grid") + 1] == "full" and c[c.index("--refmod_refs") + 1] == "16")
     ck("EMA on the card: default 0.98 -> --ema_decay 0.98", c[c.index("--ema_decay") + 1] == "0.98")
     app.settings["MINIMAX_REFMOD_EMA"] = "Short run (window = ¼ of the run)"
     _cs = [str(x) for x in app._build_minimax_refmod_command()]

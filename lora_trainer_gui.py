@@ -1035,19 +1035,22 @@ REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
 # 10 Sep): the measured defaults are the starting values; the fields are free text.
 REFMOD_EMA_OPTIONS = ["0.98 (MiniMax default)", "Short run (window = ¼ of the run)", "Off"]
 REFMOD_DEFAULTS = {
-    "MINIMAX_REFMOD_REFS": "8",
+    "MINIMAX_REFMOD_REFS": "16",
     "MINIMAX_REFMOD_LORA_RANK": "2",
     "MINIMAX_REFMOD_LORA_EPOCHS": "2",
     "MINIMAX_REFMOD_LORA_LR": "2e-4",
     "MINIMAX_REFMOD_EMA": REFMOD_EMA_OPTIONS[0],
 }
 REFMOD_BUILT_IN_PRESETS = {
-    # The measured recipe (10 Sep 2026): a plain Full-canvas mod + a rank-2 companion LoRA trained
-    # on the OTHER stills (references held out). Optimising the latent as well overshoots.
-    "✨ MiniMax H3 RefMod (Full reference + companion LoRA)": {
+    # Measured 10 Sep 2026 (mbacc photos, ref2va, ArcFace vs the dataset): the plain Full-canvas
+    # mod with 16 references is the strongest file (portraits 70); the companion LoRA — eleven
+    # two-epoch arms and one ten-epoch arm across LR / EMA / base / references / hold-out /
+    # blocks / density / adapter — never lifted likeness beyond noise and dropped portraits
+    # ~10 points (pose drift toward the dataset). Off by default; the machinery stays.
+    "✨ MiniMax H3 RefMod (Full reference, 16 refs)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
-        "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[1],
+        "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[0],
         **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
     },
@@ -4202,7 +4205,7 @@ class LoRATrainerGUI:
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_LORA"] = ttk.Combobox(
                 self._refmod_lora_frame, values=list(REFMOD_LORA_OPTIONS), state="readonly", width=5)
-            _lv = str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[1]))
+            _lv = str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[0]))
             self.entries["MINIMAX_REFMOD_LORA"].set("On" if refmod_lora_on(_lv) else "Off")
             self.entries["MINIMAX_REFMOD_LORA"].pack(side=tk.LEFT, padx=(0, 16))
             for _lab, _key, _w in (("Rank:", "MINIMAX_REFMOD_LORA_RANK", 4), ("Epochs:", "MINIMAX_REFMOD_LORA_EPOCHS", 4),
@@ -4223,13 +4226,15 @@ class LoRATrainerGUI:
                 model_card,
                 text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
                       "nodes load like a LoRA. Fizgig builds it from the dataset's photos and "
-                      "clip stills (photos first) and pairs it with a Companion LoRA: a real H3 "
-                      "training run — every MiniMax-tab default applies (training structure, "
-                      "high-noise LR, Optimised Likeness, the training adapter, EMA) — at the "
-                      "rank, epochs and LR above, trained on the OTHER stills with the mod riding "
-                      "as the reference on every step, so the LoRA learns only what a reference "
-                      "can't carry (measured: the strongest carry of the subject into new scenes). "
-                      "The references are held out of its training. Grid: Full keeps every "
+                      "clip stills (photos first). Measured: the plain Full mod with 16 "
+                      "references is the strongest file (likeness at the level of a second real "
+                      "photo). Companion LoRA (optional, Off by default): a real H3 training run "
+                      "— every MiniMax-tab default applies (training structure, high-noise LR, "
+                      "Optimised Likeness, the training adapter, EMA) — at the rank, epochs and "
+                      "LR above, on the OTHER stills with the mod riding as the reference on "
+                      "every step, stored in the same file. Measured on a 29-photo set it did not "
+                      "lift likeness beyond noise in 2 or 10 epochs and pulled poses toward the "
+                      "dataset's; it is here for bigger sets and your own tests. Grid: Full keeps every "
                       "reference at its latent size on the first reference's canvas — the only "
                       "setting that carries a face (measured); the pooled grids are small, "
                       "stackable, concept-level mods. References: how many stills stack into "
