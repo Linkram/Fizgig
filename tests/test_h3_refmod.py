@@ -85,8 +85,8 @@ ck("exclude_refs: 2 of 5 removed, 3 remain, buckets rebuilt", (_rm, _left) == (2
 _rm2, _left2 = exclude_refs_from_training(_grp, ["b", "c", "e"])
 ck("exclude_refs: removing everything leaves 0 (the run then keeps the refs in and says so)", (_rm2, _left2) == (3, 0))
 src_run = inspect.getsource(trainer_refmod := __import__("fizgig.minimax.refmod", fromlist=["run_refmod"]).run_refmod)
-ck("run_refmod holds the refs out by default and only when something trains",
-   "exclude_refs: bool = True" in inspect.getsource(trainer_refmod)
+ck("run_refmod trains on every still by default; hold-out is opt-in and only when something trains",
+   "exclude_refs: bool = False" in inspect.getsource(trainer_refmod)
    and "if exclude_refs and (steps > 0 or companion_lora_epochs > 0):" in src_run)
 
 # --- the file: the node pack's own reader loads it ---------------------------------------------
@@ -334,7 +334,7 @@ ck("trainer: 'short' EMA sizes the window to the run (1 - 4/steps, ramp 2) and r
 # --- the trainer's RefMod mode (source pins) ---------------------------------------------------------
 from fizgig.minimax import trainer as _tr  # noqa: E402
 _ts = inspect.getsource(_tr.train_minimax)
-ck("train_minimax: builds the mod from the caches, holds the refs out, rides it on every step and preview, attaches it to every save",
+ck("train_minimax: builds the mod from the caches, trains on every still by default, rides it on every step and preview, attaches it to every save",
    "refmod_out: str = None" in _ts and "collect_refs(_cache_dirs" in _ts and "exclude_refs_from_training(group" in _ts
    and _ts.count("ref_latents=([_refmod.to(device") == 2 and _ts.count("_attach_refmod(") >= 3)
 ck("compute_loss takes ref_latents and passes it to the model on both branches",

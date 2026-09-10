@@ -2421,7 +2421,9 @@ def train_minimax(
     refmod_out: str = None,                 # the pair file's path (also names the epoch files)
     refmod_grid: str = "full",              # "full" | "8" | "16" | "32"
     refmod_refs: int = 8,
-    refmod_train_on_refs: bool = False,     # keep the references in the training set
+    refmod_train_on_refs: bool = True,      # the LoRA trains on EVERY still, references included
+                                            # (Peter, 10 Sep 2026: "the lora should train on them
+                                            # all anyway"); False holds the references out
     refmod_description: str = "",
     refmod_preview_strength: float = 1.0,   # previews: the mod at this reference strength (node rule)
     device: str = "cuda",

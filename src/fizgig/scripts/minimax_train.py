@@ -309,8 +309,9 @@ def setup_parser() -> argparse.ArgumentParser:
                         "copied to this path.")
     p.add_argument("--refmod_grid", default="full", help="full | 8 | 16 | 32 (latent cells, long edge)")
     p.add_argument("--refmod_refs", type=int, default=8, help="how many stills stack into the mod")
-    p.add_argument("--refmod_train_on_refs", action="store_true",
-                   help="keep the reference stills IN the training set (default: held out)")
+    p.add_argument("--refmod_holdout_refs", dest="refmod_train_on_refs", action="store_false",
+                   help="hold the reference stills OUT of the LoRA's training set (default: the LoRA "
+                        "trains on every still, references included)")
     p.add_argument("--refmod_description", default="", help="stored in the mod's header")
     p.add_argument("--refmod_preview_strength", type=float, default=1.0,
                    help="RefMod mode previews: reference strength 0-1 (the node pack's rule: below 1 "
