@@ -259,6 +259,14 @@ try:
     ck("LoRA On -> minimax_train.py in RefMod mode: --refmod_out <out>/<name>.safetensors, --refmod_grid full, --refmod_refs 8",
        c[1].endswith("minimax_train.py") and c[c.index("--refmod_out") + 1].replace("\\", "/").endswith("out/s_refmod.safetensors")
        and c[c.index("--refmod_grid") + 1] == "full" and c[c.index("--refmod_refs") + 1] == "8")
+    ck("EMA on the card: default 0.98 -> --ema_decay 0.98", c[c.index("--ema_decay") + 1] == "0.98")
+    app.settings["MINIMAX_REFMOD_EMA"] = "Short run (window = ¼ of the run)"
+    _cs = [str(x) for x in app._build_minimax_refmod_command()]
+    ck("EMA Short run -> --ema_decay short", _cs[_cs.index("--ema_decay") + 1] == "short")
+    app.settings["MINIMAX_REFMOD_EMA"] = "Off"
+    _co = [str(x) for x in app._build_minimax_refmod_command()]
+    ck("EMA Off -> no --ema_decay", "--ema_decay" not in _co)
+    app.settings["MINIMAX_REFMOD_EMA"] = g.REFMOD_DEFAULTS["MINIMAX_REFMOD_EMA"]
     ck("...with the card's rank / epochs / LR and the MiniMax defaults (adapter, likeness blocks, base quant, EMA)",
        c[c.index("--network_dim") + 1] == "2" and c[c.index("--network_alpha") + 1] == "2"
        and c[c.index("--max_train_epochs") + 1] == "2" and c[c.index("--learning_rate") + 1] == "2e-4"
@@ -300,6 +308,18 @@ try:
     root.destroy()
 except tk.TclError as e:
     print(f"skip  GUI (no display: {e})")
+
+# --- short-run EMA -----------------------------------------------------------------------------------
+from fizgig.training.ema import EMAWeights as _EMA  # noqa: E402
+_net = torch.nn.Linear(4, 4)
+_e = _EMA(_net, 0.9, ramp=2)
+_e.update(); _e.update(); _e.update()
+ck("EMAWeights ramp offset: ramp=2 -> decay (1+n)/(2+n) then capped at decay", abs(min(0.9, 4 / 5) - 0.8) < 1e-9 and _e.ramp == 2)
+_src = inspect.getsource(_tr.train_minimax) if "_tr" in globals() else ""
+from fizgig.minimax import trainer as _tr  # noqa: E402
+_src = inspect.getsource(_tr.train_minimax)
+ck("trainer: 'short' EMA sizes the window to the run (1 - 4/steps, ramp 2) and records ss_ema_mode",
+   "1.0 - 4.0 / _total" in _src and "EMAWeights(network, _d, ramp=2)" in _src and '"ss_ema_mode"' in _src)
 
 # --- the trainer's RefMod mode (source pins) ---------------------------------------------------------
 from fizgig.minimax import trainer as _tr  # noqa: E402

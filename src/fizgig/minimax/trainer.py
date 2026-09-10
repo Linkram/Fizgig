@@ -3913,7 +3913,23 @@ def train_minimax(
                         f"of a mature adapter; this keeps the RATIO steady instead of the rate.")
 
     ema = None
-    if ema_decay and float(ema_decay) > 0:
+    _ema_short = isinstance(ema_decay, str) and ema_decay.strip().lower().startswith("short")
+    if _ema_short:
+        # Short-run EMA (Peter, 10 Sep 2026): the normal ramp (1+n)/(10+n) never reaches 0.98 on a
+        # 40-step run — the saved weights are close to the raw walk, so a higher LR passes
+        # straight through. Size the window to the run instead: decay = 1 - 4/steps (the average
+        # spans roughly the last quarter of the run), with a fast ramp, so a 3-5x LR does the
+        # learning and the average removes the wobble. Batch size is 1 here, so steps = items x
+        # epochs.
+        _total = max(1, int(group.num_train_items) * max(1, int(max_train_epochs)))
+        _d = min(0.995, max(0.5, 1.0 - 4.0 / _total))
+        ema_decay = _d
+        ema = EMAWeights(network, _d, ramp=2)
+        logger.info(f"[ema] SHORT-RUN mode: {_total} steps -> decay {_d:.3f} (window ~ a quarter of "
+                    f"the run), fast ramp — checkpoints and previews use the average, training "
+                    f"runs on the raw weights")
+    elif ema_decay and float(ema_decay) > 0:
+        ema_decay = float(ema_decay)
         ema = EMAWeights(network, float(ema_decay))
         logger.info(f"[ema] ON at decay {float(ema_decay):g} — checkpoints and previews use the "
                     f"smoothed average of the training path; training itself runs on the raw "
@@ -4209,7 +4225,8 @@ def train_minimax(
             "ss_gradient_accumulation": str(_accum_n),
             "ss_adapter_ramp": f"{adapter_ramp:g}" if ramp is not None else "0",
             "ss_lr_warmup_epochs": f"{lr_warmup_epochs:g}",
-            "ss_ema_decay": f"{ema_decay:g}" if ema is not None else "0",
+            "ss_ema_decay": (f"{float(ema_decay):g}" if ema is not None else "0"),
+            "ss_ema_mode": ("short" if _ema_short else ("fixed" if ema is not None else "off")),
             "ss_slow_block_lr_scale": (f"{slow_block_lr_scale:g}" if _slow_used else "1"),
             "ss_caption_dropout": f"{caption_dropout:g}" if uncond_text is not None else "0",
             # One [[datasets]] block per subject is how Multi Concept keeps two people apart, so

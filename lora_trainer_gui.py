@@ -1033,11 +1033,13 @@ REFMOD_LORA_OPTIONS = ["Off", "On"]
 REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
 # Every knob the command line has, so the right settings can be found from the GUI (Peter,
 # 10 Sep): the measured defaults are the starting values; the fields are free text.
+REFMOD_EMA_OPTIONS = ["0.98 (MiniMax default)", "Short run (window = ¼ of the run)", "Off"]
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "8",
     "MINIMAX_REFMOD_LORA_RANK": "2",
     "MINIMAX_REFMOD_LORA_EPOCHS": "2",
     "MINIMAX_REFMOD_LORA_LR": "2e-4",
+    "MINIMAX_REFMOD_EMA": REFMOD_EMA_OPTIONS[0],
 }
 REFMOD_BUILT_IN_PRESETS = {
     # The measured recipe (10 Sep 2026): a plain Full-canvas mod + a rank-2 companion LoRA trained
@@ -4210,6 +4212,13 @@ class LoRATrainerGUI:
                 self.entries[_key] = ttk.Entry(self._refmod_lora_frame, width=_w)
                 self.entries[_key].insert(0, str(self.settings.get(_key, REFMOD_DEFAULTS[_key])))
                 self.entries[_key].pack(side=tk.LEFT, padx=(0, 16))
+            tk.Label(self._refmod_lora_frame, text="EMA:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 6))
+            self.entries["MINIMAX_REFMOD_EMA"] = ttk.Combobox(
+                self._refmod_lora_frame, values=list(REFMOD_EMA_OPTIONS), state="readonly", width=30)
+            self.entries["MINIMAX_REFMOD_EMA"].set(
+                str(self.settings.get("MINIMAX_REFMOD_EMA", REFMOD_DEFAULTS["MINIMAX_REFMOD_EMA"])))
+            self.entries["MINIMAX_REFMOD_EMA"].pack(side=tk.LEFT)
             self._refmod_hint = tk.Label(
                 model_card,
                 text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
@@ -5481,7 +5490,8 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_LR_WARMUP"].set("Off")
         self.entries["MINIMAX_EMA"] = ttk.Combobox(
             self._minimax_smooth_frame, values=["Off", "0.98 (recommended)", "0.99 (stronger)",
-                                                "0.995 (long runs only)"],
+                                                "0.995 (long runs only)",
+                                                "Short run (window = ¼ of the run)"],
             width=18, state="readonly")
         self.entries["MINIMAX_EMA"].set(str(self.settings.get("MINIMAX_EMA", "0.98 (recommended)")))
         self.entries["MINIMAX_EMA"].pack(side=tk.LEFT)
@@ -29987,9 +29997,14 @@ class LoRATrainerGUI:
             _ft_var = getattr(self, "minimax_finetune_var", None)
             _ft_was = bool(_ft_var.get()) if _ft_var is not None else False
             try:
+                _ema_lbl = str(self.settings.get("MINIMAX_REFMOD_EMA", _d["MINIMAX_REFMOD_EMA"]) or "")
+                _ema_set = ("Off" if _ema_lbl.lower().startswith("off")
+                            else ("Short run (window = ¼ of the run)" if _ema_lbl.lower().startswith("short")
+                                  else "0.98 (recommended)"))
                 self.settings.update({"NETWORK_TYPE": "LoRA", "NETWORK_DIM": _rank, "NETWORK_ALPHA": _rank,
                                       "MAX_TRAIN_EPOCHS": _ep, "LEARNING_RATE": _lr,
-                                      "ADAPTIVE_LR": False, "MINIMAX_DISTILL": False})
+                                      "ADAPTIVE_LR": False, "MINIMAX_DISTILL": False,
+                                      "MINIMAX_EMA": _ema_set})
                 if _ft_var is not None:
                     _ft_var.set(False)          # a RefMod pair is always a LoRA, never a fine-tune
                 cmd = self._build_minimax_train_command()
@@ -30106,7 +30121,9 @@ class LoRATrainerGUI:
         # construction, and does not need an epoch count guessed up front. Never emitted.
         # EMA: "0.98 (recommended)" -> 0.98 (a saved "0.99 (recommended)" still parses to 0.99).
         _em = str(self.settings.get("MINIMAX_EMA", "0.98") or "Off").split(" ")[0]
-        if _em.replace(".", "", 1).isdigit():
+        if _em.lower().startswith("short"):
+            cmd += ["--ema_decay", "short"]
+        elif _em.replace(".", "", 1).isdigit():
             cmd += ["--ema_decay", _em]
         _ar = str(self.settings.get("MINIMAX_ADAPTER_RAMP", "Off") or "Off").split(" ")[0]
         if _ar.replace(".", "", 1).isdigit():

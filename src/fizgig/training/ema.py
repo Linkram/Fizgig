@@ -22,8 +22,9 @@ class EMAWeights:
     Decay ramps in as min(decay, (1+n)/(10+n)) so the first steps track the weights closely
     instead of anchoring to the zero init. Shadow is fp32 (the adapter is small)."""
 
-    def __init__(self, network, decay: float):
+    def __init__(self, network, decay: float, ramp: int = 10):
         self.decay = float(decay)
+        self.ramp = int(ramp)        # decay ramps in as min(decay, (1+n)/(ramp+n)); 10 = the default
         self.n = 0
         self.params = [p for p in network.parameters() if p.requires_grad]
         self.shadow = [p.detach().clone().float() for p in self.params]
@@ -32,7 +33,7 @@ class EMAWeights:
     @torch.no_grad()
     def update(self):
         self.n += 1
-        d = min(self.decay, (1 + self.n) / (10 + self.n))
+        d = min(self.decay, (1 + self.n) / (self.ramp + self.n))
         for s, p in zip(self.shadow, self.params):
             s.mul_(d).add_(p.detach().float(), alpha=1.0 - d)
 
