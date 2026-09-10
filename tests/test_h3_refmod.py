@@ -55,12 +55,22 @@ refs = [("a", torch.randn(24, 42, 22), "clip still"), ("b", torch.randn(24, 40, 
 mod, label = build_mod(refs, 16)
 ck("pooled mod is [1, 24, T=3, 16, 8] fp32", tuple(mod.shape) == (1, 24, 3, 16, 8) and mod.dtype == torch.float32, tuple(mod.shape))
 import torch.nn.functional as _F
-ck("pooled = adaptive_avg_pool2d of each source (frame 0)",
+ck("pooled = adaptive_avg_pool2d of each cover-cropped source (frame 0 is already on the canvas)",
    torch.allclose(mod[0, :, 0], _F.adaptive_avg_pool2d(refs[0][1].unsqueeze(0), (16, 8))[0], atol=1e-6))
 ck("token_count = T x (h/2)(w/2)", token_count(mod) == 3 * 8 * 4)
 full, label_f = build_mod(refs, None)
-ck("full mode: every ref on the FIRST ref's even canvas", tuple(full.shape) == (1, 24, 3, 42, 22))
+ck("full mode: every ref on the majority-aspect canvas (42x22 portrait), even dims", tuple(full.shape) == (1, 24, 3, 42, 22))
 ck("full mode label names pixels (WxH)", "352x672" in label_f, label_f)
+# aspect is KEPT: a square latent on the portrait canvas is cover-cropped, not squashed
+from fizgig.minimax.refmod import cover_crop, _canvas_ref  # noqa: E402
+sq = torch.arange(24 * 32 * 32, dtype=torch.float32).reshape(1, 24, 32, 32)
+cc = cover_crop(sq, 42, 22)
+ck("cover_crop: square 32x32 -> 42x22 by scaling to 42x42 and centre-cropping the width (no squash)",
+   tuple(cc.shape) == (1, 24, 42, 22)
+   and torch.allclose(cc, _F.interpolate(sq, size=(42, 42), mode="bilinear", align_corners=False)[..., :, 10:32]))
+ck("canvas = majority aspect (2 portrait + 1 square -> portrait), sized by the largest of them",
+   _canvas_ref(refs) == (42, 22) and _canvas_ref([("x", torch.zeros(24, 30, 30), "p"), ("y", torch.zeros(24, 32, 32), "p"),
+                                                  ("z", torch.zeros(24, 42, 22), "p")]) == (32, 32))
 
 # --- reference stills held out of training ----------------------------------------------------------
 from fizgig.minimax.refmod import exclude_refs_from_training  # noqa: E402

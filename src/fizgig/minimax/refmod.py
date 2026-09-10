@@ -173,32 +173,55 @@ def aspect_grid(pool: int, aspect_hw: float) -> Tuple[int, int]:
     return max(2, round(h / 2) * 2), max(2, round(w / 2) * 2)
 
 
+def _canvas_ref(refs) -> Tuple[int, int]:
+    """The canvas every reference is fitted to: the MAJORITY aspect among the references (a
+    portrait set on a portrait canvas, a square set on a square one), sized by the largest
+    reference of that aspect. Whichever file sorts first is not a canvas policy."""
+    from collections import Counter
+    keys = [round(int(z.shape[-2]) / float(int(z.shape[-1])), 1) for _, z, _ in refs]
+    top = Counter(keys).most_common(1)[0][0]
+    cands = [z for (_, z, _), k in zip(refs, keys) if k == top]
+    best = max(cands, key=lambda z: int(z.shape[-2]) * int(z.shape[-1]))
+    return int(best.shape[-2]), int(best.shape[-1])
+
+
+def cover_crop(z4: torch.Tensor, gh: int, gw: int) -> torch.Tensor:
+    """[1, 24, h, w] -> [1, 24, gh, gw] with the ASPECT KEPT: scale so the latent covers the
+    canvas, then centre-crop — the node pack's `crop="center"` cover-crop, on latents. A
+    portrait latent on a square canvas loses its top/bottom instead of being squashed (the
+    first version resized straight to the canvas and squashed faces — Peter, 10 Sep 2026)."""
+    h, w = int(z4.shape[-2]), int(z4.shape[-1])
+    s = max(gh / float(h), gw / float(w))
+    nh, nw = max(gh, int(round(h * s))), max(gw, int(round(w * s)))
+    if (nh, nw) != (h, w):
+        z4 = F.interpolate(z4, size=(nh, nw), mode="bilinear", align_corners=False)
+    top, left = (nh - gh) // 2, (nw - gw) // 2
+    return z4[..., top:top + gh, left:left + gw]
+
+
 def build_mod(refs, grid: Optional[int]) -> Tuple[torch.Tensor, str]:
     """(name, [24, h, w], kind) refs -> the mod latent [1, 24, T, gh, gw] fp32 + a pool label.
 
-    grid = None keeps each reference at full resolution on the FIRST reference's latent canvas
-    (the node's encode mode cover-crops every ref to one canvas; here they are resampled to
-    it, which for latents is the same operation the node's own refinement uses). An integer
-    grid average-pools every reference to that many latent cells on its long edge, aspect
-    kept from the first reference (the node's training mode). Dims are always even: the DiT
-    patches 2x2 latent cells into one token."""
+    Every reference is cover-cropped (aspect kept) onto one canvas — the majority aspect among
+    the references, sized by the largest of them. grid = None keeps that canvas at full
+    resolution (the node's encode mode); an integer grid average-pools it to that many latent
+    cells on the long edge (the node's training mode). Dims are always even: the DiT patches
+    2x2 latent cells into one token."""
     if not refs:
         raise ValueError("no references — cache the dataset first (photos, or clips with "
                          "the sharpest-face still on)")
-    h0, w0 = int(refs[0][1].shape[-2]), int(refs[0][1].shape[-1])
+    ch, cw = _canvas_ref(refs)
+    ch, cw = (ch // 2) * 2, (cw // 2) * 2
     if grid is None:
-        gh, gw = (h0 // 2) * 2, (w0 // 2) * 2
+        gh, gw = ch, cw
         label = f"full-res {gw * 16}x{gh * 16}px"
     else:
-        gh, gw = aspect_grid(int(grid), h0 / float(w0))
+        gh, gw = aspect_grid(int(grid), ch / float(cw))
         label = f"{len(refs)}x{gh}x{gw}"
     frames = []
     for _, z, _ in refs:
-        z4 = z.float().unsqueeze(0)                                   # [1, 24, h, w]
-        if grid is None:
-            if (z4.shape[-2], z4.shape[-1]) != (gh, gw):
-                z4 = F.interpolate(z4, size=(gh, gw), mode="bilinear", align_corners=False)
-        else:
+        z4 = cover_crop(z.float().unsqueeze(0), ch, cw)              # [1, 24, ch, cw], aspect kept
+        if grid is not None:
             z4 = F.adaptive_avg_pool2d(z4, (gh, gw))
         frames.append(z4)
     latent = torch.stack(frames, dim=2)                               # [1, 24, T, gh, gw]
