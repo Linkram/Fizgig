@@ -1035,9 +1035,6 @@ REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
 # 10 Sep): the measured defaults are the starting values; the fields are free text.
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "8",
-    "MINIMAX_REFMOD_LR": "1e-3",
-    "MINIMAX_REFMOD_PULL": "2.0",
-    "MINIMAX_REFMOD_SIGMA": "0.2-0.8",
     "MINIMAX_REFMOD_LORA_RANK": "2",
     "MINIMAX_REFMOD_LORA_EPOCHS": "2",
     "MINIMAX_REFMOD_LORA_LR": "2e-4",
@@ -1048,7 +1045,6 @@ REFMOD_BUILT_IN_PRESETS = {
     "✨ MiniMax H3 RefMod (Full reference + companion LoRA)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
-        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[1],
         **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
@@ -4166,14 +4162,6 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_GRID"].set(
                 str(self.settings.get("MINIMAX_REFMOD_GRID", REFMOD_GRID_OPTIONS[0])))
             self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT, padx=(0, 18))
-            tk.Label(self._refmod_frame, text="Steps:", font=(FONT_FAMILY, 10),
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
-            # Steps is typeable: the dropdown offers the measured points, any number works.
-            self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
-                self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), width=34)
-            self.entries["MINIMAX_REFMOD_STEPS"].set(
-                str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_STEP_OPTIONS[0])))
-            self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT, padx=(0, 18))
             tk.Label(self._refmod_frame, text="References:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_REFS"] = ttk.Combobox(
@@ -4184,7 +4172,16 @@ class LoRATrainerGUI:
             # Live token estimate against the node pack's default extractor cap (5,120).
             self._refmod_tokens_lbl = tk.Label(self._refmod_frame, text="", font=(FONT_FAMILY, 9),
                                                fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
-            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 0))
+            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 18))
+            # Target Megapixels: the SAME variable as the Dataset section's control (hidden under
+            # RefMod) — the one MiniMax default Peter wants in view here (10 Sep 2026); the LoRA
+            # half trains at this resolution like any H3 run.
+            tk.Label(self._refmod_frame, text="Target MP:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self._refmod_mp_combo = ttk.Combobox(
+                self._refmod_frame, textvariable=self.dataset_megapixels_var,
+                values=["0.25", "0.37", "0.5", "0.75", "1.0"], width=6, state="readonly")
+            self._refmod_mp_combo.pack(side=tk.LEFT)
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
@@ -4194,17 +4191,10 @@ class LoRATrainerGUI:
                 pass
             self._refresh_refmod_tokens()
 
-            # Row 2 — the mod optimiser's knobs (free text; blank = the measured default).
-            self._refmod_opt_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
-            for _lab, _key, _w in (("Mod LR:", "MINIMAX_REFMOD_LR", 8), ("Pull:", "MINIMAX_REFMOD_PULL", 6),
-                                   ("Noise window:", "MINIMAX_REFMOD_SIGMA", 9)):
-                tk.Label(self._refmod_opt_frame, text=_lab, font=(FONT_FAMILY, 10),
-                         fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 6))
-                self.entries[_key] = ttk.Entry(self._refmod_opt_frame, width=_w)
-                self.entries[_key].insert(0, str(self.settings.get(_key, REFMOD_DEFAULTS[_key])))
-                self.entries[_key].pack(side=tk.LEFT, padx=(0, 16))
-
-            # Row 3 — the companion LoRA: on/off, rank, epochs, LR.
+            # Row 2 — the companion LoRA: on/off, rank, epochs, LR. Everything else the LoRA
+            # run uses (training structure, high-noise LR, Optimised Likeness, the training
+            # adapter, EMA, caption dropout, Blocks Swap / Base Precision on Auto) is the
+            # MiniMax tab's own default, applied unseen — this is a real H3 training run.
             self._refmod_lora_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
             tk.Label(self._refmod_lora_frame, text="Companion LoRA:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
@@ -4214,7 +4204,7 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_LORA"].set("On" if refmod_lora_on(_lv) else "Off")
             self.entries["MINIMAX_REFMOD_LORA"].pack(side=tk.LEFT, padx=(0, 16))
             for _lab, _key, _w in (("Rank:", "MINIMAX_REFMOD_LORA_RANK", 4), ("Epochs:", "MINIMAX_REFMOD_LORA_EPOCHS", 4),
-                                   ("LoRA LR:", "MINIMAX_REFMOD_LORA_LR", 8)):
+                                   ("LR:", "MINIMAX_REFMOD_LORA_LR", 8)):
                 tk.Label(self._refmod_lora_frame, text=_lab, font=(FONT_FAMILY, 10),
                          fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 6))
                 self.entries[_key] = ttk.Entry(self._refmod_lora_frame, width=_w)
@@ -4224,29 +4214,24 @@ class LoRATrainerGUI:
                 model_card,
                 text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
                       "nodes load like a LoRA. Fizgig builds it from the dataset's photos and "
-                      "clip stills, and by default pairs it with a rank-2 Companion LoRA trained "
-                      "on the OTHER stills (the references are held out) — measured: the "
-                      "strongest carry of the subject into new scenes. Steps above 0 instead "
-                      "optimise the mod's latent against the frozen H3 model (a modest mod-only "
-                      "gain; don't combine with the LoRA, the two overshoot). Grid: Full keeps "
-                      "every reference at its latent size on "
-                      "the first reference's canvas — the only setting that carries a face "
-                      "(measured); the pooled grids are small, stackable, concept-level mods. "
-                      "Steps 0 makes a plain encode-only mod; any number can be typed. "
-                      "References: how many dataset stills stack into the mod (photos first); "
-                      "they are held OUT of the optimiser's and the companion LoRA's training set, "
-                      "which trains on the rest. "
-                      "Mod LR / Pull / Noise window are the optimiser's dials (measured: 1e-3, "
-                      "2.0, 0.2-0.8; 'off' = H3's own density). Output: one file, "
-                      "<name>.safetensors, in the LoRA output folder — copy it to "
-                      "ComfyUI/models/refmods/. Previews: epoch 0 is before optimising, then "
-                      "the finished mod, then (with a Companion LoRA) the mod plus LoRA. "
-                      "Companion LoRA: a rank-2 LoRA trained with the mod in the conditioning, "
-                      "stored IN the same file — the standard Load H3 RefMods node ignores it, "
-                      "the Fizgig H3 RefMod node (comfyui_nodes/ComfyUI-Fizgig-RefMod in the "
-                      "Fizgig folder) loads both. Mods "
-                      "ride H3's Reference (ref2va) model — Training Base switches to it here, "
-                      "and that is the model to load in ComfyUI with the mod."),
+                      "clip stills (photos first) and pairs it with a Companion LoRA: a real H3 "
+                      "training run — every MiniMax-tab default applies (training structure, "
+                      "high-noise LR, Optimised Likeness, the training adapter, EMA) — at the "
+                      "rank, epochs and LR above, trained on the OTHER stills with the mod riding "
+                      "as the reference on every step, so the LoRA learns only what a reference "
+                      "can't carry (measured: the strongest carry of the subject into new scenes). "
+                      "The references are held out of its training. Grid: Full keeps every "
+                      "reference at its latent size on the first reference's canvas — the only "
+                      "setting that carries a face (measured); the pooled grids are small, "
+                      "stackable, concept-level mods. References: how many stills stack into "
+                      "the mod. Companion LoRA Off = the plain mod only (no training run). "
+                      "Output: one file per epoch plus the final, <name>.safetensors, each a "
+                      "standard RefMod to the Load H3 RefMods node and a mod + LoRA pair to the "
+                      "Fizgig H3 RefMod node (comfyui_nodes/ComfyUI-Fizgig-RefMod in the Fizgig "
+                      "folder) — copy to ComfyUI/models/refmods/. Previews render with the mod "
+                      "and the LoRA as they will be used. Mods ride H3's Reference (ref2va) "
+                      "model — Training Base switches to it here, and that is the model to load "
+                      "in ComfyUI with the mod."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             # The standard node pack's own defaults and ranges (ComfyUI-MiniMaxH3Mod, Extract /
@@ -4272,7 +4257,6 @@ class LoRATrainerGUI:
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
-                self._refmod_opt_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_lora_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
                 self._refmod_std_hint.pack(anchor=tk.W, pady=(6, 0))
@@ -29984,10 +29968,40 @@ class LoRATrainerGUI:
         return cmd
 
     def _build_minimax_refmod_command(self):
-        """MiniMax H3 RefMod: minimax_refmod.py over the same caches and model paths as an H3
-        LoRA run. Two settings (Grid, Steps); the Training Base dropdown picks the DiT; the
-        Samples tab supplies still previews (frames/sound never apply — a mod is a reference
-        for stills and clips alike, and the preview shows what it carries)."""
+        """MiniMax H3 RefMod. With the Companion LoRA on this is the ordinary H3 training command
+        (every MiniMax-tab default: training structure, high-noise LR, Optimised Likeness, the
+        training adapter, EMA, the Samples tab) with the rank / epochs / LR from the card and the
+        trainer's RefMod mode switched on — it builds the mod from the caches, holds those stills
+        out, rides the mod as the reference on every step and preview, and writes each checkpoint
+        and the final file as a mod + LoRA pair. With the LoRA off, minimax_refmod.py writes the
+        plain mod (no training run)."""
+        _d = REFMOD_DEFAULTS
+        _refs = str(self.settings.get("MINIMAX_REFMOD_REFS", _d["MINIMAX_REFMOD_REFS"]) or "8").strip().lower()
+        _refs_arg = "10000" if _refs.startswith("all") else refmod_num(_refs, "8", int)
+        _grid = refmod_grid_value(self.settings.get("MINIMAX_REFMOD_GRID"))
+        _ep = refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_EPOCHS"), _d["MINIMAX_REFMOD_LORA_EPOCHS"], int)
+        if refmod_lora_on(self.settings.get("MINIMAX_REFMOD_LORA")) and _ep != "0":
+            _rank = refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_RANK"), _d["MINIMAX_REFMOD_LORA_RANK"], int)
+            _lr = refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_LR"), _d["MINIMAX_REFMOD_LORA_LR"])
+            _saved = dict(self.settings)
+            _ft_var = getattr(self, "minimax_finetune_var", None)
+            _ft_was = bool(_ft_var.get()) if _ft_var is not None else False
+            try:
+                self.settings.update({"NETWORK_TYPE": "LoRA", "NETWORK_DIM": _rank, "NETWORK_ALPHA": _rank,
+                                      "MAX_TRAIN_EPOCHS": _ep, "LEARNING_RATE": _lr,
+                                      "ADAPTIVE_LR": False, "MINIMAX_DISTILL": False})
+                if _ft_var is not None:
+                    _ft_var.set(False)          # a RefMod pair is always a LoRA, never a fine-tune
+                cmd = self._build_minimax_train_command()
+            finally:
+                self.settings.clear()
+                self.settings.update(_saved)
+                if _ft_var is not None:
+                    _ft_var.set(_ft_was)
+            _out = os.path.join(self.settings["LORA_OUTPUT_DIR"], f"{self.settings['LORA_NAME']}.safetensors")
+            cmd += ["--refmod_out", _out, "--refmod_grid", _grid, "--refmod_refs", _refs_arg]
+            return cmd
+        # plain mod, no training run
         _dit = (self._krea2_pref("minimax_ref_dit")
                 if (self.settings.get("MINIMAX_TRAIN_BASE") == "ref2va" and self._krea2_pref("minimax_ref_dit"))
                 else self._krea2_pref("minimax_dit"))
@@ -29998,24 +30012,9 @@ class LoRATrainerGUI:
             "--dataset_config", self.settings["DATASET_CONFIG"],
             "--output_dir", self.settings["LORA_OUTPUT_DIR"],
             "--output_name", self.settings["LORA_NAME"],
-            "--grid", refmod_grid_value(self.settings.get("MINIMAX_REFMOD_GRID")),
-            "--steps", refmod_steps_value(self.settings.get("MINIMAX_REFMOD_STEPS")),
+            "--grid", _grid, "--steps", "0", "--max_refs", _refs_arg,
             "--seed", str(self.settings.get("SEED", 42) or 42),
         ]
-        _d = REFMOD_DEFAULTS
-        _refs = str(self.settings.get("MINIMAX_REFMOD_REFS", _d["MINIMAX_REFMOD_REFS"]) or "8").strip().lower()
-        cmd += ["--max_refs", "10000" if _refs.startswith("all") else refmod_num(_refs, "8", int)]
-        cmd += ["--lr", refmod_num(self.settings.get("MINIMAX_REFMOD_LR"), _d["MINIMAX_REFMOD_LR"]),
-                "--pull", refmod_num(self.settings.get("MINIMAX_REFMOD_PULL"), _d["MINIMAX_REFMOD_PULL"])]
-        cmd += refmod_sigma_args(self.settings.get("MINIMAX_REFMOD_SIGMA", _d["MINIMAX_REFMOD_SIGMA"]))
-        if refmod_lora_on(self.settings.get("MINIMAX_REFMOD_LORA")):
-            _ep = refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_EPOCHS"), _d["MINIMAX_REFMOD_LORA_EPOCHS"], int)
-            if _ep != "0":
-                cmd += ["--companion_lora_epochs", _ep,
-                        "--companion_lora_rank", refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_RANK"),
-                                                            _d["MINIMAX_REFMOD_LORA_RANK"], int),
-                        "--companion_lora_lr", refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_LR"),
-                                                          _d["MINIMAX_REFMOD_LORA_LR"])]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]
@@ -30037,10 +30036,6 @@ class LoRATrainerGUI:
                 if _turbo and os.path.isfile(_turbo):
                     _ts = str(getattr(self, "sample_steps_var", None) and self.sample_steps_var.get() or "").strip()
                     cmd += ["--turbo_lora_path", _turbo, "--sample_steps", _ts if _ts.isdigit() else "8"]
-                else:
-                    _st = str(getattr(self, "sample_steps_var", None) and self.sample_steps_var.get() or "").strip()
-                    if _st.isdigit():
-                        cmd += ["--sample_steps", _st]
             elif not _te:
                 self.update_console("[samples] previews need the Qwen3-VL-32B text encoder path "
                                     "(Preferences) — the mod still builds, without previews\n")

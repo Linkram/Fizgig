@@ -976,7 +976,7 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
                  sigma: torch.Tensor = None, shift: float = None, generator=None,
                  noise: torch.Tensor = None, audio_latent: torch.Tensor = None,
                  audio_weight: float = 1.0, video_weight: float = 1.0,
-                 parts_out: dict = None):
+                 parts_out: dict = None, ref_latents=None):
     """One training step's loss.
 
     latent      : [1, 24, T, H, W] clean VAE latent (x0). T=1 is a still.
@@ -1026,8 +1026,11 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
     noised = (1.0 - s) * x0 + s * noise
     t = (1.0 - sigma).to(device)
 
+    # ref_latents: RefMod mode — the mod rides as the reference block on every step (the LoRA
+    # learns what the reference can't carry). None = the ordinary step.
+    _ref_kw = {"ref_latents": ref_latents} if ref_latents else {}
     if audio_latent is None:
-        pred = model(noised.to(latent.dtype), t, text_embeds)
+        pred = model(noised.to(latent.dtype), t, text_embeds, **_ref_kw)
         loss = F.mse_loss(pred.float(), (x0 - noise).to(pred.dtype).float())
         if parts_out is not None:
             parts_out.update(video=float(loss.detach()), audio=None)
@@ -1048,7 +1051,7 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
     a_noised = (1.0 - sigma_a) * a0 + sigma_a * a_noise
 
     pred, pred_a = model(noised.to(latent.dtype), t, text_embeds,
-                         audio_rows=a_noised, return_audio=True)
+                         audio_rows=a_noised, return_audio=True, **_ref_kw)
     v_loss = F.mse_loss(pred.float(), (x0 - noise).to(pred.dtype).float())
     if pred_a is None:                      # pack_audio_rows off — nothing to train against
         if parts_out is not None:
@@ -2409,6 +2412,17 @@ def train_minimax(
     finetune_master: str = "auto",          # "auto" | "ram" | "disk" — see the mode select
     finetune_scratch_dir: str = None,       # disk mode's spill dir; default: beside the caches
     reg_lr_multiplier: float = 0.2,         # FT only: LR nudge for `is_reg` dataset blocks
+    # RefMod mode (10 Sep 2026): build a reference mod from the dataset's stills (the community
+    # ComfyUI-MiniMaxH3Mod format), hold those stills OUT of training, ride the mod as the
+    # reference block on every step and preview, and write every checkpoint / the final file
+    # as a mod + LoRA PAIR (their loader reads the mod; the Fizgig node reads both). The LoRA
+    # then trains with every H3 default this run carries — likeness blocks, training adapter,
+    # training structure, EMA — instead of a bare loop.
+    refmod_out: str = None,                 # the pair file's path (also names the epoch files)
+    refmod_grid: str = "full",              # "full" | "8" | "16" | "32"
+    refmod_refs: int = 8,
+    refmod_train_on_refs: bool = False,     # keep the references in the training set
+    refmod_description: str = "",
     device: str = "cuda",
     dtype: torch.dtype = torch.bfloat16,
 ):
@@ -2570,6 +2584,43 @@ def train_minimax(
     if group.num_train_items == 0:
         raise RuntimeError("No training items — run minimax_cache_latents then minimax_cache_text first.")
     logger.info(f"MiniMax H3 training: {group.num_train_items} items, {max_train_epochs} epochs")
+
+    # ---- RefMod mode: the mod from the caches, references held out, tokens vs the node cap ----
+    _refmod = None                      # [1, 24, T, h, w] fp32 on CPU
+    _refmod_info = {}
+    if refmod_out:
+        from fizgig.minimax.refmod import (collect_refs, build_mod, exclude_refs_from_training,
+                                           token_count, NODE_TOKEN_CAP)
+        _cache_dirs = [getattr(_ds, "cache_directory", "") for _ds in group.datasets]
+        _refs = collect_refs(_cache_dirs, max_refs=max(1, int(refmod_refs)))
+        if not _refs:
+            raise RuntimeError("[refmod] no reference stills in the caches (photos, or clips cached "
+                               "with the sharpest-face still on)")
+        _g = None if str(refmod_grid).lower().startswith("full") else int(str(refmod_grid).split("x")[0])
+        _refmod, _pool = build_mod(_refs, _g)
+        _tok = token_count(_refmod)
+        _n_img = sum(1 for r in _refs if r[2] == "photo")
+        logger.info(f"[refmod] {len(_refs)} reference(s) ({_n_img} photo(s), {len(_refs) - _n_img} clip "
+                    f"still(s)): " + ", ".join(r[0] for r in _refs))
+        logger.info(f"[refmod] mod {tuple(_refmod.shape)} ({_pool}, {_tok} tokens; the node pack's "
+                    f"extractor caps at {NODE_TOKEN_CAP} by default)")
+        if _tok > NODE_TOKEN_CAP:
+            logger.warning(f"[refmod] {_tok} tokens is above the standard extractor's default cap "
+                           f"({NODE_TOKEN_CAP}) — every token rides in the sequence at each sampling "
+                           f"step; fewer references or a pooled grid brings it down")
+        if not refmod_train_on_refs:
+            _rm, _left = exclude_refs_from_training(group, [r[0] for r in _refs])
+            if _left <= 0:
+                logger.warning("[refmod] every still is a reference — nothing left to train on; the "
+                               "references stay in the training set for this run")
+                group = generate_dataset_group_by_blueprint(
+                    blueprint.dataset_group, training=True, num_timestep_buckets=None, shared_epoch=shared_epoch)
+            else:
+                logger.info(f"[refmod] {_rm} reference still(s) held out — the LoRA trains on the other "
+                            f"{_left} item(s)")
+        _refmod_info = {"pool": _pool, "tokens": _tok, "refs": len(_refs),
+                        "source_shape": " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in _refs),
+                        "tags": [f"{_n_img} img, {len(_refs) - _n_img} clip stills", "fizgig companion lora"]}
 
     # FIZGIG_SAVED_TENSOR_AUDIT=1: account every tensor autograd saves for backward, with the
     # stack that saved it. Holders unregister on free, so whatever remains at a failed park is
@@ -4187,6 +4238,22 @@ def train_minimax(
         md.update(_run_provenance())
         return md
 
+    def _attach_refmod(path):
+        """RefMod mode: rewrite a just-saved LoRA as a mod + LoRA pair file."""
+        from fizgig.minimax.refmod import attach_mod_to_file
+        try:
+            attach_mod_to_file(path, _refmod, name=os.path.splitext(os.path.basename(path))[0],
+                               pool=_refmod_info.get("pool", ""), source_shape=_refmod_info.get("source_shape", ""),
+                               tags=_refmod_info.get("tags"), description=refmod_description or "",
+                               extra={"ss_refmod_lora": "1", "ss_refmod_refs": str(_refmod_info.get("refs", "")),
+                                      "ss_refmod_grid": str(refmod_grid), "ss_refmod_tokens": str(_refmod_info.get("tokens", "")),
+                                      "ss_refmod_train_on_refs": "1" if refmod_train_on_refs else "0",
+                                      "ss_refmod_lora_strength": "1.0"})
+            logger.info(f"[refmod] {os.path.basename(path)} carries the mod ({_refmod_info.get('tokens', '?')} "
+                        f"tokens) and the LoRA")
+        except Exception as _e:
+            logger.warning(f"[refmod] could not attach the mod to {path}: {_e}")
+
     def _state_extra():
         extra = {}
         if adaptive:
@@ -4488,7 +4555,8 @@ def train_minimax(
                                            if encoded_negative is not None else None),
                             seed=_seed + i, device=device, dtype=dtype, log_steps=True,
                             num_frames=_frames, on_slow_step=_slow_step_notice,
-                            return_audio=True)
+                            return_audio=True,
+                            ref_latents=([_refmod.to(device, dtype)] if _refmod is not None else None))
                         break
                     except (torch.cuda.OutOfMemoryError,
                             getattr(torch, "AcceleratorError", torch.cuda.OutOfMemoryError),
@@ -5136,7 +5204,9 @@ def train_minimax(
                 loss, _step_sigma = compute_loss(dit, latents, text, shift=shift,
                                                  audio_latent=_a, audio_weight=audio_weight,
                                                  video_weight=0.0 if _is_voice else 1.0,
-                                                 parts_out=_audio_parts)
+                                                 parts_out=_audio_parts,
+                                                 ref_latents=([_refmod.to(device, torch.float32)]
+                                                              if _refmod is not None else None))
                 if _is_voice:
                     # Its own ledger. The clip ledger's "video err" is a real number about real
                     # footage; a voice item's video term is its error against the placeholder —
@@ -5304,6 +5374,8 @@ def train_minimax(
                     ema.swap_in()
                 try:
                     _save_lora(network, ckpt, network_dim, network_alpha, dtype, _meta())
+                    if _refmod is not None:
+                        _attach_refmod(ckpt)
                 finally:
                     if ema is not None:
                         ema.swap_out()
@@ -5452,10 +5524,18 @@ def train_minimax(
         ema.swap_in()
     try:
         _save_lora(network, final, network_dim, network_alpha, dtype, _meta())
+        if _refmod is not None:
+            _attach_refmod(final)
     finally:
         if ema is not None:
             ema.swap_out()
     logger.info(f"saved final LoRA: {final}")
+    if _refmod is not None and refmod_out and os.path.abspath(refmod_out) != os.path.abspath(final):
+        import shutil
+        os.makedirs(os.path.dirname(refmod_out) or ".", exist_ok=True)
+        shutil.copyfile(final, refmod_out)
+        logger.info(f"[refmod] pair file: {refmod_out} — copy it to ComfyUI/models/refmods/: Load H3 "
+                    f"RefMods reads the mod, the Fizgig H3 RefMod node reads the mod AND the LoRA")
     if save_state_on_train_end and max_train_epochs > start_epoch:
         # Non-fatal: the final LoRA is already on disk; dying here would turn a finished run red.
         try:

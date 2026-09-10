@@ -202,21 +202,24 @@ with tempfile.TemporaryDirectory() as td_models:
             else:
                 sys.modules[k] = v
 
-# --- the GUI: a Base Model entry, two controls, everything else hidden ---------------------------
+# --- the GUI: a Base Model entry, a short card, everything else hidden ---------------------------
 import tkinter as tk  # noqa: E402
 import lora_trainer_gui as g  # noqa: E402
 ck("dropdown lists MiniMax H3 RefMod after MiniMax H3",
    g.ARCHITECTURE_LIST.index("MiniMax H3 RefMod") == g.ARCHITECTURE_LIST.index("MiniMax H3") + 1)
 cfg = g.ARCHITECTURES["MiniMax H3 RefMod"]
-ck("entry is MiniMax (caches, paths) + is_refmod, script minimax_refmod.py, suffix refmod",
-   cfg.get("is_minimax") and cfg.get("is_refmod") and cfg["train_script"].endswith("minimax_refmod.py")
-   and cfg["lora_name_suffix"] == "refmod")
-ck("grid/steps label parsing", g.refmod_grid_value("16×16 (256 tokens, concept-level)") == "16"
-   and g.refmod_grid_value("Full reference (recommended — carries the face)") == "full" and g.refmod_grid_value("8×8 (64 tokens, stackable)") == "8"
-   and g.refmod_steps_value("200 (recommended)") == "200" and g.refmod_steps_value("0 (encode only — same as the ComfyUI extractor)") == "0")
+ck("entry is MiniMax (caches, paths) + is_refmod, suffix refmod",
+   cfg.get("is_minimax") and cfg.get("is_refmod") and cfg["lora_name_suffix"] == "refmod")
+ck("grid label parsing", g.refmod_grid_value("16×16 (256 tokens, concept-level)") == "16"
+   and g.refmod_grid_value("Full reference (recommended — carries the face)") == "full" and g.refmod_grid_value("8×8 (64 tokens, stackable)") == "8")
 pr = next(iter(g.REFMOD_BUILT_IN_PRESETS.values()))
-ck("the one preset: Full reference, Steps 0, Companion LoRA On, clip still on", pr["MINIMAX_REFMOD_GRID"].startswith("Full")
-   and pr["MINIMAX_REFMOD_STEPS"].startswith("0") and pr["MINIMAX_REFMOD_LORA"] == "On" and pr.get("MINIMAX_CLIP_STILL") is True)
+ck("the one preset: Full reference, Companion LoRA On (rank 2, 2 epochs, 2e-4), clip still on",
+   pr["MINIMAX_REFMOD_GRID"].startswith("Full") and pr["MINIMAX_REFMOD_LORA"] == "On"
+   and pr["MINIMAX_REFMOD_LORA_RANK"] == "2" and pr["MINIMAX_REFMOD_LORA_EPOCHS"] == "2"
+   and pr["MINIMAX_REFMOD_LORA_LR"] == "2e-4" and pr.get("MINIMAX_CLIP_STILL") is True)
+ck("parsers: legacy 'Rank 2, 2 epochs' label reads as On; junk numbers fall back",
+   g.refmod_lora_on("Rank 2, 2 epochs") and not g.refmod_lora_on("Off") and g.refmod_num("abc", "2.0") == "2.0"
+   and g.refmod_num("", "2", int) == "2")
 try:
     root = tk.Tk(); root.withdraw()
     app = g.LoRATrainerGUI(root)
@@ -224,57 +227,54 @@ try:
     app.save_settings = lambda *a, **k: None
     app.architecture_var.set("MiniMax H3 RefMod"); app._on_architecture_selected(); root.update()
     hidden = [k for k in ("training", "memory", "timestep", "optimizer", "scheduler") if not app.collapsible_sections[k].winfo_manager()]
-    ck("RefMod: five sections hidden, Output stays, card + Training Base shown",
+    ck("RefMod: five sections hidden, Output stays, both card rows + Training Base shown",
        len(hidden) == 5 and app.collapsible_sections["output"].winfo_manager()
-       and app._refmod_frame.winfo_manager() and app._minimax_base_frame.winfo_manager())
+       and app._refmod_frame.winfo_manager() and app._refmod_lora_frame.winfo_manager()
+       and app._minimax_base_frame.winfo_manager())
+    ck("no optimiser row any more (Steps / Mod LR / Pull / Noise are command-line only)",
+       not hasattr(app, "_refmod_opt_frame") and "MINIMAX_REFMOD_STEPS" not in app.entries)
     ck("RefMod preset applied on entry", app.custom_preset_var.get().startswith("✨ MiniMax H3 RefMod"))
-    app.settings.update({"DATASET_CONFIG": "d.toml", "LORA_OUTPUT_DIR": "out", "LORA_NAME": "s_refmod", "SEED": "7",
-                         "MINIMAX_REFMOD_GRID": "8×8 (64 tokens, stackable)", "MINIMAX_REFMOD_STEPS": "500",
-                         "MINIMAX_REFMOD_LORA": app.entries["MINIMAX_REFMOD_LORA"].get(),
-                         **{k: app.entries[k].get() for k in g.REFMOD_DEFAULTS}})
-    app.sample_enabled_var.set(False)
-    c = [str(x) for x in app._build_minimax_refmod_command()]
-    ck("builder: minimax_refmod.py --grid 8 --steps 500, no LoRA flags",
-       c[1].endswith("minimax_refmod.py") and c[c.index("--grid") + 1] == "8" and c[c.index("--steps") + 1] == "500"
-       and "--network_dim" not in c and "--learning_rate" not in c)
-    ck("preset defaults on the command line: companion LoRA rank 2, 2 epochs, 2e-4; refs held out",
-       c[c.index("--companion_lora_epochs") + 1] == "2" and c[c.index("--companion_lora_rank") + 1] == "2"
-       and c[c.index("--companion_lora_lr") + 1] == "2e-4" and "--train_on_refs" not in c)
+    ck("Target MP on the card shares the Dataset section's variable",
+       str(app._refmod_mp_combo.cget("textvariable")) == str(app.dataset_megapixels_var))
+    ck("card defaults: LoRA On, rank 2, epochs 2, LR 2e-4, refs 8",
+       app.entries["MINIMAX_REFMOD_LORA"].get() == "On" and app.entries["MINIMAX_REFMOD_LORA_RANK"].get() == "2"
+       and app.entries["MINIMAX_REFMOD_LORA_EPOCHS"].get() == "2" and app.entries["MINIMAX_REFMOD_LORA_LR"].get() == "2e-4"
+       and app.entries["MINIMAX_REFMOD_REFS"].get() == "8")
     per, total = app.refmod_token_estimate("Full reference (recommended — carries the face)", "8", "0.25")
     ck("token estimate: Full at 0.25 MP ≈ 244 per ref, 8 refs ≈ 1,952 (under the 5,120 cap)", per == 244 and total == 1952)
-    per16, tot16 = app.refmod_token_estimate("16×16 (256 tokens, concept-level)", "16", "0.25")
-    ck("token estimate: 16x16 grid = 64 per ref", per16 == 64 and tot16 == 1024)
     _, tot_all = app.refmod_token_estimate("Full reference (recommended — carries the face)", "all", "1.0")
     ck("token estimate: 'all' gives per-ref only", tot_all is None)
-    app.entries["MINIMAX_REFMOD_REFS"].set("all"); app._refresh_refmod_tokens()
-    ck("live readout shows per-reference figure and how many refs the cap allows",
-       "per reference" in app._refmod_tokens_lbl.cget("text"))
-    app.entries["MINIMAX_REFMOD_REFS"].set("8"); app._refresh_refmod_tokens()
     ck("the standard-RefMod reference block is on the card and names their defaults",
        app._refmod_std_hint.winfo_manager() and "16 images" in app._refmod_std_hint.cget("text")
        and "1024" in app._refmod_std_hint.cget("text") and "5,120" in app._refmod_std_hint.cget("text"))
-    ck("all three rows on the card; LoRA default On; every knob registered",
-       app._refmod_lora_frame.winfo_manager() and app._refmod_opt_frame.winfo_manager()
-       and app.entries["MINIMAX_REFMOD_LORA"].get() == "On"
-       and all(k in app.entries for k in g.REFMOD_DEFAULTS))
-    ck("Steps default is 0 (plain encode) with the LoRA on",
-       app.entries["MINIMAX_REFMOD_STEPS"].get().startswith("0"))
-    ck("defaults -> the measured recipe on the command line",
-       c[c.index("--max_refs") + 1] == "8" and c[c.index("--lr") + 1] == "1e-3" and c[c.index("--pull") + 1] == "2.0"
-       and c[c.index("--sigma_min") + 1] == "0.2" and c[c.index("--sigma_max") + 1] == "0.8")
-    app.settings.update({"MINIMAX_REFMOD_LORA": "On", "MINIMAX_REFMOD_LORA_RANK": "4", "MINIMAX_REFMOD_LORA_EPOCHS": "3",
-                         "MINIMAX_REFMOD_LORA_LR": "1e-4", "MINIMAX_REFMOD_STEPS": "75", "MINIMAX_REFMOD_REFS": "all",
-                         "MINIMAX_REFMOD_LR": "2e-3", "MINIMAX_REFMOD_PULL": "0.5", "MINIMAX_REFMOD_SIGMA": "off"})
+    # the builder, LoRA ON: the real H3 training command in RefMod mode
+    base = {"DATASET_CONFIG": "d.toml", "LORA_OUTPUT_DIR": "out", "LORA_NAME": "s_refmod", "SEED": "7",
+            "MINIMAX_REFMOD_GRID": app.entries["MINIMAX_REFMOD_GRID"].get(),
+            "MINIMAX_REFMOD_LORA": "On", **{k: app.entries[k].get() for k in g.REFMOD_DEFAULTS},
+            "MINIMAX_TRAIN_BASE": "ref2va"}
+    app.settings.update(base)
+    app.sample_enabled_var.set(False)
+    before = dict(app.settings)
+    c = [str(x) for x in app._build_minimax_refmod_command()]
+    ck("LoRA On -> minimax_train.py in RefMod mode: --refmod_out <out>/<name>.safetensors, --refmod_grid full, --refmod_refs 8",
+       c[1].endswith("minimax_train.py") and c[c.index("--refmod_out") + 1].replace("\\", "/").endswith("out/s_refmod.safetensors")
+       and c[c.index("--refmod_grid") + 1] == "full" and c[c.index("--refmod_refs") + 1] == "8")
+    ck("...with the card's rank / epochs / LR and the MiniMax defaults (adapter, likeness blocks, base quant, EMA)",
+       c[c.index("--network_dim") + 1] == "2" and c[c.index("--network_alpha") + 1] == "2"
+       and c[c.index("--max_train_epochs") + 1] == "2" and c[c.index("--learning_rate") + 1] == "2e-4"
+       and "--photo_blocks" in c and "--training_adapter_path" in c and "--base_quant" in c and "--ema_decay" in c
+       and "--dit" in c and c[c.index("--dit") + 1].endswith("minimax_h3_ref2va_pruned_int8_convrot.safetensors"))
+    ck("settings restored after the override (rank/epochs/LR never leak into the H3 tab)", dict(app.settings) == before)
+    app.settings.update({"MINIMAX_REFMOD_LORA_RANK": "4", "MINIMAX_REFMOD_LORA_EPOCHS": "3", "MINIMAX_REFMOD_LORA_LR": "1e-4",
+                         "MINIMAX_REFMOD_REFS": "all"})
     c2 = [str(x) for x in app._build_minimax_refmod_command()]
-    ck("every GUI knob reaches the command line (typed steps, all refs, LoRA rank/epochs/LR, noise off)",
-       c2[c2.index("--steps") + 1] == "75" and c2[c2.index("--max_refs") + 1] == "10000"
-       and c2[c2.index("--companion_lora_epochs") + 1] == "3" and c2[c2.index("--companion_lora_rank") + 1] == "4"
-       and c2[c2.index("--companion_lora_lr") + 1] == "1e-4" and c2[c2.index("--lr") + 1] == "2e-3"
-       and c2[c2.index("--pull") + 1] == "0.5" and c2[c2.index("--sigma_min") + 1] == "-1")
-    ck("parsers: legacy 'Rank 2, 2 epochs' label still reads as On; junk numbers fall back to the default",
-       g.refmod_lora_on("Rank 2, 2 epochs") and not g.refmod_lora_on("Off") and g.refmod_num("abc", "2.0") == "2.0"
-       and g.refmod_num("", "2", int) == "2" and g.refmod_sigma_args("0.3-0.9") == ["--sigma_min", "0.3", "--sigma_max", "0.9"]
-       and g.refmod_sigma_args("0.9-0.3")[1] == "0.2")
+    ck("every card knob reaches the command line (rank 4, epochs 3, LR 1e-4, all refs)",
+       c2[c2.index("--network_dim") + 1] == "4" and c2[c2.index("--max_train_epochs") + 1] == "3"
+       and c2[c2.index("--learning_rate") + 1] == "1e-4" and c2[c2.index("--refmod_refs") + 1] == "10000")
+    app.settings["MINIMAX_REFMOD_LORA"] = "Off"
+    c3 = [str(x) for x in app._build_minimax_refmod_command()]
+    ck("LoRA Off -> minimax_refmod.py --steps 0 (plain mod, no training run)",
+       c3[1].endswith("minimax_refmod.py") and c3[c3.index("--steps") + 1] == "0" and "--refmod_out" not in c3)
     app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
     back = [k for k in ("training", "memory", "optimizer", "scheduler") if app.collapsible_sections[k].winfo_manager()]
     ck("back on MiniMax H3: sections return, card hidden", len(back) == 4 and not app._refmod_frame.winfo_manager())
@@ -282,7 +282,6 @@ try:
     ck("Klein: all five sections packed", all(app.collapsible_sections[k].winfo_manager()
                                             for k in ("training", "memory", "timestep", "optimizer", "scheduler")))
     # the layout bug (Peter, 9 Sep): leaving RefMod re-packed the sections UNDER the button rows.
-    # Pin: after RefMod -> H3 and RefMod -> Klein the pack order equals a fresh tab's.
     secs = app.collapsible_sections
     names = {id(v): k for k, v in secs.items()}
     parent = secs["output"].master
@@ -292,18 +291,37 @@ try:
     fresh_klein = _order()
     app.architecture_var.set("MiniMax H3 RefMod"); app._on_architecture_selected(); root.update()
     app.architecture_var.set("Flux 2 Klein Base 9B"); app._on_architecture_selected(); root.update()
-    ck("RefMod -> Klein: section order identical to fresh (sections above the button rows)",
-       _order() == fresh_klein, _order())
+    ck("RefMod -> Klein: section order identical to fresh (sections above the button rows)", _order() == fresh_klein, _order())
     app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
     h3_order = _order()
     app.architecture_var.set("MiniMax H3 RefMod"); app._on_architecture_selected(); root.update()
     app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
     ck("RefMod -> MiniMax H3: section order identical to a direct H3 switch", _order() == h3_order, _order())
-    ck("sections sit before the first non-section widget after Output",
-       _order().index("scheduler") < max(i for i, n in enumerate(_order()) if n == "other"))
     root.destroy()
 except tk.TclError as e:
     print(f"skip  GUI (no display: {e})")
+
+# --- the trainer's RefMod mode (source pins) ---------------------------------------------------------
+from fizgig.minimax import trainer as _tr  # noqa: E402
+_ts = inspect.getsource(_tr.train_minimax)
+ck("train_minimax: builds the mod from the caches, holds the refs out, rides it on every step and preview, attaches it to every save",
+   "refmod_out: str = None" in _ts and "collect_refs(_cache_dirs" in _ts and "exclude_refs_from_training(group" in _ts
+   and _ts.count("ref_latents=([_refmod.to(device") == 2 and _ts.count("_attach_refmod(") >= 3)
+ck("compute_loss takes ref_latents and passes it to the model on both branches",
+   "ref_latents=None" in inspect.getsource(_tr.compute_loss) and inspect.getsource(_tr.compute_loss).count("**_ref_kw") == 2)
+from fizgig.minimax.refmod import attach_mod_to_file  # noqa: E402
+with tempfile.TemporaryDirectory() as td:
+    from safetensors.torch import save_file
+    lp = os.path.join(td, "l.safetensors")
+    save_file({"lora_unet_blocks_0_attn_q.lora_down.weight": torch.zeros(2, 8), "lora_unet_blocks_0_attn_q.alpha": torch.tensor(2.0)},
+              lp, metadata={"ss_network_dim": "2"})
+    attach_mod_to_file(lp, mod, name="l", pool="full-res 352x672px", extra={"ss_refmod_lora": "1"})
+    lat3, meta3, lsd3 = load_refmod(lp)
+    ck("attach_mod_to_file: LoRA file becomes a pair (latent + refmod_meta + the LoRA keys kept, ss_* kept)",
+       tuple(lat3.shape) == (1, 24, 3, 16, 8) and meta3["kind"] == "video" and meta3["mode"] == "encode"
+       and lsd3 is not None and len(lsd3) == 2)
+    with safe_open(lp, "pt") as f:
+        ck("...and the original metadata survives", f.metadata().get("ss_network_dim") == "2" and f.metadata().get("ss_refmod_lora") == "1")
 
 print()
 print("ALL PASS" if not fails else f"{len(fails)} FAIL: {fails}")

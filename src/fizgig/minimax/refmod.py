@@ -117,7 +117,50 @@ def exclude_refs_from_training(group, ref_stems) -> Tuple[int, int]:
         ds.batch_manager = BucketBatchManager(kept, bm.batch_size, num_timestep_buckets=bm.num_timestep_buckets)
         ds.num_train_items = sum(len(b) for b in kept.values())
     group.num_train_items = sum(getattr(ds, "num_train_items", 0) for ds in group.datasets)
+    # The group is a torch ConcatDataset: its index table was built from the OLD batch counts
+    # (the first held-out run indexed past the end). Recompute it.
+    try:
+        from torch.utils.data import ConcatDataset
+        if isinstance(group, ConcatDataset):
+            group.cumulative_sizes = ConcatDataset.cumsum(group.datasets)
+    except Exception:
+        pass
     return removed, group.num_train_items
+
+
+def attach_mod_to_file(path: str, latent: torch.Tensor, *, name: str, pool: str, source_shape: str = "",
+                       tags=None, description: str = "", extra: Optional[dict] = None) -> str:
+    """Rewrite a saved LoRA `.safetensors` (kohya `lora_unet_*` keys + metadata) as a RefMod PAIR
+    file: the same tensors plus the mod's `latent` and the node pack's `refmod_meta` header.
+    Used by the H3 trainer's RefMod mode on every checkpoint and the final save, so each file
+    the run writes is a standard RefMod to their loader and a mod+LoRA pair to ours."""
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+    tensors, header = {}, {}
+    with safe_open(path, framework="pt", device="cpu") as f:
+        header = dict(f.metadata() or {})
+        for k in f.keys():
+            tensors[k] = f.get_tensor(k)
+    lat = latent.detach().to("cpu", torch.float16).contiguous()
+    if lat.dim() == 4:
+        lat = lat.unsqueeze(2)
+    T = int(lat.shape[2])
+    meta = {
+        "name": name, "kind": "video" if T > 1 else "image",
+        "latent_h": int(lat.shape[3]), "latent_w": int(lat.shape[4]), "latent_t": T,
+        "mode": "encode" if "full-res" in str(pool) else "training",
+        "source": "stack" if T > 1 else "image", "source_shape": source_shape, "pool": pool,
+        "optimize_steps": 0, "tags": list(tags or []), "description": description or "",
+        "concept_type": "identity", "_format_version": NODE_FORMAT_VERSION,
+    }
+    header[NODE_META_KEY] = json.dumps(meta)
+    for k, v in (extra or {}).items():
+        header[str(k)] = str(v)
+    tensors["latent"] = lat
+    tmp = path + ".tmp"
+    save_file(tensors, tmp, metadata=header)
+    os.replace(tmp, path)
+    return path
 
 
 def aspect_grid(pool: int, aspect_hw: float) -> Tuple[int, int]:
