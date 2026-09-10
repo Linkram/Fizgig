@@ -120,6 +120,71 @@ with tempfile.TemporaryDirectory() as td:
         ck("node pack's reader loads the PAIR file unchanged (ignores the LoRA tensors): kind video, 96 tokens",
            m2.kind == "video" and m2.token_count == 96 and tuple(m2.latent.shape) == (1, 24, 3, 16, 8))
 
+# --- the ComfyUI node, with comfy stubbed: conditioning key + block shapes + LoRA patch call ------
+import types  # noqa: E402
+_stub_calls = {}
+_comfy = types.ModuleType("comfy"); _comfy_sd = types.ModuleType("comfy.sd"); _comfy_utils = types.ModuleType("comfy.utils")
+_fp = types.ModuleType("folder_paths")
+with tempfile.TemporaryDirectory() as td_models:
+    _fp.models_dir = td_models
+    _fp.add_model_folder_path = lambda *a, **k: _stub_calls.setdefault("folder", a)
+    def _load_torch_file(path, safe_load=True, return_metadata=False):
+        from safetensors.torch import load_file
+        from safetensors import safe_open
+        sd = load_file(path)
+        with safe_open(path, "pt") as f:
+            md = f.metadata()
+        return (sd, md) if return_metadata else sd
+    _comfy_utils.load_torch_file = _load_torch_file
+    def _load_lora_for_models(model, clip, lora, strength_model, strength_clip, lora_metadata=None):
+        _stub_calls["lora"] = (sorted(lora), strength_model, strength_clip)
+        return ("patched:" + str(model), clip)
+    _comfy_sd.load_lora_for_models = _load_lora_for_models
+    _comfy.sd, _comfy.utils = _comfy_sd, _comfy_utils
+    _saved_mods = {k: sys.modules.get(k) for k in ("comfy", "comfy.sd", "comfy.utils", "folder_paths")}
+    sys.modules.update({"comfy": _comfy, "comfy.sd": _comfy_sd, "comfy.utils": _comfy_utils, "folder_paths": _fp})
+    try:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("fizgig_refmod_node", os.path.join(REPO, "comfyui_nodes", "ComfyUI-Fizgig-RefMod", "fizgig_refmod.py"))
+        node_mod = _ilu.module_from_spec(_spec); _spec.loader.exec_module(node_mod)
+        ck("node registers the refmods model folder (same folder as the mod pack)", _stub_calls.get("folder", ("",))[0] == "refmods")
+        # a pair file in models/refmods
+        pair = save_refmod(os.path.join(td_models, "refmods", "pairmod"), mod, name="pairmod", mode="training", pool=label,
+                           optimize_steps=200, extra={"ss_network_dim": "2"},
+                           lora_sd={"lora_unet_blocks_0_attn_q.lora_down.weight": torch.randn(2, 8, dtype=torch.bfloat16),
+                                    "lora_unet_blocks_0_attn_q.lora_up.weight": torch.zeros(8, 2, dtype=torch.bfloat16),
+                                    "lora_unet_blocks_0_attn_q.alpha": torch.tensor(2.0)})
+        solo = save_refmod(os.path.join(td_models, "refmods", "solomod"), mod[:, :, :1], name="solomod", mode="training", pool="1", optimize_steps=0)
+        ck("dropdown lists both files", set(node_mod._list_mods()) == {"pairmod", "solomod"})
+        node = node_mod.FizgigH3RefMod()
+        cond_in = [[torch.zeros(1, 4, 8), {"minimax_refs": [{"kind": "image", "latent_h": 4, "latent_w": 4, "latent": torch.zeros(1, 24, 1, 4, 4)}]}]]
+        m_out, c_out, info = node.apply("MODEL", cond_in, "pairmod", 1.0, 0.8)
+        blk = c_out[0][1]["minimax_refs"][-1]
+        ck("pair: appends a VIDEO-kind block to minimax_refs after the existing ref (T=3, latent_t/ref_audio_t/audio_latent present)",
+           len(c_out[0][1]["minimax_refs"]) == 2 and blk["kind"] == "video" and blk["latent_t"] == 3
+           and blk["latent_h"] == 16 and blk["latent_w"] == 8 and blk["ref_audio_t"] == 0 and blk["audio_latent"] is None
+           and tuple(blk["latent"].shape) == (1, 24, 3, 16, 8))
+        ck("pair: input conditioning untouched (copy, not mutation)", len(cond_in[0][1]["minimax_refs"]) == 1)
+        ck("pair: LoRA patched through comfy.sd.load_lora_for_models with the lora_unet_* subset at the given strength",
+           m_out == "patched:MODEL" and _stub_calls["lora"][1] == 0.8 and _stub_calls["lora"][2] == 0
+           and all(k.startswith("lora_unet_") for k in _stub_calls["lora"][0]) and len(_stub_calls["lora"][0]) == 3)
+        ck("info names both halves", "companion LoRA" in info and "3 frame" in info)
+        _stub_calls.pop("lora", None)
+        m2, c2, info2 = node.apply("MODEL", cond_in, "solomod", 0.5, 1.0)
+        b2 = c2[0][1]["minimax_refs"][-1]
+        ck("solo: an IMAGE block (no latent_t key), strength 0.5 mixes toward the blurred latent (values changed, shape kept)",
+           b2["kind"] == "image" and "latent_t" not in b2 and tuple(b2["latent"].shape) == (1, 24, 1, 16, 8)
+           and not torch.equal(b2["latent"], mod[:, :, :1].to(torch.float16).float()))
+        ck("solo: no LoRA in the file -> model passed through, no patch call", m2 == "MODEL" and "lora" not in _stub_calls and "no companion LoRA" in info2)
+        m3, c3, _ = node.apply("MODEL", cond_in, "pairmod", 0.0, 0.0)
+        ck("ref 0 / lora 0: conditioning and model both pass through", c3 is cond_in and m3 == "MODEL")
+    finally:
+        for k, v in _saved_mods.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
 # --- the GUI: a Base Model entry, two controls, everything else hidden ---------------------------
 import tkinter as tk  # noqa: E402
 import lora_trainer_gui as g  # noqa: E402
