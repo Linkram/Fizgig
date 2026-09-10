@@ -143,6 +143,22 @@ for style or scene training; while it's on, Blocks to Train is disabled with a n
 
 **Previews default to 768×768, 56-frame clips with sound** — a short watchable clip with the model's generated audio, opened in the gallery as a playable video (never autoplay). Without the audio VAE set, clips render silent; stills and other lengths stay in the dropdown. Set the **Turbo LoRA** in Preferences and previews render in **6 steps instead of 20** — previews only, never the saved LoRA. On a plan that streams blocks (a 24 GB card on the int8 base), clip previews clamp to **22 frames up front** — the plan leaves previews ~4 GB and a 56-frame clip measurably doesn't fit there, so the trainer says so once and renders the 22-frame clip instead of failing its way down to it. A preview that still outgrows VRAM steps itself down a ladder rather than dying — a shorter clip first, then resolution to a 512×512 floor — and the size that fit is saved as the new default.
 
+### RefMods for H3: your references as a file, made stronger
+
+A **RefMod** is a MiniMax H3 reference saved as a file: the reference images run once through the video VAE and stored as a small `.safetensors` that the [ComfyUI-MiniMaxH3Mod](https://github.com/shingo257/comfyui-minimaxh3mod) nodes (by **@shingo257**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's Reference-to-Video path. Nothing in one is trained; the model copies what the rows show.
+
+Fizgig makes them, from stills, with a **MiniMax H3 RefMod** entry in the Base Model selector. The Training tab becomes Output plus three dropdowns:
+
+| Control | What it does |
+|---|---|
+| **Grid** | **Full reference** (default) keeps every reference at its latent size on the first reference's canvas — the only setting that carries a face. The pooled grids (32×32, 16×16, 8×8) are small, stackable, concept-level mods. |
+| **Steps** | **0** writes the plain encode, what the node pack's own extractor makes. **200** (default) optimises the mod's latent against the frozen H3 model on your dataset's stills — the model stays untouched, the latent learns what H3 needs to be shown to reproduce the subject. Measured on a 29-photo set (ArcFace likeness vs the dataset, four seeds): portraits 66 → 70, and on four scene prompts the references never showed (park, office, beach, snow) 53 → 59, ahead on every prompt. |
+| **Companion LoRA** | Off by default. **Rank 2, 2 epochs** also trains a tiny LoRA *with the mod in the conditioning*, so it learns only what a reference can't carry, and stores it **in the same file**. Measured with the plain (Steps 0) mod: scene prompts 53 → 63, the best generalisation of anything here, at the cost of the LoRA pulling poses toward the dataset's — a "looking at the camera" prompt can come back in profile. Pair it with Steps 0: with the optimised mod the two adjustments stack and overshoot. |
+
+Up to 8 references come from the dataset's photos first, then clip stills (the sharpest-face frame each clip already caches). Selecting the entry switches **Training Base** to **Reference (ref2va)**: a mod rides that model's reference path at generation, so it is optimised against it, and that is the checkpoint to load in ComfyUI with it (fl2va takes references too, in practice; ref2va is the model trained for them). Previews on the Samples tab show the plain mod, then the optimised one, then the pair. Output is one file, `<name>.safetensors`, in the LoRA output folder — copy it to `ComfyUI/models/refmods/`.
+
+**Two loaders, one file.** The file is a standard RefMod: the pack's **Load H3 RefMods → Apply H3 RefMod** chain reads the mod and ignores the LoRA half. The **Fizgig H3 RefMod** node (`comfyui_nodes/ComfyUI-Fizgig-RefMod` in the Fizgig folder — copy or symlink it into `custom_nodes`) reads both: the mod into the conditioning as a native reference block, the companion LoRA onto the model through ComfyUI's own LoRA loader, with a strength dial for each. The pack's step-curve nodes still work downstream of it.
+
 ### Repair Studio on H3: watch the clip, not a frame
 
 Pick **MiniMax H3** on the Repair Studio tab and every preview is a **22-frame clip with its sound** (or a still, or 56 frames — your pick). Click either preview and both clips play **side by side in the app**, looping in lockstep: space to pause, arrow keys to step a frame, a scrub bar, slow motion, and **S** to swap sides so the one you're judging carries the sound. The panel and the metrics strip still judge the middle frame.
