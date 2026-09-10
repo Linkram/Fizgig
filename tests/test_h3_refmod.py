@@ -219,15 +219,26 @@ try:
        c[1].endswith("minimax_refmod.py") and c[c.index("--grid") + 1] == "8" and c[c.index("--steps") + 1] == "500"
        and "--network_dim" not in c and "--learning_rate" not in c)
     ck("Companion LoRA Off -> no --companion_lora_epochs", "--companion_lora_epochs" not in c)
-    ck("Companion LoRA control is on the card, registered, default Off",
-       app._refmod_lora_frame.winfo_manager() and "MINIMAX_REFMOD_LORA" in app.entries
-       and app.entries["MINIMAX_REFMOD_LORA"].get() == "Off")
-    app.settings["MINIMAX_REFMOD_LORA"] = "Rank 2, 2 epochs"
+    ck("all three rows on the card; LoRA default Off; every knob registered",
+       app._refmod_lora_frame.winfo_manager() and app._refmod_opt_frame.winfo_manager()
+       and app.entries["MINIMAX_REFMOD_LORA"].get() == "Off"
+       and all(k in app.entries for k in g.REFMOD_DEFAULTS))
+    ck("defaults -> the measured recipe on the command line",
+       c[c.index("--max_refs") + 1] == "8" and c[c.index("--lr") + 1] == "1e-3" and c[c.index("--pull") + 1] == "2.0"
+       and c[c.index("--sigma_min") + 1] == "0.2" and c[c.index("--sigma_max") + 1] == "0.8")
+    app.settings.update({"MINIMAX_REFMOD_LORA": "On", "MINIMAX_REFMOD_LORA_RANK": "4", "MINIMAX_REFMOD_LORA_EPOCHS": "3",
+                         "MINIMAX_REFMOD_LORA_LR": "1e-4", "MINIMAX_REFMOD_STEPS": "75", "MINIMAX_REFMOD_REFS": "all",
+                         "MINIMAX_REFMOD_LR": "2e-3", "MINIMAX_REFMOD_PULL": "0.5", "MINIMAX_REFMOD_SIGMA": "off"})
     c2 = [str(x) for x in app._build_minimax_refmod_command()]
-    ck("Companion LoRA 'Rank 2, 2 epochs' -> --companion_lora_epochs 2",
-       "--companion_lora_epochs" in c2 and c2[c2.index("--companion_lora_epochs") + 1] == "2")
-    ck("label parsing", g.refmod_lora_epochs("Rank 2, 4 epochs") == "4" and g.refmod_lora_epochs("Off") == "0"
-       and g.refmod_lora_epochs("") == "0")
+    ck("every GUI knob reaches the command line (typed steps, all refs, LoRA rank/epochs/LR, noise off)",
+       c2[c2.index("--steps") + 1] == "75" and c2[c2.index("--max_refs") + 1] == "10000"
+       and c2[c2.index("--companion_lora_epochs") + 1] == "3" and c2[c2.index("--companion_lora_rank") + 1] == "4"
+       and c2[c2.index("--companion_lora_lr") + 1] == "1e-4" and c2[c2.index("--lr") + 1] == "2e-3"
+       and c2[c2.index("--pull") + 1] == "0.5" and c2[c2.index("--sigma_min") + 1] == "-1")
+    ck("parsers: legacy 'Rank 2, 2 epochs' label still reads as On; junk numbers fall back to the default",
+       g.refmod_lora_on("Rank 2, 2 epochs") and not g.refmod_lora_on("Off") and g.refmod_num("abc", "2.0") == "2.0"
+       and g.refmod_num("", "2", int) == "2" and g.refmod_sigma_args("0.3-0.9") == ["--sigma_min", "0.3", "--sigma_max", "0.9"]
+       and g.refmod_sigma_args("0.9-0.3")[1] == "0.2")
     app.architecture_var.set("MiniMax H3"); app._on_architecture_selected(); root.update()
     back = [k for k in ("training", "memory", "optimizer", "scheduler") if app.collapsible_sections[k].winfo_manager()]
     ck("back on MiniMax H3: sections return, card hidden", len(back) == 4 and not app._refmod_frame.winfo_manager())

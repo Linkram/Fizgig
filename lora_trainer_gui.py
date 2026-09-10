@@ -1029,26 +1029,64 @@ REFMOD_STEP_OPTIONS = ["0 (encode only — same as the ComfyUI extractor)", "200
                        "500", "1000"]
 # Companion LoRA: a rank-2 LoRA trained for N epochs WITH the mod in the conditioning, stored in
 # the same file (the standard RefMod loader ignores it; the Fizgig ComfyUI node loads both).
-REFMOD_LORA_OPTIONS = ["Off", "Rank 2, 2 epochs", "Rank 2, 4 epochs"]
+REFMOD_LORA_OPTIONS = ["Off", "On"]
+REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
+# Every knob the command line has, so the right settings can be found from the GUI (Peter,
+# 10 Sep): the measured defaults are the starting values; the fields are free text.
+REFMOD_DEFAULTS = {
+    "MINIMAX_REFMOD_REFS": "8",
+    "MINIMAX_REFMOD_LR": "1e-3",
+    "MINIMAX_REFMOD_PULL": "2.0",
+    "MINIMAX_REFMOD_SIGMA": "0.2-0.8",
+    "MINIMAX_REFMOD_LORA_RANK": "2",
+    "MINIMAX_REFMOD_LORA_EPOCHS": "2",
+    "MINIMAX_REFMOD_LORA_LR": "2e-4",
+}
 REFMOD_BUILT_IN_PRESETS = {
     "✨ MiniMax H3 RefMod (Full reference, 200 steps)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
         "MINIMAX_REFMOD_LORA": REFMOD_LORA_OPTIONS[0],
+        **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
     },
 }
 
 
-def refmod_lora_epochs(label) -> str:
-    """'Rank 2, 2 epochs' -> '2'; 'Off' / anything else -> '0'."""
+def refmod_lora_on(label) -> bool:
+    """Companion LoRA dropdown: 'On' (or a legacy 'Rank 2, N epochs' label) -> True."""
     s = str(label or "").strip().lower()
-    if not s or s.startswith("off"):
-        return "0"
-    import re as _re
-    m = _re.search(r"(\d+)\s*epoch", s)
-    return m.group(1) if m else "0"
+    return bool(s) and not s.startswith("off")
+
+
+def refmod_num(raw, default: str, kind=float) -> str:
+    """A free-text number field -> the string the CLI gets; the measured default when blank or
+    unparsable (a typo must not silently become 0)."""
+    s = str(raw if raw is not None else "").strip()
+    try:
+        v = kind(s)
+        return str(int(v)) if kind is int else s
+    except (TypeError, ValueError):
+        return default
+
+
+def refmod_sigma_args(raw):
+    """'0.2-0.8' -> ['--sigma_min','0.2','--sigma_max','0.8']; 'off'/blank -> H3's own density."""
+    s = str(raw or "").strip().lower().replace(" ", "")
+    if not s or s.startswith("off") or s.startswith("none"):
+        return ["--sigma_min", "-1", "--sigma_max", "-1"]
+    for sep in ("-", ",", "/", ":"):
+        if sep in s:
+            lo, hi = s.split(sep, 1)
+            try:
+                lo_f, hi_f = float(lo), float(hi)
+                if 0.0 <= lo_f < hi_f <= 1.0:
+                    return ["--sigma_min", lo, "--sigma_max", hi]
+            except ValueError:
+                pass
+            break
+    return ["--sigma_min", "0.2", "--sigma_max", "0.8"]
 
 
 def refmod_grid_value(label) -> str:
@@ -1060,6 +1098,7 @@ def refmod_grid_value(label) -> str:
 
 
 def refmod_steps_value(label) -> str:
+    """'200 (recommended)' -> '200'; a typed '75' -> '75'; junk -> the measured 200."""
     s = str(label or "").strip().split(" ")[0]
     return s if s.isdigit() else "200"
 
@@ -4127,19 +4166,46 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT, padx=(0, 18))
             tk.Label(self._refmod_frame, text="Steps:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            # Steps is typeable: the dropdown offers the measured points, any number works.
             self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
-                self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), state="readonly", width=42)
+                self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), width=34)
             self.entries["MINIMAX_REFMOD_STEPS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_STEP_OPTIONS[1])))
-            self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT)
+            self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT, padx=(0, 18))
+            tk.Label(self._refmod_frame, text="References:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_REFS"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_REFS_OPTIONS), width=5)
+            self.entries["MINIMAX_REFMOD_REFS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_REFS", REFMOD_DEFAULTS["MINIMAX_REFMOD_REFS"])))
+            self.entries["MINIMAX_REFMOD_REFS"].pack(side=tk.LEFT)
+
+            # Row 2 — the mod optimiser's knobs (free text; blank = the measured default).
+            self._refmod_opt_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            for _lab, _key, _w in (("Mod LR:", "MINIMAX_REFMOD_LR", 8), ("Pull:", "MINIMAX_REFMOD_PULL", 6),
+                                   ("Noise window:", "MINIMAX_REFMOD_SIGMA", 9)):
+                tk.Label(self._refmod_opt_frame, text=_lab, font=(FONT_FAMILY, 10),
+                         fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 6))
+                self.entries[_key] = ttk.Entry(self._refmod_opt_frame, width=_w)
+                self.entries[_key].insert(0, str(self.settings.get(_key, REFMOD_DEFAULTS[_key])))
+                self.entries[_key].pack(side=tk.LEFT, padx=(0, 16))
+
+            # Row 3 — the companion LoRA: on/off, rank, epochs, LR.
             self._refmod_lora_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
             tk.Label(self._refmod_lora_frame, text="Companion LoRA:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_LORA"] = ttk.Combobox(
-                self._refmod_lora_frame, values=list(REFMOD_LORA_OPTIONS), state="readonly", width=18)
-            self.entries["MINIMAX_REFMOD_LORA"].set(
-                str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[0])))
-            self.entries["MINIMAX_REFMOD_LORA"].pack(side=tk.LEFT)
+                self._refmod_lora_frame, values=list(REFMOD_LORA_OPTIONS), state="readonly", width=5)
+            _lv = str(self.settings.get("MINIMAX_REFMOD_LORA", REFMOD_LORA_OPTIONS[0]))
+            self.entries["MINIMAX_REFMOD_LORA"].set("On" if refmod_lora_on(_lv) else "Off")
+            self.entries["MINIMAX_REFMOD_LORA"].pack(side=tk.LEFT, padx=(0, 16))
+            for _lab, _key, _w in (("Rank:", "MINIMAX_REFMOD_LORA_RANK", 4), ("Epochs:", "MINIMAX_REFMOD_LORA_EPOCHS", 4),
+                                   ("LoRA LR:", "MINIMAX_REFMOD_LORA_LR", 8)):
+                tk.Label(self._refmod_lora_frame, text=_lab, font=(FONT_FAMILY, 10),
+                         fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 6))
+                self.entries[_key] = ttk.Entry(self._refmod_lora_frame, width=_w)
+                self.entries[_key].insert(0, str(self.settings.get(_key, REFMOD_DEFAULTS[_key])))
+                self.entries[_key].pack(side=tk.LEFT, padx=(0, 16))
             self._refmod_hint = tk.Label(
                 model_card,
                 text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
@@ -4149,7 +4215,10 @@ class LoRATrainerGUI:
                       "plain encode. Grid: Full keeps every reference at its latent size on "
                       "the first reference's canvas — the only setting that carries a face "
                       "(measured); the pooled grids are small, stackable, concept-level mods. "
-                      "Steps 0 makes a plain encode-only mod. Output: one file, "
+                      "Steps 0 makes a plain encode-only mod; any number can be typed. "
+                      "References: how many dataset stills stack into the mod (photos first). "
+                      "Mod LR / Pull / Noise window are the optimiser's dials (measured: 1e-3, "
+                      "2.0, 0.2-0.8; 'off' = H3's own density). Output: one file, "
                       "<name>.safetensors, in the LoRA output folder — copy it to "
                       "ComfyUI/models/refmods/. Previews: epoch 0 is before optimising, then "
                       "the finished mod, then (with a Companion LoRA) the mod plus LoRA. "
@@ -4163,6 +4232,7 @@ class LoRATrainerGUI:
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
+                self._refmod_opt_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_lora_frame.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
 
@@ -8164,6 +8234,7 @@ class LoRATrainerGUI:
         (training, memory, timestep/optimizer/scheduler as the family rules above left them)."""
         is_refmod = self._is_refmod_arch()
         _fr = getattr(self, "_refmod_frame", None)
+        _ofr = getattr(self, "_refmod_opt_frame", None)
         _lfr = getattr(self, "_refmod_lora_frame", None)
         _hint = getattr(self, "_refmod_hint", None)
         if is_refmod:
@@ -8186,11 +8257,15 @@ class LoRATrainerGUI:
                 _note = getattr(self, "_minimax_sample_note", None)
                 _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
                 _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
+                if _ofr is not None:
+                    _ofr.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 if _lfr is not None:
                     _lfr.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
+                if _ofr is not None:
+                    _ofr.pack_forget()
                 if _lfr is not None:
                     _lfr.pack_forget()
                 _hint.pack_forget()
@@ -28710,6 +28785,7 @@ class LoRATrainerGUI:
                                      if "MINIMAX_REFMOD_STEPS" in self.entries else ""),
             "MINIMAX_REFMOD_LORA": (self.entries["MINIMAX_REFMOD_LORA"].get()
                                     if "MINIMAX_REFMOD_LORA" in self.entries else ""),
+            **{_k: (self.entries[_k].get() if _k in self.entries else "") for _k in REFMOD_DEFAULTS},
             "KREA2_EMA": self.entries["KREA2_EMA"].get(),
             "MINIMAX_ADAPTER_RAMP": self.entries["MINIMAX_ADAPTER_RAMP"].get(),
             "MINIMAX_CAPTION_DROPOUT": self.entries["MINIMAX_CAPTION_DROPOUT"].get(),
@@ -29840,9 +29916,20 @@ class LoRATrainerGUI:
             "--steps", refmod_steps_value(self.settings.get("MINIMAX_REFMOD_STEPS")),
             "--seed", str(self.settings.get("SEED", 42) or 42),
         ]
-        _cle = refmod_lora_epochs(self.settings.get("MINIMAX_REFMOD_LORA"))
-        if _cle != "0":
-            cmd += ["--companion_lora_epochs", _cle]
+        _d = REFMOD_DEFAULTS
+        _refs = str(self.settings.get("MINIMAX_REFMOD_REFS", _d["MINIMAX_REFMOD_REFS"]) or "8").strip().lower()
+        cmd += ["--max_refs", "10000" if _refs.startswith("all") else refmod_num(_refs, "8", int)]
+        cmd += ["--lr", refmod_num(self.settings.get("MINIMAX_REFMOD_LR"), _d["MINIMAX_REFMOD_LR"]),
+                "--pull", refmod_num(self.settings.get("MINIMAX_REFMOD_PULL"), _d["MINIMAX_REFMOD_PULL"])]
+        cmd += refmod_sigma_args(self.settings.get("MINIMAX_REFMOD_SIGMA", _d["MINIMAX_REFMOD_SIGMA"]))
+        if refmod_lora_on(self.settings.get("MINIMAX_REFMOD_LORA")):
+            _ep = refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_EPOCHS"), _d["MINIMAX_REFMOD_LORA_EPOCHS"], int)
+            if _ep != "0":
+                cmd += ["--companion_lora_epochs", _ep,
+                        "--companion_lora_rank", refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_RANK"),
+                                                            _d["MINIMAX_REFMOD_LORA_RANK"], int),
+                        "--companion_lora_lr", refmod_num(self.settings.get("MINIMAX_REFMOD_LORA_LR"),
+                                                          _d["MINIMAX_REFMOD_LORA_LR"])]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]

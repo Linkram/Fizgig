@@ -532,7 +532,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, companion_lora_epochs: int = 0,
-               companion_lora_lr: float = COMPANION_LR) -> str:
+               companion_lora_lr: float = COMPANION_LR, companion_lora_rank: int = COMPANION_DIM) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -649,12 +649,14 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     n_last = (int(math.ceil(steps / float(preview_every))) if preview_every else 1) if steps > 0 else 0
     if companion_lora_epochs > 0:
         # the mod is final now; the LoRA learns the residual around it
+        _rank = max(1, int(companion_lora_rank))
         lora_net[0] = train_companion_lora(dit, group, mod, epochs=companion_lora_epochs, lr=companion_lora_lr,
+                                           dim=_rank, alpha=_rank,
                                            device=device, dtype=dtype, seed=seed, uncond_text=uncond_text)
         _preview(mod, n_last + 1, lora_on=True)
         lora_sd = companion_state_dict(lora_net[0])
         lora_extra = {"ss_refmod_lora": "1", "ss_network_module": "fizgig.minimax (lora_unet, transformer blocks)",
-                      "ss_network_dim": str(COMPANION_DIM), "ss_network_alpha": str(COMPANION_ALPHA),
+                      "ss_network_dim": str(_rank), "ss_network_alpha": str(_rank),
                       "ss_refmod_lora_epochs": str(companion_lora_epochs),
                       "ss_refmod_lora_lr": f"{companion_lora_lr:g}", "ss_refmod_lora_strength": "1.0",
                       "ss_architecture": "minimaxh3"}
@@ -673,7 +675,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                       lora_sd=lora_sd)
     mb = os.path.getsize(out) / 1024 / 1024
     logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens"
-                + (f" + companion LoRA rank {COMPANION_DIM}" if lora_sd else "") + f", {mb:.2f} MB) — "
+                + (f" + companion LoRA rank {(lora_extra.get('ss_network_dim') or '?')}" if lora_sd else "") + f", {mb:.2f} MB) — "
                 f"copy it to ComfyUI/models/refmods/: Load H3 RefMods reads the mod"
                 + ("; the Fizgig H3 RefMod node loads the mod AND the LoRA" if lora_sd else ""))
     return out
