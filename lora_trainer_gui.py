@@ -26,7 +26,15 @@ from PIL import Image, ImageTk
 #
 # Note this is inherited by the training subprocess too, which is intended — the same churn
 # happens there. Respects an existing value, and FIZGIG_NO_EXPANDABLE=1 opts out for A/B testing.
-if not os.environ.get("PYTORCH_CUDA_ALLOC_CONF") and os.environ.get("FIZGIG_NO_EXPANDABLE") != "1":
+#
+# Not on Windows: the CUDA allocator there rejects the option outright ("expandable_segments not
+# supported on this platform") and falls back to the default allocator, so setting it bought
+# nothing and printed that warning in every caching and training log.
+if (
+    sys.platform != "win32"
+    and not os.environ.get("PYTORCH_CUDA_ALLOC_CONF")
+    and os.environ.get("FIZGIG_NO_EXPANDABLE") != "1"
+):
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 # OpenMP wait policy, also before anything loads torch (which loads libiomp on Windows).
@@ -95,6 +103,7 @@ COLORS = {
 
 # Typography
 FONT_FAMILY = "Segoe UI"
+HINT_FONT = (FONT_FAMILY, 10, "italic")   # the explain text under Training-tab controls (Peter, 11 Sep: one point up from 9)
 FONT_MONO = "Consolas"
 
 # Legacy color constants (for backwards compatibility during transition)
@@ -622,6 +631,7 @@ MINIMAX_STRUCTURE_DESC = {
 MINIMAX_STRUCTURE_DEFAULT = "Likeness and Style — 60% clean-end"
 
 MINIMAX_BLOCK_OPTIONS = [
+    "6-49 · recommended (skips 0-5)",
     "all · every block (50 of 50)",
     "10-49 · skip the first 10",
     "14-37 · middle band",
@@ -637,6 +647,52 @@ MINIMAX_NUM_BLOCKS = 50          # H3's DiT block count (MiniMaxH3Config.num_lay
 # 20-26 adds pose/likeness stability, identity lives 27-49, and the front trunk 0-19 is where
 # photo gradients deform anatomy. One place to tweak as the add-back ladder refines the figures.
 MINIMAX_LIKENESS_BLOCKS = "20-49"
+
+# The recommendation when Optimised Likeness Learning is OFF and the run trains the model as a
+# whole. Blocks 0-5 are the damage: photo gradients there deform anatomy (Aug) and audio picks up
+# micro-distortion (10 Sep). Everything above them is useful capacity — 6-49 beat both the 20-49
+# window and the full 50 on the same dataset and seed. Filled into Blocks to Train on untick.
+MINIMAX_FULL_MODEL_BLOCKS = "6-49"
+
+# Training mode (was the Optimised Likeness Learning tickbox until 10 Sep 2026). Two measured
+# recipes and an escape hatch:
+#   fast  — photos and clips 20-49, voice 34-49. The backward stops at the window, so steps are
+#           the quickest of the three. Good on both picture and sound.
+#   ultra — 6-49 for every step type. Better likeness AND better audio by eye and ear, and it
+#           holds the dataset's global traits out of the LoRA far longer (the greyscale test:
+#           monochrome previews from epoch 2 on a full-model run, epoch 49 on 6-49, never on
+#           20-49). Slower per step: the backward covers 44 blocks instead of 30.
+#   off   — the blocks are yours to pick below, for experiments.
+# The mode is chosen WITHIN a preset: every preset loads with one selected and the dropdown
+# switches it. Character presets load Fast; Style loads Ultra (11 Sep 2026).
+MINIMAX_MODE_FAST = "Fast · good quality, quickest steps"
+MINIMAX_MODE_ULTRA = "Ultra quality · slower steps"
+MINIMAX_MODE_OFF = "Off · hand-pick the blocks below"
+MINIMAX_LIKENESS_MODE_OPTIONS = [MINIMAX_MODE_FAST, MINIMAX_MODE_ULTRA, MINIMAX_MODE_OFF]
+
+
+def minimax_mode_from_settings(d):
+    """The Training mode out of a settings / preset / queued-run dict.
+
+    A run saved before 10 Sep 2026 carries the old "Optimised Likeness Learning" boolean instead:
+    ticked was exactly today's Fast, and unticked meant "Blocks to Train rules", which is today's
+    Off — the saved blocks spec travels with it. Ultra is new, so no saved run was ever Ultra, and
+    mapping unticked to it would overwrite the user's own spec and change what they trained."""
+    v = d.get("MINIMAX_LIKENESS_MODE")
+    if v is None and "MINIMAX_LIKENESS_OPT" in d:
+        return MINIMAX_MODE_FAST if d["MINIMAX_LIKENESS_OPT"] else MINIMAX_MODE_OFF
+    return MINIMAX_MODE_FAST if v is None else v
+
+
+def minimax_likeness_mode(raw):
+    """Dropdown label -> "fast" | "ultra" | "off". Anything unrecognised is fast (the default)."""
+    s = str(raw or "").split("·")[0].strip().lower()
+    if s.startswith("ultra"):
+        return "ultra"
+    if s.startswith("off"):
+        return "off"
+    return "fast"
+
 
 # Voice routing — the block set audio-only steps train. 34-49 per the block map (audio core
 # 38-48 peak 41-42, shoulder 34-37) and Peter's A/B (24 Aug): audio-only trained at 34-49 is
@@ -937,10 +993,12 @@ MINIMAX_BUILT_IN_PRESETS = {
         #                       _teref cache built, so defaulting it on would break a fresh run)
         "MINIMAX_BLOCKS": "all", "MINIMAX_BASE_QUANT": MINIMAX_BASE_QUANT_OPTIONS[0],
         "MINIMAX_TRAIN_ADALN": False,
-        # Optimised Likeness Learning ships ON: photos train the identity blocks (20-49) only,
-        # clips train the full model. The one measured exception is style — the Style preset
-        # turns it off (style needs the early blocks).
-        "MINIMAX_LIKENESS_OPT": True,
+        # The text token refiner is not a LoRA target (10 Sep): see the Other Options tick.
+        "MINIMAX_TRAIN_REFINER": False,
+        # Training mode ships FAST: photos and clips on the identity blocks (20-49), voice on
+        # the audio zone (34-49). Ultra quality (6-49 everywhere) is the slower, better one and
+        # what the Style preset loads. Either can be picked within any preset.
+        "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
         # Training adapter ships ON (Peter, 2 Sep): measured on the same dataset/seed it hit
         # 50% likeness seven epochs sooner and peaked higher (61 vs 57). Every H3 preset
         # inherits this — Style included, the adapter is about the base, not the blocks.
@@ -994,19 +1052,18 @@ MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"] = {
 }
 
 # --- MiniMax H3 Style -------------------------------------------------------------------------
-# The 19 Aug style ablation (Repair Studio, same instrument that found the likeness set): a
-# style LoRA's deltas matter across nearly the WHOLE model — droppable only at 4-5 (the dead
-# band / audio-embedder pipe) and 48-49 (subject-specific last-mile work: load-bearing for
-# likeness and voice, silent for style). Hence 0-3, 6-47. LR matches Fast's 2e-4 — Peter's
-# real style runs (20 Aug) found the halved 1e-4 unnecessary; drop it manually for an extra-
-# gentle run if a style ever fries.
+# Style needs most of the model, not the identity window — the 19 Aug ablation found a style
+# LoRA's deltas matter nearly everywhere. Until 11 Sep 2026 that meant Off + a hand-picked
+# 0-3, 6-47. It now loads ULTRA (6-49, every step type): the same "whole of the model that
+# matters" recipe that won on likeness and audio, and the measured reason to hold 0-5 out —
+# they deform anatomy and pull the dataset's colour into every render — applies to a style
+# just as much. The mode is a dropdown, so a user who wants the Fast version of Style just
+# switches it. LR matches Fast's 2e-4 — Peter's real style runs (20 Aug) found the halved 1e-4
+# unnecessary; drop it manually for an extra-gentle run if a style ever fries.
 MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Style (LoRA 8)"] = {
     **MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"],
     "LEARNING_RATE": 2e-4,
-    "MINIMAX_BLOCKS": "0-3, 6-47",
-    # MUST be off here: style measurably needs the early blocks the likeness mask freezes, and
-    # with it on the blocks spec above would be ignored outright.
-    "MINIMAX_LIKENESS_OPT": False,
+    "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_ULTRA,
     # Style is about the look, not the face: no extra sharp-face stills from the clips.
     "MINIMAX_CLIP_STILL": False,
 }
@@ -1023,9 +1080,6 @@ MINIMAX_BUILT_IN_PRESETS = {
 
 # MiniMax H3 RefMod: the two controls, plus the clip still ON (each clip lends its sharpest
 # face as a reference). Spread from Fast so the hidden MiniMax fields hold sane values.
-# Backward cut is an experiment: every MiniMax preset ships it OFF.
-for _p in MINIMAX_BUILT_IN_PRESETS.values():
-    _p.setdefault("MINIMAX_LIKENESS_CUT", False)
 
 REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32×32 (1024 tokens)",
                        "16×16 (256 tokens, concept-level)", "8×8 (64 tokens, stackable)"]
@@ -1882,10 +1936,10 @@ class LoRATrainerGUI:
             # and nothing else — so its adapters cannot tell one subject from another, and on the
             # pruned build they were taking ~45% of all weight movement to do it.
             "MINIMAX_TRAIN_ADALN": False,
-            # Optimised Likeness Learning — photo steps train blocks 20-49 only, clips train
-            # everything. On by default: it is the measured best recipe for the character/voice
-            # work H3 is for. The Style preset turns it OFF (style needs the early blocks).
-            "MINIMAX_LIKENESS_OPT": True,
+            "MINIMAX_TRAIN_REFINER": False,
+            # Training mode — Fast by default (photos and clips 20-49, voice 34-49): the
+            # measured recipe for the character/voice work H3 is for, and the quickest steps.
+            "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
             "MINIMAX_TRAINING_ADAPTER": True,
             "MINIMAX_TREAD": True,         # clip steps route half their video tokens (7 Sep)
             "MINIMAX_CLIP_STILL": True,    # each clip's sharpest face frame trains as a photo
@@ -4131,12 +4185,10 @@ class LoRATrainerGUI:
             self._minimax_base_combo.pack(side=tk.LEFT)
             self._minimax_base_hint = tk.Label(
                 model_card,
-                text="Pick the H3 model you deploy on. First/last frame (fl2va) is the standard "
-                     "model most workflows run. Reference (ref2va) is the Reference-to-Video "
-                     "fine-tune — choose it if your LoRA's home is the r2v workflow (needs 'DiT "
-                     "(reference)' set in Preferences). Presets never change this; reference "
-                     "distillation always trains on ref2va regardless.",
-                font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
+                text="The H3 model you deploy on. First/last frame (fl2va) for most workflows. "
+                     "Reference (ref2va) if the LoRA lives in the r2v workflow; needs DiT "
+                     "(reference) in Preferences. Presets never change this.",
+                font=HINT_FONT, fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             self._minimax_base_frame.pack(anchor=tk.W, pady=(10, 0))
             self._minimax_base_hint.pack(anchor=tk.W, pady=(2, 0))
@@ -4368,7 +4420,7 @@ class LoRATrainerGUI:
                        "probes UP on steady loss descent; reduces DOWN on loss plateau, heavy gradient clipping, "
                        "or runaway weight-norm growth (with a rollback to the previous epoch's weights on "
                        "stability events).",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+                  foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._adaptive_desc_label.grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=(20, 5), pady=(0, 6))
         self._on_adaptive_lr_toggle()  # sync initial enabled/disabled state
 
@@ -4402,7 +4454,7 @@ class LoRATrainerGUI:
         self._network_type_hint = tk.Label(
             self._network_type_rowf,
             text=self._NETWORK_HINT_GENERAL,
-            font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+            font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             justify=tk.LEFT)
         self._network_type_hint.pack(side=tk.LEFT, padx=(10, 0))
         # rows entry is the FRAME (the gridded thing show_row/hide_row must toggle).
@@ -4422,7 +4474,7 @@ class LoRATrainerGUI:
         self._lokr_factor_hint = tk.Label(
             self._lokr_factor_rowf,
             text="8 is the sweet spot · 4 = stronger, bigger files · above 8: just use LoRA",
-            font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+            font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             justify=tk.LEFT)
         self._lokr_factor_hint.pack(side=tk.LEFT, padx=(10, 0))
         self.rows["LOKR_FACTOR"] = {"row": 19, "label": _lf_label,
@@ -4446,7 +4498,7 @@ class LoRATrainerGUI:
         self._modelarea_combo = training_preset_combo
         self._modelarea_desc_label = ttk.Label(training_content,
                   text="Identity = single 1-16  |  Style = style+comp blocks @ late ts (0-400)  |  Style+Composition = double 0-7 + single 0-1  |  Details = single 12-23",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"))
+                  foreground=COLORS["text_explain"], font=HINT_FONT)
         self._modelarea_desc_label.grid(row=11, column=0, columnspan=2, sticky=tk.W, padx=5)
 
         # Custom block picker panel (hidden unless preset == Custom)
@@ -4498,7 +4550,7 @@ class LoRATrainerGUI:
 
         ttk.Label(self._training_custom_frame,
                   text="double + single 0-1 = style+composition  |  single 1-16 = identity (overlaps at 1 and 12-16)  |  single 12-23 = details  |  edit MIN/MAX_TIMESTEP on Advanced tab",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic")).pack(anchor=tk.W, pady=(4, 0))
+                  foreground=COLORS["text_explain"], font=HINT_FONT).pack(anchor=tk.W, pady=(4, 0))
 
         self._training_custom_frame.grid_remove()  # hidden until preset == Custom
 
@@ -4517,15 +4569,10 @@ class LoRATrainerGUI:
         self.entries["CONTEXT_LORA_STRENGTH"].insert(0, "1.0")
         self.entries["CONTEXT_LORA_STRENGTH"].pack(side=tk.LEFT)
         self._contextlora_desc_label = ttk.Label(training_content,
-                  text="Train this LoRA with an existing LoRA already active on the base model. "
-                       "Pair with same context+strength at inference.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"))
+                  text="Trains with an existing LoRA active on the base. Use the same LoRA and "
+                       "strength at inference.",
+                  foreground=COLORS["text_explain"], font=HINT_FONT)
         self._contextlora_desc_label.grid(row=14, column=0, columnspan=2, sticky=tk.W, padx=5)
-        self._contextlora_warn_label = ttk.Label(training_content,
-                  text="⚠ Context LoRAs usually look better in ComfyUI than in training samples — "
-                       "don't worry if previews look rough, test the output LoRA in ComfyUI.",
-                  foreground="#E67E22", font=(FONT_FAMILY, 9, "italic"))
-        self._contextlora_warn_label.grid(row=15, column=0, columnspan=2, sticky=tk.W, padx=5)
 
         # Target Megapixels (training resolution) — moved here from Other Options
         ttk.Label(training_content, text="Target Megapixels:").grid(row=16, column=0, sticky=tk.W, padx=5, pady=(8, 2))
@@ -4548,12 +4595,10 @@ class LoRATrainerGUI:
                   foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9), wraplength=620,
                   justify=tk.LEFT).pack(side=tk.LEFT)
         ttk.Label(training_content,
-                  text="Images are automatically resized to fit this target area — no need to resize your dataset "
-                       "beforehand. 0.25 MP ≈ 512×512 of pixel area, and your images do NOT have to be square: any "
-                       "aspect ratio works (bucketing handles mixed shapes). Higher = more detail, but more VRAM per "
-                       "step: 4.2 MP is 4x the pixels of 1.0 and realistically wants 24-32 GB (or heavy block swap) — "
-                       "a 16 GB card will OOM well before it.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720).grid(
+                  text="Images are resized to this area. Any aspect ratio, no additional prep needed "
+                       "beyond the Image Prep tab. Higher = more detail, more VRAM per step; 4.2 MP "
+                       "wants 24-32 GB.",
+                  foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720).grid(
             row=17, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Per-image loss watch (Krea 2 only for now — hidden under Klein via
@@ -4597,7 +4642,7 @@ class LoRATrainerGUI:
             training_content,
             text="Per-image features need Batch Size 1 (Dataset section) — a batch-mean loss "
                  "isn't a per-image signal, so these are disabled at the current batch size.",
-            font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+            font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             wraplength=680, justify=tk.LEFT)
         self._krea2_perimage_batch_note.grid(row=24, column=0, columnspan=2, sticky=tk.W,
                                              padx=5, pady=(2, 0))
@@ -4623,7 +4668,7 @@ class LoRATrainerGUI:
                        "so they refine the identity instead of fighting it while it forms; released early the "
                        "moment they start improving. Run the Look Filter (scan with 3 baselines) first — it saves "
                        "the scores with your dataset. Batch size 1.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+                  foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._krea2_losswatch_hint.grid(row=24, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Full fine-tune (rotating windows) — Krea 2 only, experimental branch.
@@ -4759,7 +4804,7 @@ class LoRATrainerGUI:
                        "compare like-for-like (~260 GB over a 40-epoch run). Checkpoints are written to the Output Directory above "
                        "(the usual LoRA folder) — point it somewhere with room, e.g. your ComfyUI models/unet. "
                        "Test the result in ComfyUI as a normal Krea 2 model.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"),
+                  foreground=COLORS["text_explain"], font=HINT_FONT,
                   justify=tk.LEFT, wraplength=720)
         self._krea2_ft_hint.grid(row=65, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 6))
 
@@ -4893,7 +4938,7 @@ class LoRATrainerGUI:
                        "start; H3 is uncalibrated — compare checkpoints). Point the Output "
                        "Directory somewhere with room, judge results in ComfyUI, and distil "
                        "to a shareable LoRA with Checkpoint to LoRA.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"),
+                  foreground=COLORS["text_explain"], font=HINT_FONT,
                   justify=tk.LEFT, wraplength=720)
         self._minimax_ft_hint.grid(row=70, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 6))
         # --- Per-step movement clip (MiniMax only) -----------------------------------------
@@ -4924,7 +4969,7 @@ class LoRATrainerGUI:
             text="STRONGLY RECOMMENDED ON — stops any single block overshooting in a step, the "
                  "classic source of distortion. Only the offending step is shortened, so it "
                  "costs nothing that was already learned. Full write-up in the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_limiter_hint.grid(row=38, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Multi Concept (MiniMax only) ---------------------------------------------------
@@ -4966,7 +5011,7 @@ class LoRATrainerGUI:
                  "thing telling the two apart. Caption and prep both folders yourself first; "
                  "this box is training-only and changes nothing else — caption dropout stays "
                  "as you set it. See the MiniMax section of the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT,
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT,
             wraplength=720)
         self._minimax_mc_hint.grid(row=51, column=0, columnspan=2, sticky=tk.W, padx=5,
                                    pady=(0, 4))
@@ -5005,7 +5050,7 @@ class LoRATrainerGUI:
                  "fifth the rate. Same syntax as Blocks to Train, and only blocks you're actually "
                  "training count. Adaptive LR still works — it moves both rates together and "
                  "keeps the ratio.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_slow_hint.grid(row=34, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Train AdaLN (MiniMax only, experimental) --------------------------------------
@@ -5026,66 +5071,43 @@ class LoRATrainerGUI:
                  "that do see the image. It may sharpen likeness, or it may cost you the timing "
                  "control that makes the rest work — run it both ways on the same dataset. Only "
                  "applies to the pruned int8 base; the bf16 one never trains AdaLN anyway.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_adaln_hint.grid(row=32, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
-        # Optimised Likeness Learning — photo steps train the identity blocks only; clips train
-        # the full model. BooleanVar in self.entries so presets/queue/last-train carry it free.
-        self.entries["MINIMAX_LIKENESS_OPT"] = tk.BooleanVar(
-            value=bool(self.settings.get("MINIMAX_LIKENESS_OPT", True)))
-        # Under FT the tickbox changes the rotation-cycle length (50 blocks -> the 20-49
-        # tighten), so the Save-every suggestion follows it live.
-        self.entries["MINIMAX_LIKENESS_OPT"].trace_add(
-            "write", lambda *_a: self._refresh_minimax_ft_save_box())
-        self._minimax_likeness_cb = ttk.Checkbutton(
-            training_content, text="Optimised Likeness Learning",
-            variable=self.entries["MINIMAX_LIKENESS_OPT"])
-        self._minimax_likeness_cb.grid(row=39, column=0, columnspan=2, sticky=tk.W,
-                                       padx=5, pady=(8, 0))
+        # Training mode — was the "Optimised Likeness Learning" tickbox until 10 Sep 2026.
+        # A StringVar in self.entries so presets/queue/last-train carry it free. A saved config
+        # from before the dropdown carries the old boolean instead: True was this Fast recipe,
+        # False was hand-picked blocks.
+        self.entries["MINIMAX_LIKENESS_MODE"] = tk.StringVar(
+            value=str(minimax_mode_from_settings(self.settings)))
+        self._minimax_likeness_label = ttk.Label(training_content, text="Training mode:")
+        self._minimax_likeness_label.grid(row=39, column=0, sticky=tk.W, padx=5, pady=(8, 2))
+        self._minimax_likeness_frame = ttk.Frame(training_content)
+        self._minimax_likeness_frame.grid(row=39, column=1, columnspan=2, sticky=tk.W,
+                                          padx=5, pady=(8, 2))
+        self._minimax_likeness_combo = ttk.Combobox(
+            self._minimax_likeness_frame, values=MINIMAX_LIKENESS_MODE_OPTIONS,
+            textvariable=self.entries["MINIMAX_LIKENESS_MODE"], state="readonly", width=34)
+        self._minimax_likeness_combo.pack(side=tk.LEFT)
         self._minimax_likeness_hint = ttk.Label(
-            training_content,
-            text=f"Photos and clips train the identity blocks ({MINIMAX_LIKENESS_BLOCKS}) only, "
-                 f"voice the audio zone ({MINIMAX_AUDIO_BLOCKS}) only. Untick for style or "
-                 "scene training. See the MiniMax section of the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            training_content, text="",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_likeness_hint.grid(row=40, column=0, columnspan=2, sticky=tk.W,
                                          padx=5, pady=(0, 4))
-        # Backward cut (EXPERIMENT, 10 Sep 2026): freeze the out-of-window LoRA params before
-        # each masked step so the backward stops at the window. Measured NF4 0.25 MP: a step
-        # 0.48 s -> 0.35 s (20-49). Off by default until Peter's runs say otherwise.
-        self.entries["MINIMAX_LIKENESS_CUT"] = tk.BooleanVar(
-            value=bool(self.settings.get("MINIMAX_LIKENESS_CUT", False)))
-        # One grid row (41 — 42/43 are the adapter's): tick + hint packed inside a frame.
-        self._minimax_likeness_cut_frame = ttk.Frame(training_content)
-        self._minimax_likeness_cut_frame.grid(row=41, column=0, columnspan=2, sticky=tk.W,
-                                              padx=(24, 5), pady=(2, 4))
-        self._minimax_likeness_cut_cb = ttk.Checkbutton(
-            self._minimax_likeness_cut_frame, text="Cut the backward at the likeness window (experimental)",
-            variable=self.entries["MINIMAX_LIKENESS_CUT"])
-        self._minimax_likeness_cut_cb.pack(anchor=tk.W)
-        self._minimax_likeness_cut_hint = ttk.Label(
-            self._minimax_likeness_cut_frame,
-            text="Today a photo step runs the full 50-block backward and discards the gradients "
-                 "outside the likeness window. This freezes those blocks AND the text token "
-                 "refiner's LoRA before the step, so the backward stops at the window: measured "
-                 "-23% per step on int8, -27% on NF4 (0.25 MP), identical gradients on the "
-                 "trained blocks. The refiner LoRA then does not learn on photo/clip steps — the "
-                 "trigger is still learned in the blocks' attention, where text meets image; "
-                 "prompt following is the thing to watch. LoRA runs only; needs Optimised "
-                 "Likeness on.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=700)
-        self._minimax_likeness_cut_hint.pack(anchor=tk.W)
-        self._MINIMAX_LIKENESS_HINT_LORA = self._minimax_likeness_hint.cget("text")
         self._MINIMAX_LIKENESS_HINT_FT = (
-            f"Same meaning under fine-tune: photos and clips train the identity blocks "
-            f"({MINIMAX_LIKENESS_BLOCKS}), voice the audio zone ({MINIMAX_AUDIO_BLOCKS}). "
-            f"See the MiniMax section of the README.")
-        # Clips are confined to the likeness blocks whenever likeness mode is on — LoRA and
-        # FT alike. It was a sub-tick (29 Aug, on by default; LoRA too since 2 Sep) until
-        # Peter retired the choice on 7 Sep: a confined video run trains just as well and
-        # is far lighter, so likeness mode simply means it. Emitted as --clip_blocks.
-        # trace, not command=: preset loads set the var programmatically and must re-grey too.
-        self.entries["MINIMAX_LIKENESS_OPT"].trace_add(
+            f"Under fine-tune the mode drives the rotation cycle instead of masking steps: in "
+            f"Fast, photos and clips train the identity blocks ({MINIMAX_LIKENESS_BLOCKS}) and "
+            f"voice the audio zone ({MINIMAX_AUDIO_BLOCKS}). Blocks to Train is adapter-only; the "
+            f"fine-tune has its own block field. See the MiniMax section of the README.")
+        # Clips are confined with the photos in Fast — LoRA and FT alike. It was a sub-tick
+        # (29 Aug, on by default; LoRA too since 2 Sep) until Peter retired the choice on
+        # 7 Sep: a confined video run trains just as well and is far lighter. Emitted as
+        # --clip_blocks. trace, not command=: preset loads set the var programmatically and
+        # must re-sync too. Under FT the mode changes the rotation-cycle length, so the
+        # Save-every suggestion follows it live.
+        self.entries["MINIMAX_LIKENESS_MODE"].trace_add(
+            "write", lambda *_a: self._refresh_minimax_ft_save_box())
+        self.entries["MINIMAX_LIKENESS_MODE"].trace_add(
             "write", lambda *_a: self._sync_minimax_likeness_state())
 
         # --- Training adapter (Ostris) — MiniMax LoRA runs only ---------------------------
@@ -5105,7 +5127,7 @@ class LoRATrainerGUI:
             text="Loads Ostris's training adapter (ostris/minimax_h3_training_adapter) frozen at "
                  "1.0 under your LoRA for every training step, and switches it off for previews "
                  "and in your saved file.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_adapter_hint.grid(row=43, column=0, columnspan=2, sticky=tk.W,
                                         padx=5, pady=(0, 4))
         # --- TREAD token routing — MiniMax LoRA runs only, ON by default (7 Sep 2026) -----
@@ -5121,7 +5143,7 @@ class LoRATrainerGUI:
             text="Faster clip steps: a random half of each clip's video tokens skips blocks 2-46 "
                  "and rejoins unchanged. Photos and clip stills always run in full; previews and "
                  "your saved LoRA are untouched. See the MiniMax section of the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_tread_hint.grid(row=45, column=0, columnspan=2, sticky=tk.W,
                                       padx=5, pady=(0, 4))
         # --- clip stills as photos (Peter, 7 Sep 2026) — MiniMax, LoRA and FT ---------------
@@ -5134,18 +5156,17 @@ class LoRATrainerGUI:
                                         padx=5, pady=(8, 0))
         self._minimax_clipstill_hint = ttk.Label(
             training_content,
-            text="Each clip's sharpest frame with a face is picked and encoded when the clips are "
-                 "cached, then trains on a step of its own with the clip's caption. Clips cached "
-                 "with this off use frame 0 until re-cached. See the MiniMax section of the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            text="Each clip's sharpest face frame trains as a photo with the clip's caption. "
+                 "Picked at caching; clips cached with this off use frame 0 until re-cached.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_clipstill_hint.grid(row=47, column=0, columnspan=2, sticky=tk.W,
                                           padx=5, pady=(0, 4))
 
         # Answers "when do changes take effect?" (issue #40) right where people wonder it.
         ttk.Label(training_content,
-                  text="Settings are read when a run launches; Pause → Resume picks up changes, "
-                       "dataset/caption changes need a fresh run.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"),
+                  text="Read at launch. Pause then Resume picks up changes; dataset or caption "
+                       "changes need a fresh run.",
+                  foreground=COLORS["text_explain"], font=HINT_FONT,
                   justify=tk.LEFT, wraplength=720).grid(
             row=30, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 6))
 
@@ -5288,15 +5309,11 @@ class LoRATrainerGUI:
         # The field had no explanation at all, which made the whole resume feature invisible
         # unless you already knew a state dir was a folder (not a .safetensors) and where it lived.
         tk.Label(memory_content,
-                 text="Leave empty for a normal run. To carry on from a saved state, Browse to a folder named "
-                      "like myLora-000012-state in your LoRA output folder — the number is the epoch it "
-                      "finished. Training continues at the next epoch with the optimizer, learning rate and "
-                      "seed exactly as they were, so it picks up mid-run rather than starting over. To train a "
-                      "FINISHED LoRA further, pick its highest-numbered state and raise Max Train Epochs first "
-                      "— otherwise there are no epochs left to run. Pausing writes one of these for you, and "
-                      "the Resume button fills this in automatically; you only need Browse for an older "
-                      "checkpoint or a run from a previous session.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 text="Empty for a normal run. Browse to a state folder (myLora-000012-state; the number "
+                      "is the epoch finished) to continue with optimizer, LR and seed intact. To train a "
+                      "finished LoRA further, pick its last state and raise Max Train Epochs first. Pause "
+                      "and Resume fill this in for you.",
+                 font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=600, justify=tk.LEFT).grid(row=2, column=1, sticky=tk.W, padx=5, pady=(0, 4))
 
         # FP8 Checkboxes. Row label + hint are captured on self (not locals) so
@@ -5327,7 +5344,7 @@ class LoRATrainerGUI:
             text="Converts a bf16 model to fp8 at load time. If your Base DiT is already fp8 "
                  "(e.g. flux-2-klein-base-9b-fp8), leave this unchecked — Fizgig detects "
                  "pre-quantised fp8 files automatically.",
-            font=(FONT_FAMILY, 9, "italic"),
+            font=HINT_FONT,
             fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             wraplength=600, justify=tk.LEFT)
         self._fp8_hint.grid(row=4, column=1, sticky=tk.W, padx=5, pady=(0, 4))
@@ -5379,7 +5396,7 @@ class LoRATrainerGUI:
                       "no swap, at a slight quality cost. fp8 is the least compressed of the three and needs "
                       "the most VRAM, so it swaps blocks to fit. Anything you pick explicitly is planned "
                       "for — swap is sized for the option that will actually run.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=600, justify=tk.LEFT)
         self._quant_4bit_hint.grid(row=7, column=1, sticky=tk.W, padx=5, pady=(0, 4))
         self._on_quant_4bit_mode_changed()  # derive the boolean + sync dependent locks
@@ -5399,7 +5416,7 @@ class LoRATrainerGUI:
                       "a 9B LoRA fit on a 16 GB card. Turning it OFF makes training ~20–30% faster but uses far more "
                       "VRAM, so it's only for big cards (24 GB+, ideally 32 GB) with Blocks Swap at 0. On 16 GB, or "
                       "with block swap on, leave it ON.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=600, justify=tk.LEFT)
         self._grad_checkpoint_hint.grid(row=9, column=1, sticky=tk.W, padx=5, pady=(0, 4))
         # torch.compile (Krea 2 only — hidden under Klein by _apply_training_arch_visibility).
@@ -5425,7 +5442,7 @@ class LoRATrainerGUI:
                       "levels (~18 GB at 1024px, measured ~27% faster than uncompiled). Requires Triton and, on "
                       "Windows, a C++ compiler (VS Build Tools) — both located automatically. Never used with "
                       "Blocks Swap, since swapping moves weights and compiled graphs assume they stay put.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=600, justify=tk.LEFT)
         self._compile_blocks_hint.grid(row=11, column=1, sticky=tk.W, padx=5, pady=(0, 4))
 
@@ -5447,11 +5464,10 @@ class LoRATrainerGUI:
                         variable=self.save_state_on_train_end_var,
                         style="Surface.TCheckbutton").pack(anchor=tk.W)
         tk.Label(memory_content,
-                 text="A state dir holds the LoRA plus the optimizer, so a run can pick up exactly where it "
-                      "left off — after a crash, or to train a finished LoRA further by raising Max Train "
-                      "Epochs and resuming. \"At each checkpoint\" follows Save Every N Epochs. Pause always "
-                      "saves state whether these are ticked or not.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 text="A state holds the LoRA plus optimizer, so a run can resume exactly: after a crash, "
+                      "or to train a finished LoRA further. At each checkpoint follows Save Every N "
+                      "Epochs. Pause always saves one.",
+                 font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=600, justify=tk.LEFT).grid(row=13, column=1, sticky=tk.W, padx=5, pady=(0, 4))
 
         tk.Label(memory_content, text="Keep Last:", font=(FONT_FAMILY, 10),
@@ -5461,10 +5477,9 @@ class LoRATrainerGUI:
         self.entries["KEEP_LAST_N_STATES"].insert(0, str(self.settings.get("KEEP_LAST_N_STATES", 2)))
         self.entries["KEEP_LAST_N_STATES"].grid(row=14, column=1, sticky=tk.W, padx=5, pady=4)
         tk.Label(memory_content,
-                 text="States are big — roughly 470 MB at rank 32, 240 MB at rank 16 — so older ones are "
-                      "deleted as new ones are written. Only state dirs for THIS LoRA name are touched, and "
-                      "the newest is always kept.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 text="States are big (about 470 MB at rank 32), so older ones are deleted. Only this "
+                      "LoRA's states are touched; the newest is always kept.",
+                 font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=600, justify=tk.LEFT).grid(row=15, column=1, sticky=tk.W, padx=5, pady=(0, 4))
 
         # Re-sync now that the GC checkbox exists: the earlier _on_quant_4bit_toggle
@@ -5497,12 +5512,10 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_BASE_QUANT"].pack(side=tk.LEFT)
         self._minimax_quant_hint = ttk.Label(
             memory_content,
-            text="Auto reads your FREE VRAM at launch and picks the base precision and block "
-                 "swap together — int8 is the most accurate, 4-bit fits smaller cards. 4-bit "
-                 "HQQ sits between them (about a third less base error than 4-bit, ~45% more "
-                 "VRAM; NF4's speed on streamed plans, ~half on a big card with no swap); Auto never picks it. "
-                 "Full write-up in the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            text="Auto reads free VRAM at launch and picks precision and block swap together. "
+                 "int8 is the most accurate, 4-bit fits smaller cards, 4-bit HQQ sits between "
+                 "(less error, more VRAM, slower with no swap). Auto never picks HQQ.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_quant_hint.grid(row=17, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Weight averaging (MiniMax only): EMA ------------------------------------------
@@ -5531,9 +5544,9 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_EMA"].pack(side=tk.LEFT)
         self._minimax_smooth_hint = ttk.Label(
             scheduler_content,
-            text="Saves a smoothed average of the weights, so checkpoints come out crisper "
-                 "when you push the LR hard. Costs no speed. Full write-up in the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            text="A smoothed average of the weights, leading to better and more reliable "
+                 "previews.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_smooth_hint.grid(row=26, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Adapter-relative LR ramp (MiniMax only, EXPERIMENT, default Off) ---------------
@@ -5555,10 +5568,9 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_ADAPTER_RAMP"].pack(side=tk.LEFT)
         self._minimax_ramp_hint = ttk.Label(
             scheduler_content,
-            text="Makes the Learning Rate box a CEILING the run climbs toward instead of a rate "
-                 "it starts at, so set the LR to where you want to end up. Full write-up in the "
-                 "README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            text="Makes the Learning Rate box a ceiling the run climbs toward. Set it where you "
+                 "want to end up.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_ramp_hint.grid(row=28, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # --- Caption dropout (MiniMax only) -------------------------------------------------
@@ -5583,7 +5595,7 @@ class LoRATrainerGUI:
             scheduler_content,
             text="Trains a few percent of steps with no caption, so the LoRA does not lean "
                  "entirely on the trigger word.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_capdrop_hint.grid(row=30, column=0, columnspan=2, sticky=tk.W, padx=5,
                                         pady=(0, 4))
 
@@ -5611,7 +5623,7 @@ class LoRATrainerGUI:
         self._minimax_blocks_hint = ttk.Label(
             scheduler_content,
             text=self._MINIMAX_BLOCKS_HINT,
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_blocks_hint.grid(row=32, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
         self._refresh_minimax_blocks_count()
 
@@ -5662,11 +5674,26 @@ class LoRATrainerGUI:
             "<<ComboboxSelected>>", lambda _e: self._sync_distill_weight_state())
         self._minimax_distill_hint = ttk.Label(
             scheduler_content,
-            text="EXPERIMENT — teaches the LoRA to reproduce identity the way H3 does when shown "
-                 "a photo. Needs the ref2va model in Preferences. See the MiniMax section of "
-                 "the README.",
-            foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic"), justify=tk.LEFT, wraplength=720)
+            text="Experiment. Teaches the LoRA to reproduce identity the way H3 does from a "
+                 "reference photo. Needs the ref2va model in Preferences.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_distill_hint.grid(row=34, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
+
+        # --- Train the text token refiner (MiniMax only, Other Options; Peter, 10 Sep 2026) ---
+        # Off by default. A BooleanVar in self.entries so presets / queue / last-train carry it.
+        self.entries["MINIMAX_TRAIN_REFINER"] = tk.BooleanVar(
+            value=bool(self.settings.get("MINIMAX_TRAIN_REFINER", False)))
+        self._minimax_refiner_cb = ttk.Checkbutton(
+            scheduler_content, text="Train the text token refiner",
+            variable=self.entries["MINIMAX_TRAIN_REFINER"])
+        self._minimax_refiner_cb.grid(row=35, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(8, 0))
+        self._minimax_refiner_hint = ttk.Label(
+            scheduler_content,
+            text="Recommended off. Does not affect the ability to use a trigger word. The refiner "
+                 "sets how every prompt is read; training it softens output and makes previews "
+                 "judder between epochs. LoRA runs only.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
+        self._minimax_refiner_hint.grid(row=36, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
         # Training Structure lives in Training Parameters now — see _build_minimax_structure_row,
         # called from that section. It used to sit here in Other Options, collapsed, which is
@@ -5982,6 +6009,12 @@ class LoRATrainerGUI:
 
     def _apply_preset_values(self, preset):
         """Apply preset values to the UI (shared by load_default_preset and load_custom_preset)"""
+        # A preset or Load-Settings-From-Last-Train snapshot written before the Training mode
+        # dropdown (10 Sep 2026) carries the old Optimised Likeness boolean, whose key no longer
+        # exists in self.entries — without this the whole choice is dropped in silence and the
+        # restored run keeps whatever mode happens to be selected.
+        if "MINIMAX_LIKENESS_OPT" in preset and "MINIMAX_LIKENESS_MODE" not in preset:
+            preset = dict(preset, MINIMAX_LIKENESS_MODE=minimax_mode_from_settings(preset))
         for key, value in preset.items():
             if key in self.entries:
                 entry = self.entries[key]
@@ -6008,6 +6041,13 @@ class LoRATrainerGUI:
                     # Some boolean settings (e.g. IMG_IN_TXT_IN_OFFLOADING, PRESERVE_DISTRIBUTION)
                     # are stored in self.entries as BooleanVars — they don't support .delete/.insert.
                     entry.set(bool(value))
+                elif isinstance(entry, tk.Variable):
+                    # A StringVar/IntVar entry — e.g. MINIMAX_LIKENESS_MODE, a readonly dropdown
+                    # driven by its variable. Without this the fall-through below calls .delete()
+                    # on it, raises AttributeError and swallows the assignment in SILENCE: the
+                    # Style preset looked applied while its mode never changed (caught by
+                    # tests/test_minimax_likeness_gui.py, 10 Sep 2026).
+                    entry.set(value)
                 else:
                     try:
                         entry.delete(0, tk.END)
@@ -6716,14 +6756,19 @@ class LoRATrainerGUI:
             _hl = str(p.get("MINIMAX_HIGHNOISE_LR_PCT") or "100").strip()
             if _hl and _hl != "100":
                 bits.append(f"high-noise LR {_hl}%")
-            if p.get("MINIMAX_LIKENESS_OPT"):
-                bits.append("likeness-opt")
+            _pm = minimax_likeness_mode(p.get("MINIMAX_LIKENESS_MODE"))
+            if _pm == "fast":
+                bits.append(f"fast {MINIMAX_LIKENESS_BLOCKS}")
+            elif _pm == "ultra":
+                bits.append(f"ultra {MINIMAX_FULL_MODEL_BLOCKS}")
             else:
                 _bl = minimax_block_spec(p.get("MINIMAX_BLOCKS"))
                 if _bl.lower() != "all":
                     bits.append(f"blocks {_bl}")
             if p.get("MINIMAX_TRAIN_ADALN") is False:
                 bits.append("no adaln")
+            if p.get("MINIMAX_TRAIN_REFINER"):
+                bits.append("refiner on")
             if p.get("MINIMAX_DISTILL"):
                 bits.append(f"distill x{p.get('MINIMAX_DISTILL_WEIGHT', '0.8')}"
                             f" ({p.get('MINIMAX_DISTILL_REFS', '2')} refs)")
@@ -7386,7 +7431,7 @@ class LoRATrainerGUI:
                                            lambda _e: self._on_minimax_structure_changed())
 
         self._minimax_structure_desc = tk.Label(
-            parent, text="", font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
+            parent, text="", font=HINT_FONT, fg=COLORS["text_explain"],
             bg=COLORS["bg_surface"], justify=tk.LEFT, wraplength=700)
         self._minimax_structure_desc.grid(row=23, column=0, columnspan=3, sticky=tk.W,
                                           padx=(12, 5), pady=(0, 4))
@@ -7432,14 +7477,10 @@ class LoRATrainerGUI:
             str(self.settings.get("MIXED_STOP_MODE", "")) or _RETIRE_MODES[0])
         self.entries["MIXED_STOP_MODE"].pack(side=tk.LEFT)
         self._mixed_stop_hint = tk.Label(
-            parent, text="If one category is a substantially different size from the other, "
-                         "it may be done (or start to overbake) well before the rest — finish "
-                         "it early instead of overtraining it. Blank = both train to the end. "
-                         "Anchor keeps the finished category at a true 10% learning rate — "
-                         "holding its quality against drift from the still-training category, "
-                         "with its epoch report staying live as the drift alarm. Stop skips "
-                         "its steps entirely: faster epochs, but that category goes unwatched.",
-            font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+            parent, text="Finish the smaller category early, before it overbakes. Blank = both "
+                         "train to the end. Anchor holds it at 10% LR and keeps its epoch report "
+                         "live. Stop skips its steps: faster, but unwatched.",
+            font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             justify=tk.LEFT, wraplength=720)
         self._MIXED_STOP_HINT_LORA = self._mixed_stop_hint.cget("text")
         # FT text is rebuilt live by _refresh_mixed_stop_hint (the cycle length rides on
@@ -7477,16 +7518,16 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_HIGHNOISE_LR_PCT"].pack(side=tk.LEFT)
         tk.Label(self._minimax_hnlr_frame,
                  text="%  — best left at 100 unless you are experimenting.",
-                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
+                 font=HINT_FONT, fg=COLORS["text_explain"],
                  bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(4, 0))
         # Says what it does and what was measured, so lowering it is a decision rather than a
         # guess: across five datasets, at both densities, 0% and 100% render cleanly at 20 steps
         # without the Turbo LoRA and 100% holds face SHAPE better every time.
         self._minimax_hnlr_hint = tk.Label(
             parent,
-            text="Scales the learning rate of the noisy-half steps (pose, framing, face shape). "
-                 "See the MiniMax section of the README.",
-            font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+            text="Scales the LR of the noisy-half steps: pose, framing, face shape. Leave at 100 "
+                 "unless experimenting.",
+            font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             justify=tk.LEFT, wraplength=700)
         self._minimax_hnlr_hint.grid(row=26, column=0, columnspan=3, sticky=tk.W,
                                      padx=(12, 5), pady=(0, 8))
@@ -7570,16 +7611,29 @@ class LoRATrainerGUI:
 
     # The Blocks to Train hint in both of its states — module-level truth so the greying
     # handler can swap them without duplicating the strings inline.
-    _MINIMAX_BLOCKS_HINT = ("Train only a subset of the 50 blocks. Type ranges and single "
-                            "blocks, comma-separated, like 3-12, 22, 31-33 (blocks 0-49). "
-                            "Measured answers: 20-49 for likeness — sharper, more "
-                            "prompt-responsive, better sound, faster and smoother to converge "
-                            "(Optimised Likeness Learning applies it to photos automatically) — "
-                            "and 0-3, 6-47 for style (the Style preset sets it). Full write-up "
-                            "in the README.")
-    _MINIMAX_BLOCKS_HINT_LOCKED = ("Disabled by Optimised Likeness Learning above — untick it "
-                                   "to hand-pick blocks. While it's on, photos train "
-                                   f"{MINIMAX_LIKENESS_BLOCKS}; video follows the restriction tickbox.")
+    _MINIMAX_BLOCKS_HINT = ("Train a subset of the 50 blocks. Type ranges and singles, "
+                            "comma-separated, like 3-12, 22, 31-33. Measured answers: "
+                            f"{MINIMAX_FULL_MODEL_BLOCKS} for the whole model (what Ultra quality "
+                            f"runs) and {MINIMAX_LIKENESS_BLOCKS} for likeness (Fast). Blocks 0-5 "
+                            "are in neither: they deform anatomy and pull the dataset's colour "
+                            "into the render.")
+    _MINIMAX_BLOCKS_HINT_LOCKED = (f"Owned by the Training mode above: photos and clips "
+                                   f"{MINIMAX_LIKENESS_BLOCKS}, voice {MINIMAX_AUDIO_BLOCKS}. "
+                                   "Set the mode to Off to hand-pick.")
+    _MINIMAX_BLOCKS_HINT_ULTRA = (f"Owned by the Training mode above: every step type trains "
+                                  f"{MINIMAX_FULL_MODEL_BLOCKS}. Set the mode to Off to hand-pick.")
+    # The Training mode hint, one per setting.
+    _MINIMAX_MODE_HINTS = {
+        "fast": (f"Photos and clips train blocks {MINIMAX_LIKENESS_BLOCKS}, voice "
+                 f"{MINIMAX_AUDIO_BLOCKS}. The backward stops at the window, so this is the "
+                 "quickest mode, and it is good on both picture and sound."),
+        "ultra": (f"Every step type trains {MINIMAX_FULL_MODEL_BLOCKS} — better likeness and "
+                  "better audio, and the dataset's own quirks stay out of the LoRA far longer. "
+                  "The mode for style and scene work too, which needs more of the model than "
+                  "the identity blocks. Slower per step: the backward covers 44 blocks instead of "
+                  "30. Blocks 0-5 stay out either way; they deform anatomy and colour."),
+        "off": "The blocks are yours to pick below, for experiments.",
+    }
 
     def _minimax_adapter_pref_key(self):
         """The training-adapter pref that matches the base this run trains on — ref2va when
@@ -7590,23 +7644,33 @@ class LoRATrainerGUI:
         return "minimax_ref_training_adapter" if _ref else "minimax_training_adapter"
 
     def _sync_minimax_likeness_state(self):
-        """Grey Blocks to Train while Optimised Likeness Learning owns the block choice.
+        """Grey Blocks to Train while the Training mode owns the block choice, and keep both
+        hints saying what the current mode does.
 
-        The combobox VALUE is deliberately preserved — a hand-typed spec survives a toggle
-        round-trip; only the widget state and the hint change. Driven by the checkbox trace
-        (fires on preset loads too) and by arch switches."""
+        The Blocks combobox VALUE is deliberately preserved — a hand-typed spec survives a trip
+        through Fast and back; only the widget state and the hints change. Driven by the mode
+        trace (fires on preset loads too) and by arch switches."""
+        mode = minimax_likeness_mode(self.entries["MINIMAX_LIKENESS_MODE"].get()) \
+            if "MINIMAX_LIKENESS_MODE" in self.entries else "fast"
+        mhint = getattr(self, "_minimax_likeness_hint", None)
+        if mhint is not None and mhint.winfo_exists():
+            _ft = bool(getattr(self, "minimax_finetune_var", None)
+                       and self.minimax_finetune_var.get())
+            mhint.config(text=(self._MINIMAX_LIKENESS_HINT_FT if _ft
+                               else self._MINIMAX_MODE_HINTS[mode]))
         combo = self.entries.get("MINIMAX_BLOCKS")
         hint = getattr(self, "_minimax_blocks_hint", None)
         if combo is None or hint is None or not combo.winfo_exists():
             return
-        locked = self._is_minimax_arch() and bool(
-            self.entries["MINIMAX_LIKENESS_OPT"].get())
+        locked = self._is_minimax_arch() and mode != "off"
+        lbl = getattr(self, "_minimax_blocks_count", None)
         if locked:
             combo.config(state="disabled")
-            hint.config(text=self._MINIMAX_BLOCKS_HINT_LOCKED)
-            lbl = getattr(self, "_minimax_blocks_count", None)
+            hint.config(text=(self._MINIMAX_BLOCKS_HINT_ULTRA if mode == "ultra"
+                              else self._MINIMAX_BLOCKS_HINT_LOCKED))
             if lbl is not None and lbl.winfo_exists():
-                lbl.config(text=f"photos and clips: {MINIMAX_LIKENESS_BLOCKS}",
+                lbl.config(text=(f"every step type: {MINIMAX_FULL_MODEL_BLOCKS}" if mode == "ultra"
+                                 else f"photos and clips: {MINIMAX_LIKENESS_BLOCKS}"),
                            fg=COLORS["text_explain"])
         else:
             combo.config(state="")               # editable, the widget's natural state
@@ -7801,6 +7865,17 @@ class LoRATrainerGUI:
         blocks-per-window picker only in block mode (component windows are fixed)."""
         if not hasattr(self, "_krea2_ft_frame"):
             return
+        # Krea 2 ONLY. This method also drives two widgets that are not its own — Krea 2's
+        # auto-recaption tickbox and the Network Type row every family shows — so running it on
+        # another family's tab pushed a Krea 2 checkbox into the MiniMax panel (between Network
+        # Type and Medium to High Noise LR) and, on a snapshot that carried KREA2_FINETUNE True,
+        # would have hidden MiniMax's own Network Type row. Peter hit the first one on 10 Sep
+        # 2026 via Load Settings From Last Train: the snapshot carries every family's keys, and
+        # applying it writes krea2_finetune_var, whose trace lands here regardless of the tab.
+        # The family-level _apply_training_arch_visibility calls this only when the family IS
+        # Krea 2 and hides the fine-tune widgets itself otherwise, so returning early is safe.
+        if not self._is_krea2_arch():
+            return
         on = bool(self.krea2_finetune_var.get())
         for w in (self._krea2_ft_frame, self._krea2_ft_fused_cb, self._krea2_fast_ft_cb,
                   self._krea2_reg_frame, self._krea2_ft_hint):
@@ -7994,16 +8069,23 @@ class LoRATrainerGUI:
         fine-tune's block restriction)."""
         if not hasattr(self, "_minimax_ft_frame"):
             return
+        # MiniMax ONLY, for the same reason as _apply_krea2_ft_visibility: this drives the
+        # Network Type row, which every family shares and the family-level pass owns (Klein
+        # has no LoKR, so it hides the row). Unguarded, applying a snapshot on the Klein tab
+        # wrote minimax_finetune_var, landed here, and put Network Type back on a tab that
+        # does not have it. Found next to Peter's auto-recaption report, 10 Sep 2026. The
+        # family pass calls this only when the family IS MiniMax.
+        if not self._is_minimax_arch():
+            return
         on = bool(self.minimax_finetune_var.get())
         for w in (self._minimax_ft_frame, self._minimax_ft_fused_cb,
                   self._minimax_reg_frame, self._minimax_ft_hint):
             self._set_widget_visible(w, on)
-        # The likeness tickbox STAYS — same meaning, different mechanism: under FT it drives
-        # the Blocks field (whole fine-tune on the identity blocks) instead of masking photo
-        # steps. Its hint swaps to say so. Blocks to Train is adapter-only and hides.
+        # The Training mode STAYS — same meaning, different mechanism: under FT it drives the
+        # rotation cycle instead of masking steps. Its hint swaps to say so. Blocks to Train is
+        # adapter-only and hides.
         if hasattr(self, "_minimax_likeness_hint"):
-            self._minimax_likeness_hint.config(
-                text=self._MINIMAX_LIKENESS_HINT_FT if on else self._MINIMAX_LIKENESS_HINT_LORA)
+            self._sync_minimax_likeness_state()
         for w in (getattr(self, "_minimax_blocks_label", None),
                   getattr(self, "_minimax_blocks_frame", None),
                   getattr(self, "_minimax_blocks_hint", None),
@@ -8240,12 +8322,13 @@ class LoRATrainerGUI:
                   self._minimax_structure_desc,
                   self._minimax_hnlr_label, self._minimax_hnlr_frame, self._minimax_hnlr_hint,
                   self._minimax_blocks_label, self._minimax_blocks_frame, self._minimax_blocks_hint,
-                  self._minimax_likeness_cb, self._minimax_likeness_hint,
-                  self._minimax_likeness_cut_frame,
+                  self._minimax_likeness_label, self._minimax_likeness_frame,
+                  self._minimax_likeness_hint,
                   self._minimax_adapter_cb, self._minimax_adapter_hint,
                   self._minimax_tread_cb, self._minimax_tread_hint,
                   self._minimax_clipstill_cb, self._minimax_clipstill_hint,
                   self._minimax_distill_frame, self._minimax_distill_hint,
+                  self._minimax_refiner_cb, self._minimax_refiner_hint,
                   self._minimax_quant_label, self._minimax_quant_frame,
                   self._minimax_quant_hint,
                   self._minimax_smooth_label, self._minimax_smooth_frame,
@@ -8307,7 +8390,7 @@ class LoRATrainerGUI:
         # active on the resident DiT, so it's live in previews too). Under MiniMax fine-tune
         # it's refused at validation — the rotation path has no LoRA network to stack on.
         for w in (self._contextlora_label, self._contextlora_frame,
-                  self._contextlora_desc_label, self._contextlora_warn_label):
+                  self._contextlora_desc_label):
             self._set_widget_visible(w, True)
         if native:
             # Restore the rank/alpha <-> factor row swap for the current selection.
@@ -9586,9 +9669,9 @@ class LoRATrainerGUI:
         self.entries["ATTENTION_MECHANISM"] = ttk.Combobox(parent, textvariable=self.attention_var, values=attention_options, state="readonly")
         self.entries["ATTENTION_MECHANISM"].grid(row=row, column=1, sticky=tk.EW, padx=5, pady=2)
         row += 1
-        ttk.Label(parent, text="sdpa works on all GPUs. flash3 requires pip install flash-attn and an "
-                  "NVIDIA Hopper/Blackwell GPU (H100, RTX 5090, etc.).",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic")).grid(
+        ttk.Label(parent, text="sdpa runs on any GPU. flash3 needs flash-attn and a Hopper or "
+                  "Blackwell card (H100, RTX 5090).",
+                  foreground=COLORS["text_explain"], font=HINT_FONT).grid(
             row=row, column=0, columnspan=3, sticky=tk.W, padx=5)
         row += 1
 
@@ -9646,7 +9729,7 @@ class LoRATrainerGUI:
         self.entries["METADATA_TRIGGER_PHRASE"].grid(row=row, column=1, sticky=tk.EW, padx=5, pady=2)
         row += 1
         ttk.Label(parent, text="Blank uses the Captions tab's trigger word.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic")).grid(
+                  foreground=COLORS["text_explain"], font=HINT_FONT).grid(
             row=row, column=0, columnspan=3, sticky=tk.W, padx=5)
         row += 1
 
@@ -9656,7 +9739,7 @@ class LoRATrainerGUI:
         ttk.Button(parent, text="Browse", command=lambda: self.browse_file("METADATA_THUMBNAIL", "file")).grid(row=row, column=2, sticky=tk.W, padx=5)
         row += 1
         ttk.Label(parent, text="Blank auto-embeds the latest sample preview; type 'off' to disable.",
-                  foreground=COLORS["text_explain"], font=(FONT_FAMILY, 9, "italic")).grid(
+                  foreground=COLORS["text_explain"], font=HINT_FONT).grid(
             row=row, column=0, columnspan=3, sticky=tk.W, padx=5)
         row += 1
 
@@ -12536,20 +12619,25 @@ class LoRATrainerGUI:
         if self.gallery_server is not None:
             return  # Already running
 
-        samples_dir = self.get_samples_dir()
-        os.makedirs(samples_dir, exist_ok=True)
-        # LoRA checkpoints live in the output dir (parent of sample/); serve them via /loras/.
-        output_dir = self.settings.get("LORA_OUTPUT_DIR", "") or os.path.dirname(samples_dir)
+        os.makedirs(self.get_samples_dir(), exist_ok=True)
 
         # Find free port
         self.gallery_server_port = self.find_free_port()
 
         # Create handler that serves images from samples/ and checkpoints from /loras/ (output dir).
+        # Both folders are resolved PER REQUEST from the current settings, never captured here:
+        # the server starts once per session, and a run started after the LoRA output folder
+        # changed (Krea 2 stopped, MiniMax started elsewhere — Peter, 13 Sep) used to keep
+        # serving the first run's folder while the watcher wrote files.json into the new one,
+        # so the gallery showed no previews. self.settings is a plain dict, safe off-thread.
         app = self   # for the likeness endpoints (never touch Tk vars from handler threads)
+
+        def _output_dir_now():
+            return app.settings.get("LORA_OUTPUT_DIR", "") or os.path.dirname(app.get_samples_dir())
 
         class SamplesHandler(SimpleHTTPRequestHandler):
             def __init__(handler_self, *args, **kwargs):
-                super().__init__(*args, directory=samples_dir, **kwargs)
+                super().__init__(*args, directory=app.get_samples_dir(), **kwargs)
 
             def translate_path(handler_self, path):
                 # /loras/<file> -> the checkpoint in the output dir (basename-only, no traversal).
@@ -12558,7 +12646,7 @@ class LoRATrainerGUI:
                 if clean.startswith('/loras/'):
                     import posixpath, urllib.parse
                     fname = posixpath.basename(urllib.parse.unquote(clean[len('/loras/'):]))
-                    return os.path.join(output_dir, fname)
+                    return os.path.join(_output_dir_now(), fname)
                 if clean.startswith('/dataset/'):
                     import posixpath, urllib.parse
                     fname = posixpath.basename(urllib.parse.unquote(clean[len('/dataset/'):]))
@@ -28285,9 +28373,9 @@ class LoRATrainerGUI:
         # has streamed in — and a queued run must never fail an hour later on a bad spec.
         if self._is_minimax_arch():
             _spec = minimax_block_spec(self.entries["MINIMAX_BLOCKS"].get())
-            # Likeness mode ignores (and disables) the box — a stale typo in it must not
-            # block the launch.
-            if self.entries["MINIMAX_LIKENESS_OPT"].get():
+            # Fast and Ultra ignore (and disable) the box — a stale typo in it must not block
+            # the launch.
+            if minimax_likeness_mode(self.entries["MINIMAX_LIKENESS_MODE"].get()) != "off":
                 _spec = "all"
             if _spec.lower() != "all":
                 try:
@@ -28873,11 +28961,16 @@ class LoRATrainerGUI:
             # Likeness mode owns the block choice: the launch dict says "all" so the queue card,
             # snapshot and builder stay honest, while the combobox keeps the user's typed spec
             # for when they untick.
-            "MINIMAX_BLOCKS": ("all" if self.entries["MINIMAX_LIKENESS_OPT"].get()
-                               else minimax_block_spec(self.entries["MINIMAX_BLOCKS"].get())),
-            "MINIMAX_LIKENESS_OPT": bool(self.entries["MINIMAX_LIKENESS_OPT"].get()),
-            "MINIMAX_LIKENESS_CUT": bool(self.entries["MINIMAX_LIKENESS_CUT"].get()),
+            # Fast leaves the blocks alone (it masks per step type instead); Ultra IS a block
+            # range; Off is whatever the box says.
+            "MINIMAX_BLOCKS": (
+                "all" if minimax_likeness_mode(self.entries["MINIMAX_LIKENESS_MODE"].get()) == "fast"
+                else (MINIMAX_FULL_MODEL_BLOCKS
+                      if minimax_likeness_mode(self.entries["MINIMAX_LIKENESS_MODE"].get()) == "ultra"
+                      else minimax_block_spec(self.entries["MINIMAX_BLOCKS"].get()))),
+            "MINIMAX_LIKENESS_MODE": str(self.entries["MINIMAX_LIKENESS_MODE"].get()),
             "MINIMAX_TRAIN_ADALN": bool(self.entries["MINIMAX_TRAIN_ADALN"].get()),
+            "MINIMAX_TRAIN_REFINER": bool(self.entries["MINIMAX_TRAIN_REFINER"].get()),
             "MINIMAX_TRAINING_ADAPTER": bool(self.entries["MINIMAX_TRAINING_ADAPTER"].get()),
             # experiment/tread: both ticks must be copied here or the builder reads a stale value
             "MINIMAX_TREAD": bool(self.entries["MINIMAX_TREAD"].get()),
@@ -30221,23 +30314,30 @@ class LoRATrainerGUI:
         _blocks = minimax_block_spec(self.settings.get("MINIMAX_BLOCKS", "all"))
         if _blocks.lower() != "all" and not _mft_cmd_on:
             cmd += ["--train_blocks", _blocks]
-        # Optimised Likeness Learning — photo steps train the identity blocks only, clips train
-        # everything. The launch dict already forced MINIMAX_BLOCKS to "all" when this is on, so
-        # the two flags never fight. The flag TRAVELS under fine-tune too: the trainer honours
-        # the same semantics there (cycle-tighten on photo-only data, per-parameter photo
-        # freezing on mixed). --train_blocks stays adapter-only and is never emitted under FT.
-        if self.settings.get("MINIMAX_LIKENESS_OPT"):
+        # Training mode. FAST masks per step type: photos and clips to the identity blocks,
+        # voice to the audio zone (below), and the launch dict left MINIMAX_BLOCKS at "all" so
+        # the two never fight. The masks TRAVEL under fine-tune too: the trainer honours the same
+        # semantics there (cycle-tighten on photo-only data, per-parameter freezing on mixed).
+        # ULTRA is one range for every step type: in LoRA mode the launch dict put 6-49 in
+        # MINIMAX_BLOCKS and --train_blocks above carries it (the modules below block 6 are never
+        # built, so the file is smaller and the backward ends there on its own); under FT there
+        # are no modules to leave out, so the same confinement goes through the per-modality
+        # flags instead. Measured 10 Sep: better likeness and audio than Fast, slower per step.
+        _mode = minimax_likeness_mode(minimax_mode_from_settings(self.settings))
+        if _mode == "fast":
             cmd += ["--photo_blocks", MINIMAX_LIKENESS_BLOCKS]
-            # Clips are confined too — always, under likeness (a confined overnight video run
-            # trained perfectly well, 29 Aug; the sub-tick was retired 7 Sep).
+            # Clips are confined too — always, in Fast (a confined overnight video run trained
+            # perfectly well, 29 Aug; the sub-tick was retired 7 Sep).
             cmd += ["--clip_blocks", MINIMAX_LIKENESS_BLOCKS]
-            if self.settings.get("MINIMAX_LIKENESS_CUT"):
-                cmd += ["--likeness_cut_backward"]
+        elif _mode == "ultra" and _ft_now:
+            cmd += ["--photo_blocks", MINIMAX_FULL_MODEL_BLOCKS,
+                    "--clip_blocks", MINIMAX_FULL_MODEL_BLOCKS,
+                    "--audio_blocks", MINIMAX_FULL_MODEL_BLOCKS]
         # Voice routing — audio steps train only the measured voice zone (34-49): outside it
         # they corrupt the visual blocks (A/B, 24 Aug). Under FT it always travels (the
         # trainer also tightens the cycle to the union of what the dataset trains); in LoRA
         # mode it is part of Optimised Likeness Learning. Harmless without audio files.
-        if _ft_now or self.settings.get("MINIMAX_LIKENESS_OPT"):
+        if (_ft_now or _mode == "fast") and not (_mode == "ultra" and _ft_now):
             cmd += ["--audio_blocks", MINIMAX_AUDIO_BLOCKS]
         # Reference distillation. Both flags travel together; the trainer also needs --vae to
         # encode the reference, which the sample block may already have added.
@@ -30253,6 +30353,9 @@ class LoRATrainerGUI:
         # AdaLN LOCKED off (Peter, 9 Aug): the pruned builds everyone deploys on cannot load
         # AdaLN LoRA keys, so training it only wastes capacity. Checkbox hidden; always opt out.
         cmd.append("--no_train_adaln")
+        # The text token refiner is off unless the Other Options tick says otherwise (10 Sep).
+        if self.settings.get("MINIMAX_TRAIN_REFINER"):
+            cmd.append("--train_token_refiner")
         # Depth-split LR is RETIRED (Peter, 9 Aug): it was the manual precursor of the limiter
         # + governor, which target whoever actually runs hot instead of a guessed range. The
         # controls are hidden and a stale saved range is deliberately not sent.

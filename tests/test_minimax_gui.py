@@ -114,7 +114,8 @@ ck("60% resolves to the uniform-base shift ~0.667", abs(_sh_uni - 0.667) < 0.01,
 # family switch and a fresh start apply.
 for _k, _want in (("NETWORK_DIM", 8), ("NETWORK_ALPHA", 8), ("MAX_TRAIN_EPOCHS", 50),
                   ("DATASET_MEGAPIXELS", "0.25"), ("MINIMAX_BLOCKS", "all"),
-                  ("MINIMAX_TRAIN_ADALN", False), ("MINIMAX_SLOW_BLOCKS", ""),
+                  ("MINIMAX_TRAIN_ADALN", False), ("MINIMAX_TRAIN_REFINER", False),
+                  ("MINIMAX_LIKENESS_MODE", G.MINIMAX_MODE_FAST), ("MINIMAX_SLOW_BLOCKS", ""),
                   ("MINIMAX_DISTILL", False), ("ADAPTIVE_LR", False),
                   ("NETWORK_TYPE", "LoRA (standard)"), ("LOKR_FACTOR", 8),
                   ("MINIMAX_ADAPTER_RAMP", "Off")):
@@ -243,6 +244,58 @@ app.sample_enabled_var.set(False)
 cmd_off = [str(x) for x in app.build_training_command(cfg)]
 ck("previews disabled sends no sample flags", "--sample_prompts" not in cmd_off)
 app.sample_enabled_var.set(True)
+
+# --- Blocks to Train: unticking likeness fills in the recommendation ---------------------
+# Peter, 10 Sep 2026: 6-49 beat both the 20-49 window and the full 50 (blocks 0-5 deform anatomy
+# and add micro-distortion to audio). Untick has to hand back 6-49, not the do-nothing "all" —
+# and must never overwrite a spec the user chose. Silent either way if it regresses.
+app.entries["MINIMAX_LIKENESS_MODE"].set(G.MINIMAX_MODE_OFF)
+app.entries["MINIMAX_BLOCKS"].set("14-37 · middle band")
+app.entries["MINIMAX_LIKENESS_MODE"].set(G.MINIMAX_MODE_FAST)
+app.entries["MINIMAX_LIKENESS_MODE"].set(G.MINIMAX_MODE_ULTRA)
+app.entries["MINIMAX_LIKENESS_MODE"].set(G.MINIMAX_MODE_OFF)
+ck("a chosen spec survives a Fast/Ultra/Off round-trip",
+   G.minimax_block_spec(app.entries["MINIMAX_BLOCKS"].get()) == "14-37",
+   app.entries["MINIMAX_BLOCKS"].get())
+ck("...and the box is editable in Off",
+   str(app.entries["MINIMAX_BLOCKS"].cget("state")) != "disabled",
+   app.entries["MINIMAX_BLOCKS"].cget("state"))
+ck("6-49 is an offered option", any(str(o).split(" ")[0] == "6-49" for o in G.MINIMAX_BLOCK_OPTIONS),
+   G.MINIMAX_BLOCK_OPTIONS)
+app.entries["MINIMAX_LIKENESS_MODE"].set(G.MINIMAX_MODE_FAST)
+
+# --- applying a snapshot must not drag another family's widgets onto this tab ---------------
+# Peter, 10 Sep 2026: after Load Settings From Last Train on the MiniMax tab, Krea 2's
+# "Auto-recaption stuck images" tickbox appeared between Network Type and Medium to High Noise
+# LR. A snapshot carries EVERY family's keys, so applying one writes krea2_finetune_var and
+# minimax_finetune_var; their visibility handlers drove widgets the other families share
+# (auto-recaption, and the Network Type row) with no family guard of their own. Silent by
+# nature — the run is unaffected, the panel just grows a control that does nothing here.
+_watch = {"auto-recaption": app._krea2_autorecap_cb,
+          "per-image LR": app._krea2_perimglr_cb,
+          "krea2 fine-tune": app._krea2_ft_frame,
+          "Network Type row": app._network_type_rowf,
+          "Training mode": app._minimax_likeness_frame}
+# winfo_manager(), not winfo_ismapped(): this tab is never realised in a headless run, so
+# ismapped reads False for everything and would compare tab visibility instead of the
+# widgets. _set_widget_visible works by grid/grid_remove, which is exactly what manager
+# reports. (The bug itself was confirmed with ismapped on a realised tab.)
+_before = {k: bool(w.winfo_manager()) for k, w in _watch.items()}
+app._apply_preset_values(dict(app._collect_preset_values()))
+root.update_idletasks()
+_after = {k: bool(w.winfo_manager()) for k, w in _watch.items()}
+ck("a snapshot restore leaves the MiniMax panel exactly as it was",
+   _before == _after, [k for k in _watch if _before[k] != _after[k]])
+ck("...and Krea 2's auto-recaption box is not one of the things on it",
+   _after["auto-recaption"] is False)
+ck("...while MiniMax's own rows are still there",
+   _after["Network Type row"] and _after["Training mode"])
+# the guards themselves: each family's fine-tune visibility is a no-op on another family's tab
+app._apply_krea2_ft_visibility()
+app._apply_minimax_ft_visibility()
+root.update_idletasks()
+ck("calling either fine-tune visibility pass directly changes nothing here",
+   {k: bool(w.winfo_manager()) for k, w in _watch.items()} == _before)
 
 # --- validate_inputs requires the three minimax_* paths ----------------------------------
 # validate_inputs pops a modal messagebox on failure (blocks headless) and returns False —

@@ -90,9 +90,15 @@ class LoRAModule(torch.nn.Module):
             for lora_up in self.lora_up:
                 torch.nn.init.zeros_(lora_up.weight)
 
-        if type(alpha) == torch.Tensor:
-            alpha = alpha.detach().float().numpy()  # without casting, bf16 causes error
-        alpha = self.lora_dim if alpha is None or alpha == 0 else alpha
+        if isinstance(alpha, torch.Tensor):
+            # A plain Python float, not a NumPy scalar: a NumPy scalar attribute traces as a
+            # tensor under torch.compile, so the inference epilogue's add(alpha=float(scale))
+            # became a data-dependent guard and Krea 2 + compile + a context LoRA crashed at the
+            # first step (GuardOnDataDependentSymNode, 13 Sep 2026). .item() keeps bf16 safe.
+            alpha = float(alpha.detach().float().item())
+        elif alpha is not None:
+            alpha = float(alpha)
+        alpha = float(self.lora_dim) if alpha is None or alpha == 0 else alpha
         self.scale = alpha / self.lora_dim
         self.register_buffer("alpha", torch.tensor(alpha))  # for save/load
 

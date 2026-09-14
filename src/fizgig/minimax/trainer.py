@@ -562,7 +562,7 @@ def adapter_param_count(dit_path: str, include_patterns, network_type: str = "lo
         if len(shape) != 2:                     # Linears only, as create_modules wraps
             continue
         name = key[:-len(".weight")]
-        if not any(r.search(name) for r in rx):
+        if not any(r.fullmatch(name) for r in rx):   # fullmatch, as create_modules matches
             continue
         out_dim, in_dim = int(shape[0]), int(shape[1])
         if str(network_type).lower() == "lokr":
@@ -596,6 +596,79 @@ def adapter_vram_gb(params: int, optimizer_type: str = "adamw8bit") -> float:
     n_states = 1 if "lion" in key else 2        # Lion keeps momentum only
     state_bytes = (1 if "8bit" in key else 4) * n_states
     return params * (2 + state_bytes) / 1e9     # bf16 weight + optimizer state
+
+
+def frozen_lora_vram_gb(path: str, bytes_per_elem: int = 2) -> float:
+    """GB a FROZEN side LoRA holds on the card for the whole run — the training adapter, or a
+    Context LoRA. Read from the safetensors HEADER, so this works before the DiT is built, like
+    adapter_param_count.
+
+    load_context_lora does `net.to(device=device, dtype=dtype)`, so the file lands in the training
+    dtype (bf16 = 2 bytes), not the dtype it was stored in — count elements, not file bytes. It is
+    applied to the DiT and never freed, so it belongs in the resident term exactly like the
+    trainable adapter's weights. Any AdaLN rows the file carries are injected from the same
+    tensors and are counted here too.
+
+    Not a rounding error: the training adapter is on by default in every H3 preset. Fizgig's
+    Preferences download is ostris's v1 (rank 16, 0.155 GB resident); upstream also publishes a
+    v2 at rank 32, which is 0.310 GB if a user points the path at it. This reads whichever file
+    is configured rather than assuming either.
+    """
+    if not path:
+        return 0.0
+    try:
+        if not os.path.isfile(path):
+            return 0.0
+        import json
+        import struct
+        with open(path, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            hdr = json.loads(f.read(n))
+        elems = 0
+        for key, ent in hdr.items():
+            if key == "__metadata__" or not isinstance(ent, dict):
+                continue
+            shape = ent.get("shape") or []
+            c = 1
+            for d in shape:
+                c *= int(d)
+            elems += c if shape else 0
+        return elems * int(bytes_per_elem) / 1e9
+    except Exception:
+        return 0.0     # unreadable header: plan as before rather than refuse to plan
+
+
+def ema_shadow_gb(params: int) -> float:
+    """GB the EMA shadow holds. EMAWeights keeps `p.detach().clone().float()` per trainable
+    parameter — a full FP32 copy on the same device, live for the whole run (swap_in/swap_out
+    only bracket saves and previews). Four bytes, not two: 1.25 GB on LoKR factor 8, which is
+    most of the planner's whole reserve. Zero when EMA is off, and FT rotation forces it off
+    before the plan runs."""
+    return max(0, int(params)) * 4 / 1e9
+
+
+def plan_adapter_gb(params: int, optimizer_type: str = "adamw8bit", *,
+                    training_adapter_path: str = None, context_lora_path: str = None,
+                    ema_decay: float = 0.0, ft_rotation: int = 0):
+    """Everything the adapter side of a run keeps resident, as (total, frozen_gb, ema_gb) GB.
+
+    Pure so the gating is testable: the planner runs deep inside train_minimax behind a GPU and a
+    21 GB checkpoint, and until this existed the only coverage of the gates was grepping the
+    source for the lines that implement them, which passes whether or not they run.
+
+    The gates mirror what the run actually does. Under fine-tune rotation the training adapter
+    and a Context LoRA are refused outright (they raise at load time) and EMA is forced off by
+    the FT coercion block, so none of the three is resident there. Otherwise each term counts
+    only when it is really present.
+    """
+    total = adapter_vram_gb(params, optimizer_type)
+    frozen = ema = 0.0
+    if not ft_rotation:
+        frozen = (frozen_lora_vram_gb(training_adapter_path)
+                  + frozen_lora_vram_gb(context_lora_path))
+        if ema_decay and float(ema_decay) > 0:
+            ema = ema_shadow_gb(params)
+    return total + frozen + ema, frozen, ema
 
 
 def plan_base_quant(free_gb: float, pruned: bool, mp: float = 0.25, adapter_gb: float = 0.0):
@@ -2295,13 +2368,15 @@ def train_minimax(
     base_quant: str = "auto",
     include_patterns: list = None,
     train_blocks: str = None,        # "14-37" = train only that block range (experiment)
-    likeness_cut_backward: bool = False,  # EXPERIMENT (10 Sep 2026): on a masked step, freeze the
-                                     # out-of-window LoRA params BEFORE the forward so autograd
-                                     # stops at the first trained block. Today's mask sets the
-                                     # out-of-window grads to None AFTER a full 50-block backward;
-                                     # measured (NF4, 0.25 MP): backward 0.32 s -> 0.19 s at
-                                     # 20-49, -> 0.13 s at 30-49, trained-param grads equal to
-                                     # within the base's own run-to-run noise. Off = today.
+    likeness_cut_backward: bool = True,  # Optimised Likeness (10 Sep 2026): on a masked step the
+                                     # out-of-window LoRA params AND the token refiner's LoRA
+                                     # are frozen BEFORE the forward, so autograd stops at the
+                                     # first trained block. Measured: -23% per step on int8,
+                                     # -27% on NF4 (0.25 MP); trained-block grads equal to the
+                                     # old post-hoc mask within run-to-run noise. Peter's A/B
+                                     # (same seed, 10 Sep): sharper previews, the epoch-to-epoch
+                                     # judder halved, likeness ahead at every epoch. False =
+                                     # the old full backward with the refiner training (A/B).
     photo_blocks: str = None,        # Optimised Likeness Learning: photo steps update only these
                                      # blocks (+refiners); video/audio clips update everything.
                                      # The 20-49 recipe: photo gradients into the front trunk are
@@ -2320,6 +2395,13 @@ def train_minimax(
                                      # measurably corrupt the visual blocks (A/B, 24 Aug —
                                      # audio-only @34-49 clean, @20-49 damaged visuals).
     train_adaln: bool = True,        # False = drop adaln_proj from the targets (pruned only)
+    train_token_refiner: bool = False,  # True = the text token refiner's Linears join the LoRA
+                                     # targets. Off by default (10 Sep 2026): the refiner is the
+                                     # model's bridge from the text encoder into the DiT and sets
+                                     # how every prompt is read; a LoRA on it moved that reading
+                                     # every epoch (preview judder, softer output). Photos, voice
+                                     # and video all measured sharper and steadier with it off; the
+                                     # trigger is learned in the blocks' attention regardless.
     distill: bool = False,           # reference distillation (references come from the dataset)
     distill_weight: float = 0.8,     # teacher share of the loss; the rest is the real photo
     distill_phase1_epochs: int = -1,  # identity-first: teacher-ONLY epochs, then photos-only
@@ -2759,16 +2841,27 @@ def train_minimax(
             # The adapter is NOT a rounding error and it is not fixed: LoKR 8 trains ~313 M
             # parameters against a rank-16 LoRA's ~75 M, and fp32 Adam state is 4x the 8-bit
             # one. Planning without it was planning for a configuration nobody runs — the
-            # anchors were measured on rank-16 + adamw8bit (~0.45 GB) while the shipped default
-            # is LoKR 8 + adamw (~3.8 GB). Shapes come from the checkpoint header, so this is
-            # the real targeted module set for whichever file is loaded.
-            _pat = PRUNED_INCLUDE_PATTERNS if _pruned else DEFAULT_INCLUDE_PATTERNS
+            # anchors were measured on rank-16 + adamw8bit (~0.45 GB), while a LoKR 8 + adamw
+            # run (an opt-in Network Type; every shipped H3 preset is LoRA) reaches ~3.8 GB.
+            # Shapes come from the checkpoint header, so this is the real targeted module set
+            # for whichever file is loaded — and it must be the same pattern list the run will
+            # use, hence user_include_patterns first, exactly as the build resolves it below.
+            _pat = list(user_include_patterns or
+                        (PRUNED_INCLUDE_PATTERNS if _pruned else DEFAULT_INCLUDE_PATTERNS))
             if not train_adaln:
                 _pat = [p for p in _pat if "adaln" not in p]
+            if not train_token_refiner:
+                _pat = [p for p in _pat if "token_refiner" not in p]
             _ad_params = adapter_param_count(dit_path, _pat, network_type=network_type,
                                              network_dim=network_dim, lokr_factor=lokr_factor,
                                              train_blocks=train_blocks)
-            _adapter = adapter_vram_gb(_ad_params, optimizer_type)
+            # The frozen training adapter, a Context LoRA and the EMA shadow are resident for
+            # the whole run and were invisible to the plan until 10 Sep 2026 — see
+            # plan_adapter_gb for what each one is and when it counts.
+            _adapter, _frozen_gb, _ema_gb = plan_adapter_gb(
+                _ad_params, optimizer_type, training_adapter_path=training_adapter_path,
+                context_lora_path=context_lora_path, ema_decay=ema_decay,
+                ft_rotation=ft_rotation)
 
             if base_quant == "auto":
                 _mode, n_swap, _ckpt_auto, _why = plan_base_quant(
@@ -2788,10 +2881,16 @@ def train_minimax(
             _base_mode = _mode
             _resident = _resident_for(_mode, _pruned)
 
+            _extra_bits = []
+            if _frozen_gb:
+                _extra_bits.append(f"+{_frozen_gb:.2f} GB frozen LoRAs")
+            if _ema_gb:
+                _extra_bits.append(f"+{_ema_gb:.2f} GB EMA shadow")
+            _extra_txt = (" " + " ".join(_extra_bits)) if _extra_bits else ""
             logger.info(f"[vram] auto plan: free {_free_gb:.1f} GB, largest bucket {_mp:.2f} MP, "
                         f"base ~{_resident:.0f} GB ({_mode}, {'pruned' if _pruned else 'bf16'}), "
                         f"adapter ~{_adapter:.1f} GB ({_ad_params/1e6:.0f} M params, "
-                        f"{optimizer_type}) -> blocks_to_swap={n_swap}, "
+                        f"{optimizer_type}){_extra_txt} -> blocks_to_swap={n_swap}, "
                         f"checkpointing={'on' if _ckpt_auto else 'off'}")
             logger.info(f"[vram] base precision: {_mode} — {_why}")
             if _mode == "nf4" and _pruned and base_quant == "auto":
@@ -2804,6 +2903,25 @@ def train_minimax(
                     "inference. To force the accurate base, set Base Precision to int8 — expect "
                     "block swap and a several-times-slower run — or close other GPU apps and "
                     "re-launch.")
+                # Do not make them guess which knob to turn. On a big trainable adapter the
+                # EMA shadow alone is over a GB of the budget (fp32, 4 bytes a parameter), and
+                # it is the cheapest thing here to give up — it changes what is SAVED, not what
+                # is learned. Only said when these terms are big enough to have mattered.
+                _plan_without = plan_base_quant(
+                    _free_gb, _pruned, mp=_mp, adapter_gb=_adapter - _frozen_gb - _ema_gb)[0]
+                if _plan_without == "int8":
+                    _cand = []
+                    if _ema_gb >= 0.3:
+                        _cand.append(f"the EMA shadow ({_ema_gb:.1f} GB — Weight averaging off "
+                                     f"still trains identically, it only changes what is saved)")
+                    if _frozen_gb >= 0.3:
+                        _cand.append(f"the frozen LoRAs riding under yours ({_frozen_gb:.1f} GB "
+                                     f"— the training adapter and any Context LoRA)")
+                    if _cand:
+                        logger.warning(
+                            "[vram] int8 WOULD have fitted without the extras this run keeps "
+                            "resident: " + ", and ".join(_cand) + ". Drop one to get the "
+                            "accurate base back.")
             if n_swap > 0 and not _ring_planned():
                 # Only the CLASSIC parking swap earns the scary line — ring-streamed
                 # blocks (int8 and NF4 alike) cross PCIe one-way with prefetch and cost
@@ -3484,6 +3602,11 @@ def train_minimax(
         else:
             logger.info("[base] AdaLN was not a target on this checkpoint; the toggle changes "
                         "nothing here.")
+    # The text token refiner is off by default (10 Sep 2026): a LoRA there re-tunes how every
+    # prompt is read, for every block on every step, and it cannot hold a subject. The blocks'
+    # attention learns the trigger on its own.
+    if not train_token_refiner:
+        include_patterns = [p for p in include_patterns if "token_refiner" not in p]
     _blocks_used = "all"
     if train_blocks:
         _n_blocks = len(dit.blocks)
@@ -3491,14 +3614,16 @@ def train_minimax(
         _sel = parse_block_spec(train_blocks, _n_blocks)
         _blocks_used = format_block_spec(_sel)
         logger.info("[base] EXPERIMENT: training blocks %s only (%d of %d), text refiner "
-                    "included. Nobody has mapped what H3's blocks do — judge this against a "
+                    "%s. Nobody has mapped what H3's blocks do — judge this against a "
                     "full-model run on the same dataset, not on its own.",
-                    _blocks_used, len(_sel), _n_blocks)
+                    _blocks_used, len(_sel), _n_blocks,
+                    "included" if train_token_refiner else "off")
     # Report what is ACTUALLY targeted: this used to key off the checkpoint alone, so a run with
     # --no_train_adaln announced "+ AdaLN" one line after saying AdaLN adapters were off.
     _adaln_on = bool(dit.pruned_adaln and train_adaln)
-    logger.info("[base] %s checkpoint; LoRA targets: attention + MLP + token refiner%s",
+    logger.info("[base] %s checkpoint; LoRA targets: attention + MLP%s%s",
                 "pruned (curve-table AdaLN)" if dit.pruned_adaln else "full bf16",
+                " + token refiner" if train_token_refiner else " (text token refiner off)",
                 " + AdaLN (deploy-consistent on this build; rank caps at 8)" if _adaln_on
                 else (" (AdaLN excluded - turned off for this run)" if dit.pruned_adaln
                       else " (AdaLN excluded - dropped by pruned inference builds)"))
@@ -3629,7 +3754,7 @@ def train_minimax(
         import re as _re
         _targeted = [n for n, m in dit.named_modules()
                      if isinstance(m, torch.nn.Linear)
-                     and any(_re.search(p, n) for p in include_patterns)]
+                     and any(_re.fullmatch(p, n) for p in include_patterns)]   # fullmatch: what create_modules does
         if len(network.unet_loras) < len(_targeted):
             _kinds = sorted({type(dit.get_submodule(n)).__name__ for n in _targeted})
             raise RuntimeError(
@@ -3824,11 +3949,18 @@ def train_minimax(
             if "token_refiner" in _lora.lora_name:
                 _ref_ids.update(id(p) for p in _lora.parameters())
         _refiner_params = [p for p in params if id(p) in _ref_ids]
-        logger.info("[likeness] backward CUT at the window (experimental): out-of-window LoRA "
-                    "params AND the token refiner's %d LoRA tensors are frozen before each masked "
-                    "step's forward, so the backward stops at the first trained block instead of "
-                    "running all 50 and discarding. The refiner LoRA does not learn on masked steps.",
-                    len(_refiner_params))
+        if _refiner_params:
+            logger.info("[likeness] backward cut at the window: out-of-window LoRA params AND the "
+                        "token refiner's %d LoRA tensors are frozen before each masked step's "
+                        "forward (photo, clip and voice steps alike), so the backward stops at the "
+                        "first trained block. The refiner LoRA does not learn on masked steps "
+                        "(--likeness_full_backward restores the old behaviour).",
+                        len(_refiner_params))
+        else:
+            logger.info("[likeness] backward cut at the window: out-of-window LoRA params are "
+                        "frozen before each masked step's forward (photo, clip and voice steps "
+                        "alike), so the backward stops at the first trained block "
+                        "(--likeness_full_backward restores the old behaviour).")
     # Clip routing, LoRA mode (Peter, 2 Sep — same behaviour as the FT tickbox): clip-only
     # windows update only clip_blocks. Same mechanism as the photo mask.
     _clip_mask_params = []
@@ -4249,6 +4381,7 @@ def train_minimax(
             "ss_highnoise_lr_scale": f"{float(highnoise_lr_scale):g}",
             "ss_train_blocks": _blocks_used,
             "ss_train_adaln": "1" if _adaln_on else "0",
+            "ss_train_token_refiner": "1" if train_token_refiner else "0",
             "ss_distill": "dataset" if distill else "off",
             "ss_distill_weight": (f"{distill_weight:g}" if distill else "0"),
             # Context LoRA: the file this LoRA was trained ON TOP OF and the strength it rode
@@ -4702,11 +4835,15 @@ def train_minimax(
                     from fizgig.utils.device import plannable_free_vram as _pfv
                     _free = _pfv()
                     vram_line("pre-decode")
-                    if _frames > 1 and _free < 7.5:
+                    if _free < 7.5:
+                        # Stills included, not just clips: the decoder does not fit beside
+                        # the resident base on a tight card regardless of frame count — the
+                        # old _frames > 1 guard was a big-card assumption that turned into
+                        # an every-epoch OOM for still previews.
                         _need = (7.5 - _free) + 1.0
-                        logger.info(f"[preview] {_free:.1f} GB free is too tight for clip "
-                                    f"decode — parking ~{_need:.1f} GB of tail blocks for "
-                                    f"this decode pass.")
+                        logger.info(f"[preview] {_free:.1f} GB free is too tight for "
+                                    f"{'clip ' if _frames > 1 else ''}decode — parking "
+                                    f"~{_need:.1f} GB of tail blocks for this decode pass.")
                         park_dit_partial(dit, need_gb=_need)
                         gc.collect()
                         torch.cuda.empty_cache()
@@ -4787,6 +4924,14 @@ def train_minimax(
             if _audio_dec_state["dec"] is not None:
                 _audio_dec_state["dec"].to("cpu")     # ~0.45 GB back off the card
             vram_line("post-decode")
+            if _base_parked and decoder is not None:
+                # The decoder must be off the card before the parked tail blocks
+                # come back — with it resident there is not enough room for the
+                # restore. Idempotent with the finally, which covers the exception path.
+                decoder.to("cpu")
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             if _base_parked:
                 restore_parked_dit(dit, device, n_swap)   # swap-aware: never the whole base
                 gc.collect()
@@ -5236,14 +5381,16 @@ def train_minimax(
                               else _ft_freeze["clip"]))
                 for _p in _frz:
                     _p.requires_grad_(False)
-            elif likeness_cut_backward and not _is_voice:
+            elif likeness_cut_backward:
                 # Backward cut (LoRA mode): the params this step's mask will discard anyway are
                 # frozen for the forward+backward, PLUS the token refiner's LoRA (its text rows
                 # enter at block 0 — trainable, it drags the backward through every block), so
-                # the graph ends at the first trained block. Exact per-step masking (a mixed
-                # accumulation window no longer trains the out-of-window blocks from its photo
-                # steps — those grads were None-d anyway on a photo-only window).
-                _frz = (list(_photo_mask_params) if _is_photo else list(_clip_mask_params))
+                # the graph ends at the first trained block: 20 for photos and clips, 34 for
+                # voice (Peter, 10 Sep: "do the same cut"). Exact per-step masking (a mixed
+                # accumulation window no longer trains the out-of-window blocks from its masked
+                # steps — those grads were None-d anyway on a single-modality window).
+                _frz = (list(_audio_mask_params) if _is_voice
+                        else (list(_photo_mask_params) if _is_photo else list(_clip_mask_params)))
                 if _frz:
                     _frz = _frz + _refiner_params
                 for _p in _frz:
