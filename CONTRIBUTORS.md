@@ -54,6 +54,26 @@ in the optional hash metadata (landed with co-author credit, e54b0d3) and the po
 fragmentation OOM. Confirmed training otherwise fully stable at 12 GB — epoch 14 with
 checkpoints throughout when they first reported.
 
+## Hell-Bent-Fox
+
+[Hell-Bent-Fox](https://github.com/Hell-Bent-Fox) diagnosed and fixed the **still-preview OOM
+on 16 GB cards** running the int8 streamed plan
+([#134](https://github.com/shootthesound/Fizgig/issues/134) →
+[#109](https://github.com/shootthesound/Fizgig/pull/109)): the tail-block parking that lets a
+clip preview's decoder fit ran only for clips, so a still preview loaded the 4.85 GB decoder
+into 4 GB of free VRAM, failed twice and switched previews off for the rest of the run. Their
+fix parks for stills too and takes the decoder off the card before the parked blocks return.
+The PR was first offered in August with the same exact write-up, closed here on a promise that
+did not get delivered, and merged as theirs in September once they came back with the log.
+
+## marduk191
+
+[marduk191](https://github.com/marduk191) contributed two fixes from their fork, shipped in
+v5.7.1 with authorship intact: **caption files that are not UTF-8** (Windows-1252, UTF-16) now
+load with a warning that names the file instead of aborting the whole caching run on a single
+curly apostrophe, and the **`expandable_segments` allocator option is no longer requested on
+Windows**, where PyTorch rejects it and warned on every launch.
+
 ## FNGarvin
 
 [FNGarvin](https://github.com/FNGarvin) has contributed a string of high-quality features and
