@@ -12268,20 +12268,25 @@ class LoRATrainerGUI:
         if self.gallery_server is not None:
             return  # Already running
 
-        samples_dir = self.get_samples_dir()
-        os.makedirs(samples_dir, exist_ok=True)
-        # LoRA checkpoints live in the output dir (parent of sample/); serve them via /loras/.
-        output_dir = self.settings.get("LORA_OUTPUT_DIR", "") or os.path.dirname(samples_dir)
+        os.makedirs(self.get_samples_dir(), exist_ok=True)
 
         # Find free port
         self.gallery_server_port = self.find_free_port()
 
         # Create handler that serves images from samples/ and checkpoints from /loras/ (output dir).
+        # Both folders are resolved PER REQUEST from the current settings, never captured here:
+        # the server starts once per session, and a run started after the LoRA output folder
+        # changed (Krea 2 stopped, MiniMax started elsewhere — Peter, 13 Sep) used to keep
+        # serving the first run's folder while the watcher wrote files.json into the new one,
+        # so the gallery showed no previews. self.settings is a plain dict, safe off-thread.
         app = self   # for the likeness endpoints (never touch Tk vars from handler threads)
+
+        def _output_dir_now():
+            return app.settings.get("LORA_OUTPUT_DIR", "") or os.path.dirname(app.get_samples_dir())
 
         class SamplesHandler(SimpleHTTPRequestHandler):
             def __init__(handler_self, *args, **kwargs):
-                super().__init__(*args, directory=samples_dir, **kwargs)
+                super().__init__(*args, directory=app.get_samples_dir(), **kwargs)
 
             def translate_path(handler_self, path):
                 # /loras/<file> -> the checkpoint in the output dir (basename-only, no traversal).
@@ -12290,7 +12295,7 @@ class LoRATrainerGUI:
                 if clean.startswith('/loras/'):
                     import posixpath, urllib.parse
                     fname = posixpath.basename(urllib.parse.unquote(clean[len('/loras/'):]))
-                    return os.path.join(output_dir, fname)
+                    return os.path.join(_output_dir_now(), fname)
                 if clean.startswith('/dataset/'):
                     import posixpath, urllib.parse
                     fname = posixpath.basename(urllib.parse.unquote(clean[len('/dataset/'):]))
