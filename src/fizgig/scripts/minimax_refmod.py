@@ -39,7 +39,7 @@ def setup_parser():
     p.add_argument("--lr", type=float, default=1e-3, help="latent-space AdamW rate (default 1e-3, measured)")
     p.add_argument("--pull", type=float, default=2.0,
                    help="weight of the L2 pull toward the initial encode (default 2.0, measured)")
-    p.add_argument("--max_refs", type=int, default=8, help="references stacked into the mod (default 8)")
+    p.add_argument("--max_refs", type=int, default=16, help="references stacked into the mod (default 16, measured)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--base_quant", default="auto", help="auto / int8 / nf4 / hqq")
     p.add_argument("--blocks_to_swap", default="auto")
@@ -55,15 +55,9 @@ def setup_parser():
     p.add_argument("--turbo_lora_path", default=None, help="Turbo LoRA for few-step previews")
     p.add_argument("--turbo_lora_strength", type=float, default=1.0)
     p.add_argument("--description", default="", help="stored in the mod (the loaders can emit it)")
-    p.add_argument("--companion_lora_epochs", type=int, default=0,
-                   help="also train a rank-2 companion LoRA for N epochs with the mod in the "
-                        "conditioning and store it in the same file (0 = off; the Fizgig ComfyUI "
-                        "node loads both halves, the standard RefMod loader still reads the mod)")
-    p.add_argument("--companion_lora_lr", type=float, default=2e-4)
-    p.add_argument("--companion_lora_rank", type=int, default=2, help="companion LoRA rank (alpha = rank)")
     p.add_argument("--holdout_refs", action="store_true",
-                   help="hold the reference stills OUT of the training set (default: the optimiser "
-                        "and the companion LoRA train on every still, references included)")
+                   help="hold the reference stills OUT of the optimiser's training set (default: it "
+                        "trains on every still, references included)")
     p.add_argument("--init_from", default=None,
                    help="start from an existing mod file instead of the caches (re-preview it "
                         "with --steps 0, or keep optimising it)")
@@ -90,9 +84,7 @@ def main():
                sample_width=a.sample_width, sample_height=a.sample_height, sample_steps=a.sample_steps,
                sample_seed=a.sample_seed, preview_every=a.preview_every,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
-               description=a.description, init_from=a.init_from,
-               companion_lora_epochs=a.companion_lora_epochs, companion_lora_lr=a.companion_lora_lr,
-               companion_lora_rank=a.companion_lora_rank, exclude_refs=a.holdout_refs,
+               description=a.description, init_from=a.init_from, exclude_refs=a.holdout_refs,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 
 

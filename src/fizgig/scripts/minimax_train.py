@@ -322,28 +322,6 @@ def setup_parser() -> argparse.ArgumentParser:
     p.add_argument("--finetune_scratch_dir", default=None,
                    help="disk master's spill directory (wants a fast local drive). "
                         "Default: beside the dataset caches.")
-    p.add_argument("--refmod_out", default=None,
-                   help="RefMod mode: build a reference mod from the dataset's stills, hold them out "
-                        "of training, ride the mod as the reference on every step and preview, and "
-                        "write every checkpoint and the final file as a mod + LoRA pair "
-                        "(ComfyUI-MiniMaxH3Mod format + kohya LoRA keys). The final pair is also "
-                        "copied to this path.")
-    p.add_argument("--refmod_grid", default="full", help="full | 8 | 16 | 32 (latent cells, long edge)")
-    p.add_argument("--refmod_refs", type=int, default=8, help="how many stills stack into the mod")
-    p.add_argument("--refmod_holdout_refs", dest="refmod_train_on_refs", action="store_false",
-                   help="hold the reference stills OUT of the LoRA's training set (default: the LoRA "
-                        "trains on every still, references included)")
-    p.add_argument("--refmod_description", default="", help="stored in the mod's header")
-    p.add_argument("--refmod_ref_in_training", dest="refmod_train_with_ref", action="store_true", default=False,
-                   help="RefMod mode EXPERIMENT: ride the mod in the conditioning during training, so the "
-                        "LoRA learns only what the reference does not carry. Default: the LoRA is an "
-                        "ordinary LoRA run (no reference while training); the mod joins it in previews "
-                        "and in the pair file.")
-    p.add_argument("--refmod_no_ref_in_training", dest="refmod_train_with_ref", action="store_false",
-                   help=argparse.SUPPRESS)      # the default now; kept so a queued command still parses
-    p.add_argument("--refmod_preview_strength", type=float, default=1.0,
-                   help="RefMod mode previews: reference strength 0-1 (the node pack's rule: below 1 "
-                        "the latent mixes toward a blurred copy of itself); training always uses 1.0")
     p.add_argument("--reg_lr_multiplier", type=float, default=0.2,
                    help="Fine-tune only: LR multiplier for images in a dataset block marked "
                         "`is_reg = true`. They anchor the model's prior rather than teaching "
@@ -459,13 +437,6 @@ def main():
         finetune_master=args.finetune_master,
         finetune_scratch_dir=args.finetune_scratch_dir,
         reg_lr_multiplier=args.reg_lr_multiplier,
-        refmod_out=args.refmod_out,
-        refmod_grid=args.refmod_grid,
-        refmod_refs=args.refmod_refs,
-        refmod_train_on_refs=args.refmod_train_on_refs,
-        refmod_description=args.refmod_description,
-        refmod_preview_strength=args.refmod_preview_strength,
-        refmod_train_with_ref=args.refmod_train_with_ref,
     )
 
 

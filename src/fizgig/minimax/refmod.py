@@ -43,7 +43,7 @@ NODE_META_KEY = "refmod_meta"
 NODE_FORMAT_VERSION = 2
 NODE_TOKEN_CAP = 5120        # the node pack's Extract default `max_tokens`; its loader does not cap
 ARCH = "minimaxh3"
-MAX_REFS_DEFAULT = 8
+MAX_REFS_DEFAULT = 16      # measured 10 Sep 2026: 16 references scored 70 on portraits vs 60 for 8
 
 
 # ─── references from the caches ─────────────────────────────────────────────────────────────
@@ -88,9 +88,8 @@ def collect_refs(cache_dirs, max_refs: int = MAX_REFS_DEFAULT) -> List[Tuple[str
 
 
 def exclude_refs_from_training(group, ref_stems) -> Tuple[int, int]:
-    """Hold the reference stills OUT of the training set: the mod optimiser and the companion
-    LoRA must not train on the very photos the mod shows the model (Peter, 10 Sep 2026 — the
-    LoRA would just learn to copy what the reference block already carries). Rebuilds each
+    """Hold the reference stills OUT of the optimiser's training set (opt-in, --holdout_refs):
+    by default the optimiser trains on every still, references included. Rebuilds each
     dataset's bucket manager without those items. A clip shares its still's cache file, so a
     clip whose still is a reference goes too (clips are skipped by the optimisers anyway).
     Returns (items removed, items remaining)."""
@@ -126,41 +125,6 @@ def exclude_refs_from_training(group, ref_stems) -> Tuple[int, int]:
     except Exception:
         pass
     return removed, group.num_train_items
-
-
-def attach_mod_to_file(path: str, latent: torch.Tensor, *, name: str, pool: str, source_shape: str = "",
-                       tags=None, description: str = "", extra: Optional[dict] = None) -> str:
-    """Rewrite a saved LoRA `.safetensors` (kohya `lora_unet_*` keys + metadata) as a RefMod PAIR
-    file: the same tensors plus the mod's `latent` and the node pack's `refmod_meta` header.
-    Used by the H3 trainer's RefMod mode on every checkpoint and the final save, so each file
-    the run writes is a standard RefMod to their loader and a mod+LoRA pair to ours."""
-    from safetensors import safe_open
-    from safetensors.torch import save_file
-    tensors, header = {}, {}
-    with safe_open(path, framework="pt", device="cpu") as f:
-        header = dict(f.metadata() or {})
-        for k in f.keys():
-            tensors[k] = f.get_tensor(k)
-    lat = latent.detach().to("cpu", torch.float16).contiguous()
-    if lat.dim() == 4:
-        lat = lat.unsqueeze(2)
-    T = int(lat.shape[2])
-    meta = {
-        "name": name, "kind": "video" if T > 1 else "image",
-        "latent_h": int(lat.shape[3]), "latent_w": int(lat.shape[4]), "latent_t": T,
-        "mode": "encode" if "full-res" in str(pool) else "training",
-        "source": "stack" if T > 1 else "image", "source_shape": source_shape, "pool": pool,
-        "optimize_steps": 0, "tags": list(tags or []), "description": description or "",
-        "concept_type": "identity", "_format_version": NODE_FORMAT_VERSION,
-    }
-    header[NODE_META_KEY] = json.dumps(meta)
-    for k, v in (extra or {}).items():
-        header[str(k)] = str(v)
-    tensors["latent"] = lat
-    tmp = path + ".tmp"
-    save_file(tensors, tmp, metadata=header)
-    os.replace(tmp, path)
-    return path
 
 
 def blur_latent(z: torch.Tensor, factor: int = 8) -> torch.Tensor:
@@ -252,12 +216,9 @@ def build_mod(refs, grid: Optional[int]) -> Tuple[torch.Tensor, str]:
 
 def save_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, mode: str, pool: str,
                 optimize_steps: int, source_shape: str = "", tags=None, description: str = "",
-                concept_type: str = "identity", extra: Optional[dict] = None,
-                lora_sd: Optional[dict] = None) -> str:
+                concept_type: str = "identity", extra: Optional[dict] = None) -> str:
     """Write `<path>.safetensors` in the node pack's layout (+ Fizgig's own `ss_*` keys, which
-    the node ignores). `lora_sd` (kohya `lora_unet_*` tensors, the companion LoRA) rides in the
-    SAME file: their loader reads only `latent` + the `refmod_meta` header, so the file stays a
-    standard RefMod for them and a mod+LoRA pair for the Fizgig node. Returns the path."""
+    the node ignores). Returns the path."""
     from safetensors.torch import save_file
     latent = latent.detach().to("cpu", torch.float16).contiguous()
     if latent.dim() == 4:
@@ -285,28 +246,17 @@ def save_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, mode: str,
         header[str(k)] = str(v)
     os.makedirs(os.path.dirname(path_no_ext) or ".", exist_ok=True)
     out = path_no_ext + ".safetensors"
-    tensors = {"latent": latent}
-    if lora_sd:
-        for k, v in lora_sd.items():
-            if k == "latent" or not k.startswith("lora_unet_"):
-                raise ValueError(f"companion LoRA key {k!r} is not a lora_unet_* tensor")
-            tensors[k] = v.detach().to("cpu").contiguous()
-    save_file(tensors, out, metadata=header)
+    save_file({"latent": latent}, out, metadata=header)
     return out
 
 
 def load_refmod(path: str):
-    """-> (latent [1, 24, T, H, W] fp32, meta dict, lora_sd or None) — the node's reader, in
-    miniature, plus the Fizgig half."""
+    """-> (latent [1, 24, T, H, W] fp32, meta dict) — the node's reader, in miniature."""
     from safetensors import safe_open
-    lora_sd = {}
     with safe_open(path, framework="pt", device="cpu") as f:
         meta = json.loads((f.metadata() or {}).get(NODE_META_KEY, "{}"))
         latent = f.get_tensor("latent").float().clone()
-        for k in f.keys():
-            if k.startswith("lora_unet_"):
-                lora_sd[k] = f.get_tensor(k).clone()
-    return latent, meta, (lora_sd or None)
+    return latent, meta
 
 
 def token_count(latent: torch.Tensor) -> int:
@@ -475,93 +425,11 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
     return param.detach().to("cpu", torch.float32)
 
 
-# ─── the companion LoRA ─────────────────────────────────────────────────────────────────────
-
-COMPANION_DIM = 2
-COMPANION_ALPHA = 2
-COMPANION_LR = 2e-4
-
-
-def train_companion_lora(dit, group, mod: torch.Tensor, *, epochs: int = 2, lr: float = COMPANION_LR,
-                         dim: int = COMPANION_DIM, alpha: float = COMPANION_ALPHA, device="cuda",
-                         dtype=torch.bfloat16, seed: int = 42, uncond_text=None, uncond_frac: float = 0.05,
-                         shared_epoch=None, log_every: int = 10):
-    """A rank-`dim` LoRA over the H3 blocks, trained for `epochs` passes over the dataset stills
-    WITH the mod riding as the reference block. The mod is fixed, so the LoRA learns only what
-    the reference channel cannot express — the subject away from the reference's own pose,
-    expression and scene. Returns the network, its modules switched OFF (multiplier 0) so the
-    caller decides when it is in the picture; `network.state_dict()` is the kohya-keyed half
-    that goes into the mod file. H3's own noise density (no window): the LoRA is meant to
-    carry the subject at every step, the way a trained LoRA does."""
-    from torch.utils.data import DataLoader
-    from multiprocessing import Value
-    from fizgig.networks.lora import create_network
-    from fizgig.minimax.trainer import _Collator, DEFAULT_INCLUDE_PATTERNS
-    net = create_network(None, "lora_unet", 1.0, int(dim), float(alpha), None, [], dit,
-                         include_patterns=list(DEFAULT_INCLUDE_PATTERNS))
-    net.apply_to(text_encoders=None, unet=dit, apply_text_encoder=False, apply_unet=True)
-    net.requires_grad_(True)
-    net.to(device=device, dtype=dtype)
-    n_params = sum(p.numel() for p in net.parameters())
-    logger.info(f"[refmod] companion LoRA: rank {dim}, {len(net.unet_loras)} Linears, "
-                f"{n_params / 1e6:.1f} M params, {epochs} epoch(s) at lr {lr:g}")
-    if epochs <= 0:
-        for m in net.unet_loras:
-            m.multiplier = 0.0
-        return net
-    torch.manual_seed(seed)
-    random.seed(seed)
-    gen = torch.Generator(device=device).manual_seed(seed)
-    if shared_epoch is None:
-        shared_epoch = getattr(group, "_fizgig_shared_epoch", None) or Value("i", 0)
-    loader = DataLoader(group, batch_size=1, shuffle=True, collate_fn=_Collator(shared_epoch, group),
-                        num_workers=0)
-    opt = torch.optim.AdamW(net.parameters(), lr=lr, betas=(0.9, 0.99), weight_decay=0.0)
-    ref = mod.detach().to(device, torch.float32)
-    step = 0
-    t0 = time.time()
-    run_loss, run_n = 0.0, 0
-    for ep in range(int(epochs)):
-        shared_epoch.value += 1
-        for batch in loader:
-            lat = batch["latents"]
-            if lat.dim() != 4:
-                continue
-            latents = lat.to(device, dtype).unsqueeze(2)
-            text = batch["hidden_states"].to(device, dtype)
-            if uncond_text is not None and random.random() < uncond_frac:
-                text = uncond_text.to(device, dtype)
-            with torch.autocast("cuda", enabled=False):
-                loss, _ = refmod_step_loss(dit, ref, latents, text, device=device, dtype=dtype,
-                                           generator=gen, seed=seed, sigma_range=None)
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-            opt.step()
-            step += 1
-            run_loss += float(loss.detach())
-            run_n += 1
-            if log_every and step % log_every == 0:
-                print(f"[refmod-lora] epoch {ep + 1}/{epochs} step {step}  loss {run_loss / max(1, run_n):.4f}  "
-                      f"{(time.time() - t0) / step:.2f} s/step", flush=True)
-                run_loss, run_n = 0.0, 0
-    for m in net.unet_loras:
-        m.multiplier = 0.0
-    del opt
-    gc.collect()
-    torch.cuda.empty_cache()
-    return net
-
-
-def companion_state_dict(net, dtype=torch.bfloat16) -> dict:
-    return {k: v.detach().to("cpu", dtype).contiguous() for k, v in net.state_dict().items()}
-
-
 # ─── previews ────────────────────────────────────────────────────────────────────────────────
 
 def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, output_name: str,
                     epoch: int, width: int, height: int, steps: int, seed: int, device, dtype,
-                    decoder=None, n_swap: int = 0, turbo=None, lora_net=None, lora_on: bool = False):
+                    decoder=None, n_swap: int = 0, turbo=None):
     """One still per prompt with the mod as the reference block — the way the node will use
     it (no <Picture> vision blocks: the file has no vision side). PNG names follow the
     gallery's contract `<name>_e<epoch>_<i>_<ts>_<seed>.png`."""
@@ -575,9 +443,6 @@ def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, ou
     ref = mod.to(device, dtype)
     turbo_net, turbo_adaln = (turbo if turbo else (None, []))
     rendered = []
-    if lora_net is not None:
-        for m in lora_net.unet_loras:
-            m.multiplier = 1.0 if lora_on else 0.0
     try:
         if turbo_net is not None:
             turbo_net.to(device=device, dtype=dtype)
@@ -600,9 +465,6 @@ def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, ou
                 m.enabled = False
             turbo_adaln_unpatch(turbo_adaln)
             turbo_net.to("cpu")
-        if lora_net is not None:
-            for m in lora_net.unet_loras:
-                m.multiplier = 0.0
     del ref
     gc.collect()
     torch.cuda.empty_cache()
@@ -651,9 +513,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                sample_seed: int = 42, preview_every: int = 0,
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
-               sigma_range=DEFAULT_SIGMA_RANGE, companion_lora_epochs: int = 0,
-               companion_lora_lr: float = COMPANION_LR, companion_lora_rank: int = COMPANION_DIM,
-               exclude_refs: bool = False) -> str:
+               sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -690,13 +550,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     n_img = sum(1 for r in refs if r[2] == "photo")
     n_st = len(refs) - n_img
     mp = max((r[1].shape[-2] * 16) * (r[1].shape[-1] * 16) for r in refs) / 1e6
-    _init_lora = None
     if init_from:
         # start from an existing mod (re-preview it, or keep optimising it)
-        mod0, _m0, _init_lora = load_refmod(init_from)
-        if _init_lora and companion_lora_epochs <= 0:
-            logger.info(f"[refmod] {init_from} carries a companion LoRA ({len(_init_lora)} tensors) — "
-                        f"kept in the output as-is; previews here run without it")
+        mod0, _m0 = load_refmod(init_from)
         pool_label = str(_m0.get("pool", "")) or f"{mod0.shape[2]}x{mod0.shape[3]}x{mod0.shape[4]}"
         mode = str(_m0.get("mode", "training"))
         source_shape = str(_m0.get("source_shape", ""))
@@ -718,7 +574,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                            f"down.")
         source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
 
-    if exclude_refs and (steps > 0 or companion_lora_epochs > 0):
+    if exclude_refs and steps > 0:
         _rm, _left = exclude_refs_from_training(group, [r[0] for r in refs])
         if _left <= 0:
             logger.warning(f"[refmod] every still in the dataset is a reference — nothing would be "
@@ -728,8 +584,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                 blueprint.dataset_group, training=True, num_timestep_buckets=None, shared_epoch=shared_epoch)
             group._fizgig_shared_epoch = shared_epoch
         else:
-            logger.info(f"[refmod] {_rm} reference still(s) held out of training — the optimiser and "
-                        f"the companion LoRA train on the other {_left} item(s)")
+            logger.info(f"[refmod] {_rm} reference still(s) held out — the optimiser trains on the "
+                        f"other {_left} item(s)")
 
     uncond_text = None
     for d in cache_dirs:
@@ -764,15 +620,12 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         turbo = load_preview_turbo(dit, turbo_lora_path, turbo_lora_strength)
     sample_dir = os.path.join(output_dir, "sample")
 
-    lora_net = [None]
-
-    def _preview(mod, epoch, lora_on=False):
+    def _preview(mod, epoch):
         if not encoded:
             return
         render_previews(dit, mod, encoded, out_dir=sample_dir, output_name=output_name, epoch=epoch,
                         width=sample_width, height=sample_height, steps=sample_steps, seed=sample_seed,
-                        device=device, dtype=dtype, decoder=decoder, n_swap=n_swap, turbo=turbo,
-                        lora_net=lora_net[0], lora_on=lora_on)
+                        device=device, dtype=dtype, decoder=decoder, n_swap=n_swap, turbo=turbo)
 
     _preview(mod0, 0)
     mod = mod0
@@ -785,40 +638,16 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                                       sigma_range=sigma_range)
         _preview(mod, int(math.ceil(steps / float(preview_every))) if preview_every else 1)
 
-    lora_sd = None
-    lora_extra = {}
-    n_last = (int(math.ceil(steps / float(preview_every))) if preview_every else 1) if steps > 0 else 0
-    if companion_lora_epochs > 0:
-        # the mod is final now; the LoRA learns the residual around it
-        _rank = max(1, int(companion_lora_rank))
-        lora_net[0] = train_companion_lora(dit, group, mod, epochs=companion_lora_epochs, lr=companion_lora_lr,
-                                           dim=_rank, alpha=_rank,
-                                           device=device, dtype=dtype, seed=seed, uncond_text=uncond_text)
-        _preview(mod, n_last + 1, lora_on=True)
-        lora_sd = companion_state_dict(lora_net[0])
-        lora_extra = {"ss_refmod_lora": "1", "ss_network_module": "fizgig.minimax (lora_unet, transformer blocks)",
-                      "ss_network_dim": str(_rank), "ss_network_alpha": str(_rank),
-                      "ss_refmod_lora_epochs": str(companion_lora_epochs),
-                      "ss_refmod_lora_lr": f"{companion_lora_lr:g}", "ss_refmod_lora_strength": "1.0",
-                      "ss_architecture": "minimaxh3"}
-    elif init_from and _init_lora:
-        lora_sd = _init_lora
-
     out = save_refmod(os.path.join(output_dir, output_name), mod, name=output_name, mode=mode,
                       pool=pool_label, optimize_steps=steps, source_shape=source_shape,
-                      tags=tags + (["fizgig optimised"] if steps > 0 else [])
-                           + (["fizgig companion lora"] if lora_sd else []),
+                      tags=tags + (["fizgig optimised"] if steps > 0 else []),
                       description=description,
                       extra={"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
                              "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
-                             "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full"),
-                             **lora_extra},
-                      lora_sd=lora_sd)
+                             "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full")})
     mb = os.path.getsize(out) / 1024 / 1024
-    logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens"
-                + (f" + companion LoRA rank {(lora_extra.get('ss_network_dim') or '?')}" if lora_sd else "") + f", {mb:.2f} MB) — "
-                f"copy it to ComfyUI/models/refmods/: Load H3 RefMods reads the mod"
-                + ("; the Fizgig H3 RefMod node loads the mod AND the LoRA" if lora_sd else ""))
+    logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
+                f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")
     return out
 
 
