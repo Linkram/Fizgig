@@ -74,6 +74,35 @@ load with a warning that names the file instead of aborting the whole caching ru
 curly apostrophe, and the **`expandable_segments` allocator option is no longer requested on
 Windows**, where PyTorch rejects it and warned on every launch.
 
+## johndpope
+
+[johndpope](https://github.com/johndpope) landed three MiniMax H3 loader fixes in one go
+(merged for v4.0.0's run-up, August 2026): the bundled **tokenizer learned H3's own special
+tokens** ([#56](https://github.com/shootthesound/Fizgig/pull/56)) so dialogue and cutoff markup
+resolve to single ids instead of being shredded into byte pairs; the **H3 base loads straight
+from a directory of Hub shards** ([#57](https://github.com/shootthesound/Fizgig/pull/57)), no
+66 GB merge step; and the **video VAE encodes a clip, not just a still**
+([#58](https://github.com/shootthesound/Fizgig/pull/58)), removing the two guards that pinned
+encode to a single frame.
+
+## 0xDELUXA
+
+[0xDELUXA](https://github.com/0xDELUXA) keeps the **ROCm path current with AMD's stack**: the
+measured removal of the gfx12 batched-GEMM workaround
+([#91](https://github.com/shootthesound/Fizgig/pull/91)), benchmarked on real gfx1200 hardware
+where the old setting cost ~7.5x on the batched path and did nothing for the trainer, and the
+**bitsandbytes wheel bump to the HIP 7.16 build**
+([#103](https://github.com/shootthesound/Fizgig/pull/103)) so a current nightly install stops
+falling back a minor version on every launch.
+
+## rocketsvm
+
+[rocketsvm](https://github.com/rocketsvm) fixed the **GPU selection mismatch on multi-GPU
+Windows machines** ([#104](https://github.com/shootthesound/Fizgig/issues/104) →
+[#105](https://github.com/shootthesound/Fizgig/pull/105)): NVML and CUDA can enumerate cards
+in different orders, so picking "GPU 0" could train on a different card. The GPU chooser now
+carries each card's UUID, which is the same across NVML, nvidia-smi and torch.
+
 ## FNGarvin
 
 [FNGarvin](https://github.com/FNGarvin) has contributed a string of high-quality features and
