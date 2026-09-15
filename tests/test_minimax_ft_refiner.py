@@ -87,6 +87,18 @@ cmd = g._build_minimax_train_command()
 ck("FT command with the tick carries --train_token_refiner beside --finetune_rotation",
    "--train_token_refiner" in cmd and "--finetune_rotation" in cmd)
 
+# 2b. EMA row hidden under FT, never emitted there; back (and emitted) when FT is off
+ck("EMA row hidden under fine-tune", g._minimax_smooth_label.winfo_manager() == ""
+   and g._minimax_smooth_frame.winfo_manager() == "" and g._minimax_smooth_hint.winfo_manager() == "")
+g.settings["MINIMAX_EMA"] = "0.98 (recommended)"
+ck("no --ema_decay in the fine-tune command", "--ema_decay" not in g._build_minimax_train_command())
+g.minimax_finetune_var.set(False)
+g._on_minimax_ft_toggle()
+ck("EMA row back and emitted when fine-tune is off", g._minimax_smooth_label.winfo_manager() != ""
+   and "--ema_decay" in g._build_minimax_train_command())
+g.minimax_finetune_var.set(True)
+g._on_minimax_ft_toggle()
+
 # 3. Samples tab note: shown only while H3 + Fine-tune is ticked (previews follow saves)
 note = g._samples_ft_note
 ck("Samples note shown under H3 fine-tune", note.winfo_manager() != "" and "checkpoint" in note.cget("text")

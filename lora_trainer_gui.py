@@ -7836,6 +7836,13 @@ class LoRATrainerGUI:
             self._sync_minimax_likeness_state()
         for w in (getattr(self, "_minimax_blocks_label", None),
                   getattr(self, "_minimax_blocks_frame", None),
+                  # EMA is a LoRA-run control: the shadow it keeps is a copy of what trains,
+                  # and under fine-tune that is the whole rotating model (the trainer forces
+                  # it off). Hidden here, never emitted by the builder; the fine-tune guide
+                  # explains. Its saved value comes back as set when FT is unticked.
+                  getattr(self, "_minimax_smooth_label", None),
+                  getattr(self, "_minimax_smooth_frame", None),
+                  getattr(self, "_minimax_smooth_hint", None),
                   getattr(self, "_minimax_blocks_hint", None),
                   # Medium to High LR is a LoRA-mode knob (it rewrites the optimizer's
                   # param-group LR at boundary steps — machinery FT doesn't have). Hidden
@@ -29858,7 +29865,8 @@ class LoRATrainerGUI:
         # construction, and does not need an epoch count guessed up front. Never emitted.
         # EMA: "0.98 (recommended)" -> 0.98 (a saved "0.99 (recommended)" still parses to 0.99).
         _em = str(self.settings.get("MINIMAX_EMA", "0.98") or "Off").split(" ")[0]
-        if _em.replace(".", "", 1).isdigit():
+        _em_ft = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
+        if _em.replace(".", "", 1).isdigit() and not _em_ft:      # no EMA under fine-tune
             cmd += ["--ema_decay", _em]
         _ar = str(self.settings.get("MINIMAX_ADAPTER_RAMP", "Off") or "Off").split(" ")[0]
         if _ar.replace(".", "", 1).isdigit():

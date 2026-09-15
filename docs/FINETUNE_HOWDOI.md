@@ -174,6 +174,10 @@ sub-tick (on by default) routes clips to the same identity blocks — in our tes
 trains video just as well, and it makes clips far lighter on VRAM. Untick it for
 whole-model video.
 
+## Where did the EMA setting go? (H3)
+
+It is a LoRA-run control and the row hides when Fine-tune is ticked. EMA keeps a smoothed shadow copy of whatever is training and previews and saves from that copy. For a LoRA that shadow is a few hundred megabytes. Under fine-tune the thing training is the model itself, and it trains in rotating windows, so an honest shadow would be a second copy of the whole model in system RAM with the live window folded in as it trains, and the checkpoint would have to be written from it. That is a real feature with a real memory cost, not a tick, and it has not been built or measured yet. Until it is, a fine-tune saves the trained weights as they stand.
+
 ## Should I train the text token refiner on a fine-tune? (H3)
 
 No, unless you are testing it. The refiner is the model's bridge from the text encoder into the DiT and sets how every prompt is read. Fine-tunes used to train it on every epoch, four times as often as any block matmul, and it was the tensor that moved most in every checkpoint. LoRA runs already leave it frozen because training it softened output and made previews judder without helping likeness; fine-tune now does the same. The trigger word is learned in the blocks' attention either way. The tickbox in Other Options ("Train the text token refiner") puts it back for an A/B.
