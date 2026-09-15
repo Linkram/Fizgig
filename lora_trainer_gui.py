@@ -7660,7 +7660,7 @@ class LoRATrainerGUI:
         "GRADIENT_ACCUMULATION": "1",     # fused backward consumes grads as they land
         "MAX_GRAD_NORM": "0",             # global clipping is impossible under fused backward
         "NETWORK_TYPE": "LoRA (standard)",  # FT trains the BASE — reset the adapter selector
-        "MINIMAX_TRAINING_ADAPTER": False,  # opt-in under FT (hooks) until it is measured there
+        "MINIMAX_TRAINING_ADAPTER": True,   # rides as forward hooks under FT; on like every LoRA preset
     }
 
     def _on_minimax_ft_toggle(self):
@@ -7843,16 +7843,15 @@ class LoRATrainerGUI:
             if w is not None:
                 self._set_widget_visible(w, not on)
         # The training adapter stays visible under FT (it rides as forward hooks there —
-        # same contract: on for training, off for previews, never in the checkpoint) but
-        # the FT recipe unticks it: unmeasured under fine-tune, so opt-in.
+        # same contract: on for training, off for previews, never in the checkpoint); the FT
+        # recipe ticks it on, like every LoRA preset (Peter, 15 Sep).
         _ah = getattr(self, "_minimax_adapter_hint", None)
         if _ah is not None:
             if not hasattr(self, "_minimax_adapter_hint_lora"):
                 self._minimax_adapter_hint_lora = _ah.cget("text")
             _ah.configure(text=(
-                "Off by default under fine-tune (unmeasured there). On: the base trains "
-                "against the de-distilled forward, off for previews, never in the "
-                "checkpoint — run your own A/B."
+                "Under fine-tune: the base trains against the de-distilled forward, off for "
+                "previews, never in the checkpoint (the file you get is a plain H3 fine-tune)."
                 if on else self._minimax_adapter_hint_lora))
         if hasattr(self, "_network_type_rowf"):
             self._set_widget_visible(self.labels["NETWORK_TYPE"], not on)

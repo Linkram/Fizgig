@@ -309,21 +309,25 @@ try:
        not any("training adapter" in m.lower() for m in shown)
        and g._minimax_adapter_cb.winfo_manager() != ""
        and "--training_adapter_path" in g._build_minimax_train_command())
-    ck("under fine-tune the hint says opt-in / never in the checkpoint",
-       "Off by default under fine-tune" in g._minimax_adapter_hint.cget("text"))
-    # the FT recipe (pushed by the toggle handler on the way ON) unticks it: opt-in there
+    ck("under fine-tune the hint says never in the checkpoint",
+       "never in the checkpoint" in g._minimax_adapter_hint.cget("text"))
+    # the FT recipe (pushed by the toggle handler on the way ON) ticks it ON (Peter, 15 Sep)
+    g.entries["MINIMAX_TRAINING_ADAPTER"].set(False)
+    g.settings["MINIMAX_TRAINING_ADAPTER"] = False
     g._on_minimax_ft_toggle()
-    ck("the fine-tune recipe unticks the adapter (unmeasured under FT — opt-in)",
-       g.entries["MINIMAX_TRAINING_ADAPTER"].get() is False
-       and "--training_adapter_path" not in g._build_minimax_train_command())
+    ck("the fine-tune recipe ticks the adapter ON and the command carries it",
+       g.entries["MINIMAX_TRAINING_ADAPTER"].get() is True
+       and "--training_adapter_path" in g._build_minimax_train_command())
+    g.entries["MINIMAX_TRAINING_ADAPTER"].set(False)
+    g.settings["MINIMAX_TRAINING_ADAPTER"] = False          # launch syncs entries -> settings
+    ck("...unticked by hand it stays off under FT", "--training_adapter_path" not in g._build_minimax_train_command())
     g.entries["MINIMAX_TRAINING_ADAPTER"].set(True)
-    g.settings["MINIMAX_TRAINING_ADAPTER"] = True          # launch syncs entries -> settings
-    ck("...ticked again by hand it emits under FT", "--training_adapter_path" in g._build_minimax_train_command())
+    g.settings["MINIMAX_TRAINING_ADAPTER"] = True
     g.minimax_finetune_var.set(False)
     g._apply_minimax_ft_visibility()
     ck("...and the LoRA-mode hint comes back when fine-tune is unticked",
        g._minimax_adapter_cb.winfo_manager() != ""
-       and "Off by default under fine-tune" not in g._minimax_adapter_hint.cget("text"))
+       and "Under fine-tune" not in g._minimax_adapter_hint.cget("text"))
     ck("adapter ships ON in every H3 preset",
        all(v.get("MINIMAX_TRAINING_ADAPTER") is True for v in G.MINIMAX_BUILT_IN_PRESETS.values())
        and len(G.MINIMAX_BUILT_IN_PRESETS) == 3)
