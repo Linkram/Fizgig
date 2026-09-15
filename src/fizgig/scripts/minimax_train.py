@@ -251,7 +251,9 @@ def setup_parser() -> argparse.ArgumentParser:
                    help="Training adapter (Ostris, ostris/minimax_h3_training_adapter): a frozen "
                         "LoRA at 1.0 that de-distills the base while yours learns — on for every "
                         "training step, off for previews. Use the fl2va or ref2va file to match "
-                        "--dit. Not available with --finetune_rotation.")
+                        "--dit. Under --finetune_rotation it rides as forward hooks (same "
+                        "contract; the checkpoint never contains it) — the GUI leaves it off "
+                        "by default there.")
     p.add_argument("--tread_ratio", type=float, default=0.0,
                    help="TREAD token routing: this fraction of the video tokens "
                         "skips the main blocks [--tread_start, --tread_end) on every CLIP "

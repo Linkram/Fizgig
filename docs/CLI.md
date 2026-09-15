@@ -487,7 +487,7 @@ Two things are on with no flag at all: under `--photo_blocks` / `--clip_blocks` 
 - `--context_lora_path FILE --context_lora_strength S` — train with an existing H3 LoRA frozen and active underneath, in training and previews.
 - `--metadata_title/author/description/license/tags/trigger_phrase` — recorded in the saved LoRA.
 
-**Full fine-tuning** — `--finetune_rotation N` trains the base model itself in component windows on an NF4-resident base and saves exact int8 checkpoints; `--finetune_rotate_every`, `--finetune_scope all|photo`, `--finetune_blocks`, `--finetune_master auto|ram|disk`, `--finetune_scratch_dir` and `--reg_lr_multiplier` go with it. The GUI's Fine-tune checkbox builds these; see `docs/FINETUNE_HOWDOI.md` before running one headless. Context LoRA, the training adapter and TREAD are LoRA-only and refused under rotation.
+**Full fine-tuning** — `--finetune_rotation N` trains the base model itself in component windows on an NF4-resident base and saves exact int8 checkpoints; `--finetune_rotate_every`, `--finetune_scope all|photo`, `--finetune_blocks`, `--finetune_master auto|ram|disk`, `--finetune_scratch_dir` and `--reg_lr_multiplier` go with it. The GUI's Fine-tune checkbox builds these; see `docs/FINETUNE_HOWDOI.md` before running one headless. Context LoRA and TREAD are LoRA-only and refused under rotation; the training adapter is available under fine-tune too (it rides as forward hooks, never enters the checkpoint) — the GUI leaves it off there until you tick it.
 
 ---
 

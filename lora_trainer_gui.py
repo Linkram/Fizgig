@@ -7660,6 +7660,7 @@ class LoRATrainerGUI:
         "GRADIENT_ACCUMULATION": "1",     # fused backward consumes grads as they land
         "MAX_GRAD_NORM": "0",             # global clipping is impossible under fused backward
         "NETWORK_TYPE": "LoRA (standard)",  # FT trains the BASE — reset the adapter selector
+        "MINIMAX_TRAINING_ADAPTER": False,  # opt-in under FT (hooks) until it is measured there
     }
 
     def _on_minimax_ft_toggle(self):
@@ -7759,6 +7760,13 @@ class LoRATrainerGUI:
             entry = self.entries.get(key)
             if entry is None:
                 continue
+            if isinstance(entry, tk.BooleanVar):
+                if bool(entry.get()) != bool(val):
+                    entry.set(bool(val))
+                    self.settings[key] = bool(val)     # what the command builder reads
+                    changed.append(f"{key.replace('_', ' ').title()}: "
+                                   f"{'on' if not val else 'off'} -> {'on' if val else 'off'}")
+                continue
             try:
                 before = entry.get()
                 if str(before).strip() == val:
@@ -7830,16 +7838,22 @@ class LoRATrainerGUI:
                   getattr(self, "_minimax_hnlr_label", None),
                   getattr(self, "_minimax_hnlr_frame", None),
                   getattr(self, "_minimax_hnlr_hint", None),
-                  # The training adapter is a LoRA-run aid (a frozen layer the trainable
-                  # LoRA stacks on; the rotation FT has nothing to stack). Hidden under FT
-                  # and ignored by the builder there — its saved value is left alone so it
-                  # comes back exactly as set when FT is unticked.
-                  getattr(self, "_minimax_adapter_cb", None),
-                  getattr(self, "_minimax_adapter_hint", None),
                   getattr(self, "_minimax_tread_cb", None),
                   getattr(self, "_minimax_tread_hint", None)):
             if w is not None:
                 self._set_widget_visible(w, not on)
+        # The training adapter stays visible under FT (it rides as forward hooks there —
+        # same contract: on for training, off for previews, never in the checkpoint) but
+        # the FT recipe unticks it: unmeasured under fine-tune, so opt-in.
+        _ah = getattr(self, "_minimax_adapter_hint", None)
+        if _ah is not None:
+            if not hasattr(self, "_minimax_adapter_hint_lora"):
+                self._minimax_adapter_hint_lora = _ah.cget("text")
+            _ah.configure(text=(
+                "Off by default under fine-tune (unmeasured there). On: the base trains "
+                "against the de-distilled forward, off for previews, never in the "
+                "checkpoint — run your own A/B."
+                if on else self._minimax_adapter_hint_lora))
         if hasattr(self, "_network_type_rowf"):
             self._set_widget_visible(self.labels["NETWORK_TYPE"], not on)
             self._set_widget_visible(self._network_type_rowf, not on)
@@ -28209,12 +28223,11 @@ class LoRATrainerGUI:
             except ValueError:
                 errors.append("Learning rate must be a valid number")
 
-        # Training adapter (MiniMax): needs the pref for the selected base, and never under FT.
+        # Training adapter (MiniMax): needs the pref for the selected base (LoRA and FT alike).
         _mm_ft_on = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
-        if (self._is_minimax_arch() and not _mm_ft_on
+        if (self._is_minimax_arch()
                 and bool(self.entries.get("MINIMAX_TRAINING_ADAPTER")
                          and self.entries["MINIMAX_TRAINING_ADAPTER"].get())):
-            # (Under fine-tune the tickbox is hidden and the builder ignores it — no error.)
             _ak = self._minimax_adapter_pref_key()
             if not self._krea2_pref(_ak):
                 errors.append("Training adapter is ticked but its file isn't set in Preferences "
@@ -30048,8 +30061,8 @@ class LoRATrainerGUI:
             cmd += ["--resume", resume_path]
         # Training adapter — Ostris's frozen de-distillation LoRA at 1.0 under everything else,
         # the file chosen to match the base this run trains on (validation already checked it
-        # exists and that this isn't a fine-tune).
-        if self.settings.get("MINIMAX_TRAINING_ADAPTER") and not _mft_cmd_on:
+        # exists). Under fine-tune the trainer rides it as forward hooks.
+        if self.settings.get("MINIMAX_TRAINING_ADAPTER"):
             _adapter = self._krea2_pref(self._minimax_adapter_pref_key())
             if _adapter:
                 cmd += ["--training_adapter_path", _adapter]

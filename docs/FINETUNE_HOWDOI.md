@@ -174,6 +174,10 @@ sub-tick (on by default) routes clips to the same identity blocks — in our tes
 trains video just as well, and it makes clips far lighter on VRAM. Untick it for
 whole-model video.
 
+## Should I tick the training adapter on a fine-tune? (H3)
+
+You can. The training adapter (@ostris's de-distillation LoRA, on by default for every H3 LoRA run) is available under Fine-tune with the same contract: it rides frozen at 1.0 for every training step so the gradient is about your subject rather than about undoing H3's distillation, it switches off for previews, and it is never written into the checkpoint — the file you get is a plain H3 fine-tune. Under Fine-tune the tickbox is off by default, because nobody has measured it there yet: the LoRA-mode numbers (faster likeness, higher peak, no frying with other Turbo LoRAs) are the reason to try it, and an A/B on your own dataset — same seed, adapter on versus off — is the way to decide. The file is the same one your LoRA runs use (Preferences → Training adapter, fl2va or ref2va to match the base).
+
 ## Do the problem-image tools work on a fine-tune? (Krea 2)
 
 Mostly, yes. **Detect problem images**, **per-image adaptive LR** and **look-outlier
