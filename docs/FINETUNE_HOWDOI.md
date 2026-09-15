@@ -37,12 +37,13 @@ The whole recipe, using what the GUI already sets for you:
 
 1. **Load the ✨ MiniMax H3 Fast preset** (Training tab, Load Preset).
 2. **Tick ⚗ Fine-tune the BASE MODEL.** The moment you tick it, the learning rate
-   switches to **1e-5** and the epochs and save cadence move to fine-tune values — the
+   switches to **3e-5** and the epochs and save cadence move to fine-tune values — the
    Save-every box suggests a save every second cycle (~8–10 epochs; previews ride the
    saves) and follows your card's plan live, so trust its guidance.
 3. **Set Max epochs and Save every N epochs** to taste — the GUI guides both. Save-every
    snaps to full cycles so every checkpoint compares like-for-like.
-4. **Leave the learning rate at 1e-5**, or raise it to **3e-5 at most** — never higher.
+4. **Leave the learning rate at 3e-5** — the tested rate, and the most you should use. If a
+   run looks too eager (drift, over-sharpening between checkpoints), come down to **1e-5**.
 5. **Leave Optimised Likeness Learning on.**
 6. **Change the Output Directory** to a drive with room (each save is ~21 GB).
 7. **Make sure your captions use a trigger token** — an invented word, not a common one.
@@ -77,9 +78,10 @@ Even shorter, because ticking the box sets everything that matters:
 fine-tune moves the model's own weights. The rates you know from LoRA training land very
 differently here.
 
-- **MiniMax H3: ticking Fine-tune sets 1e-5** — the safe default. **3e-5** is the tested
-  faster rate and the most you should ever use; **1e-4 will destroy an H3 fine-tune** —
-  that's measured, not folklore.
+- **MiniMax H3: ticking Fine-tune sets 3e-5** — the tested rate and the most you should
+  ever use. It starts there rather than lower so you can judge real results and come down to
+  **1e-5** if a run looks too eager, instead of waiting on a rate that is too slow to tell.
+  **1e-4 will destroy an H3 fine-tune** — that's measured, not folklore.
 - **Krea 2: 1e-5 is the safe recommendation.** You're welcome to *start experimenting* at
   1e-4 — it trains — but realistically the best results are found lower. Treat 1e-4 as
   the top of the experiment range, not the recipe. When a run looks almost right but

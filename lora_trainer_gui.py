@@ -7650,8 +7650,9 @@ class LoRATrainerGUI:
 
     # --- MiniMax H3 rotation fine-tune (mirrors the Krea 2 card) --------------------------
     MINIMAX_FT_DEFAULTS = {
-        "LEARNING_RATE": "1e-5",          # a starting point, NOT a calibrated H3 recipe —
-                                          # nobody has tuned FT rates on this model yet
+        "LEARNING_RATE": "3e-5",          # the tested H3 rate (1e-4 destroys; 1e-5 was the
+                                          # old default and too slow to judge from — Peter,
+                                          # 15 Sep: start here and come down if you need to)
         "MAX_TRAIN_EPOCHS": "100",        # a realistic fine-tune length (Peter, 29 Aug:
                                           # 26 was "far too small"; his field A/Bs ran 64
                                           # and kept improving). Clean at BOTH full-speed
