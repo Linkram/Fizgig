@@ -27450,6 +27450,15 @@ class LoRATrainerGUI:
 
     # ---------------- Presets (built-in + user JSON) -----------------
 
+    # Krea 2 has no semantic block map, so its built-ins are Reset All plus the text-fusion
+    # boosts (EXPERIMENTAL, 15 Sep 2026): the four txtfusion blocks at x2 / x3, everything else
+    # untouched. Measured across several LoRAs: x3 lifted the detail metric ~72 -> ~77 and
+    # likeness 2-7 points on every LoRA except an overtrained one, composition unchanged.
+    _REPAIR_BUILTIN_PRESETS_KREA2 = {
+        "✨Reset All": "reset",
+        "✨Text fusion ×2 (experimental)": "txtfusion:2",
+        "✨Text fusion ×3 (experimental)": "txtfusion:3",
+    }
     _REPAIR_BUILTIN_PRESETS = {
         "✨Reset All": "reset",
         "✨Identity Only": "identity",
@@ -27468,6 +27477,12 @@ class LoRATrainerGUI:
         os.makedirs(d, exist_ok=True)
         return d
 
+    def _repair_family_is(self, fam: str) -> bool:
+        """The exact Repair Studio family (klein / krea2 / minimax) — unlike _repair_is_krea2,
+        which is true for every no-block-map family."""
+        var = getattr(self, "repair_family_var", None)
+        return var is not None and str(var.get()) == fam
+
     def _repair_is_krea2(self) -> bool:
         """Historical name — True for ANY no-block-map family (Krea 2 or MiniMax H3), which
         is what every caller actually means: no category presets, no master sliders."""
@@ -27475,8 +27490,11 @@ class LoRATrainerGUI:
                 and self.repair_family_var.get() in ("krea2", "minimax"))
 
     def _repair_preset_list(self) -> list:
-        if self._repair_is_krea2():
-            # No Krea 2 / H3 semantic block map yet — only Reset All is meaningful there.
+        if self._repair_family_is("krea2"):
+            # No Krea 2 semantic block map yet — Reset All plus the text-fusion boosts.
+            names = list(self._REPAIR_BUILTIN_PRESETS_KREA2.keys())
+        elif self._repair_is_krea2():
+            # MiniMax H3: no block map, no boosts — only Reset All is meaningful.
             names = ["✨Reset All"]
         else:
             names = list(self._REPAIR_BUILTIN_PRESETS.keys())
@@ -27526,6 +27544,14 @@ class LoRATrainerGUI:
         s.prompt = self.repair_state.prompt
         s.preview_width = self.repair_state.preview_width
         s.preview_height = self.repair_state.preview_height
+        if kind.startswith("txtfusion:") and self._repair_family_is("krea2"):
+            from fizgig.repair_studio.krea2_blocks import KREA2_TXTFUSION_IDS
+            mult = float(kind.split(":", 1)[1])
+            for bid in KREA2_TXTFUSION_IDS:
+                if bid in s.blocks:
+                    s.blocks[bid].primary_enabled = True
+                    s.blocks[bid].primary_strength = mult
+            return s
         if kind == "reset" or self._repair_is_krea2():
             return s
         if kind == "identity":
@@ -27583,8 +27609,10 @@ class LoRATrainerGUI:
         if not name:
             return
         from fizgig.repair_studio.state import SliderState
-        if name in self._REPAIR_BUILTIN_PRESETS:
-            state = self._repair_builtin_state(self._REPAIR_BUILTIN_PRESETS[name])
+        _builtins = (self._REPAIR_BUILTIN_PRESETS_KREA2 if self._repair_family_is("krea2")
+                     else self._REPAIR_BUILTIN_PRESETS)
+        if name in _builtins:
+            state = self._repair_builtin_state(_builtins[name])
             self._apply_repair_state_to_widgets(state)
             self._schedule_preview(force=True)
             return

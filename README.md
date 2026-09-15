@@ -102,7 +102,7 @@ Four Training-tab toggles no other trainer has:
 
 Edit any caption yourself mid-run from the Problem Images window — no restart. When nothing is improving any more, a plateau banner names the best-checkpoint window to scrub in LoRA Royale. Pause, resume, restart: a resumed run replays its own loss log and loses nothing.
 
-> **📣 Help map Krea 2's blocks — [open an issue](https://github.com/shootthesound/Fizgig/issues).** Krea 2's per-block roles aren't charted yet, which is why the colour-coded sliders and layer targeting are Klein-only for now. The Profiler's weight-only report is the instrument — share what you find and it drives the presets and Repair Studio colour-coding to come.
+> **📣 Help map Krea 2's blocks — [open an issue](https://github.com/shootthesound/Fizgig/issues).** Krea 2's per-block roles aren't charted yet, which is why the colour-coded sliders and layer targeting are Klein-only for now. The Profiler's weight-only report is the instrument — share what you find and it drives the presets and Repair Studio colour-coding to come. First finding, and the first Krea 2 presets: the four **text fusion** blocks come out of training lighter than the image wants. Load a Krea 2 LoRA in Repair Studio and pick **✨Text fusion ×2** or **×3** (experimental) — measured across several LoRAs, ×3 lifted the detail meter and likeness on every one bar an overtrained LoRA, with the composition unchanged. Save Repaired LoRA bakes it in, so the boosted file works anywhere at strength 1.0.
 
 ---
 
