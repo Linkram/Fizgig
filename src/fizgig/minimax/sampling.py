@@ -172,8 +172,12 @@ def _sample_image_impl(model, text_embeds, *, width=512, height=512, steps=8, cf
                  ref_latents=None, text_token_tags=None, num_frames: int = 1,
                  on_slow_step=None, slow_step_s: float = 120.0, return_audio=False,
                  block_cache: "BlockCacheContext | None" = None, keyframes=None,
-                 on_denoised=None, exact_frames: bool = False):
+                 on_denoised=None, exact_frames: bool = False, ref_schedule=None):
     """Denoise one image OR clip and return its LATENT [1, 24, T, H/16, W/16].
+
+    ref_schedule(step, n_steps, sigma) -> list of reference latents for THAT step replaces
+    `ref_latents` at the top of every evaluation (the RefMod Studio's step curve: the same
+    references, re-mixed toward their blurred copies as the denoise progresses).
 
     num_frames is PIXEL frames on the model's 17n+5 grid (5, 22, ..., 124, 141); off-grid
     values snap DOWN like the reference trainer. 1 = the classic still (T=1 keyframe layout).
@@ -239,7 +243,7 @@ def _sample_image_impl(model, text_embeds, *, width=512, height=512, steps=8, cf
     from fizgig.minimax.model import AUDIO_SIGMA_SHIFT, remap_sigma
     # Built once: identical for every step, so it never lands in the hot loop.
     _ref_kw = {}
-    if ref_latents:
+    if ref_latents or ref_schedule is not None:
         _ref_kw["ref_latents"] = ref_latents
         _ref_kw["seed"] = int(seed)
     if text_token_tags is not None:
@@ -258,7 +262,8 @@ def _sample_image_impl(model, text_embeds, *, width=512, height=512, steps=8, cf
     _ref_uncond_kw = {k: v for k, v in _ref_kw.items() if k != "text_token_tags"}
     use_cfg = cfg_scale > 1.0 and uncond_embeds is not None
     _use_block_cache = (block_cache is not None and not use_cfg and not ref_latents
-                        and not keyframes and hasattr(model, "forward_cached"))
+                        and ref_schedule is None and not keyframes
+                        and hasattr(model, "forward_cached"))
     sigmas = sample_schedule(steps, shift=shift, mode=schedule_mode)
     n_eval = len(sigmas) - 1                            # the terminal 0 is not an evaluation
     prev_denoised = None                                # res_multistep's one-step memory
@@ -276,6 +281,10 @@ def _sample_image_impl(model, text_embeds, *, width=512, height=512, steps=8, cf
             print(f"[preview] step {i + 1}/{n_eval}  sigma {s_curr:.4f} -> {s_next:.4f}{_dt}",
                   flush=True)
         t = torch.tensor([1.0 - s_curr], device=device)     # the DiT is conditioned on cleanness
+        if ref_schedule is not None:
+            _step_refs = ref_schedule(i, n_eval, float(s_curr))
+            _ref_kw["ref_latents"] = _step_refs
+            _ref_uncond_kw["ref_latents"] = _step_refs
         if joint_audio:
             # The audio rides the video schedule as a CARRIED VARIABLE, ComfyUI's
             # ModelSamplingAV scheme exactly: the sampler's state is y = x_a * (sv/sa), the
