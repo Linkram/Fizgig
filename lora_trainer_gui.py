@@ -2355,6 +2355,9 @@ class LoRATrainerGUI:
         selected_tab = self.notebook.select()
         tab_text = self.notebook.tab(selected_tab, "text")
 
+        if tab_text == "4. Samples":
+            self._refresh_samples_ft_note()
+
         # When Captions tab is selected, load images if folder is set
         if tab_text == "3. Captions":
             folder = self.image_folder_var.get()
@@ -7678,6 +7681,7 @@ class LoRATrainerGUI:
         if bool(self.minimax_finetune_var.get()):
             self._apply_minimax_ft_defaults()
             self._refresh_minimax_ft_save_box()
+        self._refresh_samples_ft_note()
 
     def _minimax_ft_cycle_estimate(self):
         """Epochs per full rotation cycle — the 32 GB BASELINE of 4 component windows
@@ -8056,6 +8060,7 @@ class LoRATrainerGUI:
             for w in (self._minimax_ft_frame, self._minimax_ft_fused_cb,
                       self._minimax_reg_frame, self._minimax_ft_hint):
                 self._set_widget_visible(w, False)
+        self._refresh_samples_ft_note()
         # Network Type (LoRA/LoKR) is wired for BOTH native families (krea2_train and
         # minimax_train take --network_type/--lokr_factor); Klein trains standard only.
         # The row frame carries the combo + hint together. The speed note is Krea 2-only:
@@ -11363,6 +11368,24 @@ class LoRATrainerGUI:
         self.caption_log.configure(state="disabled")
         self.caption_log.see(tk.END)
 
+    def _refresh_samples_ft_note(self):
+        """Show the Samples-tab fine-tune note only while MiniMax H3 + Fine-tune is on."""
+        note = getattr(self, "_samples_ft_note", None)
+        if note is None:
+            return
+        on = False
+        try:
+            on = bool(self._is_minimax_arch() and getattr(self, "minimax_finetune_var", None)
+                      and self.minimax_finetune_var.get())
+        except Exception:
+            on = False
+        # grid, not pack: the Enable checkbox above it is re-managed by grid on every family
+        # switch (update_samples_for_arch calls .grid() on it), and Tk refuses to mix the two.
+        if on and not note.winfo_manager():
+            note.grid(row=1, column=0, sticky=tk.W, padx=20, pady=(0, 14))
+        elif not on and note.winfo_manager():
+            note.grid_remove()
+
     def create_samples_settings(self):
         """Create the Samples tab with sample generation settings (Start-tab styled)."""
         scrollable_frame, _ = self.create_scrollable_frame(self.samples_tab)
@@ -11447,6 +11470,17 @@ class LoRATrainerGUI:
             command=self.toggle_sample_settings,
         )
         self.sample_enabled_check.pack(anchor=tk.W, padx=20, pady=14)
+        # H3 fine-tune note (Peter, 15 Sep): people come here to set the preview cadence, but
+        # under Fine-tune previews ride the checkpoint saves. Shown only while the Training
+        # tab's Fine-tune is ticked on MiniMax H3 — see _refresh_samples_ft_note.
+        self._samples_ft_note = tk.Label(
+            enable_card,
+            text="Fine-tune is ticked on the Training tab: previews render whenever a checkpoint "
+                 "is saved (Save every N epochs on the Training tab, plus the final one), not on "
+                 "the cadence below. Keep sample generation enabled with Every N Epochs above 0, "
+                 "and set your prompt here as usual.",
+            font=(FONT_FAMILY, 9, "italic"), fg="#E0A030", bg=COLORS["bg_surface"],
+            wraplength=760, justify=tk.LEFT)
 
 
         # --- Sample settings container (the 4 cards live inside this) ---

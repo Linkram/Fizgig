@@ -86,6 +86,19 @@ g.settings["MINIMAX_TRAIN_REFINER"] = True
 cmd = g._build_minimax_train_command()
 ck("FT command with the tick carries --train_token_refiner beside --finetune_rotation",
    "--train_token_refiner" in cmd and "--finetune_rotation" in cmd)
+
+# 3. Samples tab note: shown only while H3 + Fine-tune is ticked (previews follow saves)
+note = g._samples_ft_note
+ck("Samples note shown under H3 fine-tune", note.winfo_manager() != "" and "checkpoint" in note.cget("text")
+   and "prompt" in note.cget("text"))
+g.minimax_finetune_var.set(False)
+g._on_minimax_ft_toggle()
+ck("…hidden when Fine-tune is unticked", note.winfo_manager() == "")
+g.minimax_finetune_var.set(True)
+g._on_minimax_ft_toggle()
+g.architecture_var.set("Flux 2 Klein Base 9B")
+g.update_ui_for_architecture()
+ck("…hidden on another family even with the tick left on", note.winfo_manager() == "")
 root.destroy()
 
 print("\nALL PASS" if fails == 0 else f"\n{fails} FAILED")
