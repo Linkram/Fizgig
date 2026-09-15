@@ -5471,7 +5471,8 @@ class LoRATrainerGUI:
             scheduler_content,
             text="Recommended off. Does not affect the ability to use a trigger word. The refiner "
                  "sets how every prompt is read; training it softens output and makes previews "
-                 "judder between epochs. LoRA runs only.",
+                 "judder between epochs. LoRA and fine-tune runs alike (under fine-tune it would "
+                 "train alongside every window, four times the duty cycle of any block).",
             foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_refiner_hint.grid(row=36, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 

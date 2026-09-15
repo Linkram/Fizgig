@@ -3354,11 +3354,21 @@ def train_minimax(
         rotator = H3NF4Rotator(dit.blocks, master, key_prefix="blocks", device=device,
                                block_subset=ft_subset)
         _refiner = getattr(dit, "token_refiner", None)
-        if _refiner is not None:
+        if _refiner is not None and train_token_refiner:
             # The always-on analogue of Krea's txtfusion: small, text-side, unquantized in
             # the int8 checkpoint (the NF4 rotator swaps its Params4bit Linears in from the
-            # master; small dense Linears just unfreeze).
+            # master; small dense Linears just unfreeze). Off by default (15 Sep 2026, Peter),
+            # as in LoRA mode: the refiner sets how every prompt is read, it trained at 4x
+            # the duty cycle of any block matmul and moved 1-2% per run against 0.2-0.4% on
+            # the blocks (Aug checkpoint audit) — the trunk-protection story that made
+            # likeness mode win under FT points the same way. --train_token_refiner puts it
+            # back; its keys then save exactly as before.
             rotator.activate_always("token_refiner", _refiner)
+            logger.info("[h3-ft] text token refiner TRAINS alongside every window "
+                        "(--train_token_refiner)")
+        elif _refiner is not None:
+            logger.info("[h3-ft] text token refiner frozen (tick 'Train the text token "
+                        "refiner' to include it — off by default, as for LoRA runs)")
         _cycle_n = len(ft_subset) if ft_subset else _n_blocks
         rot_schedule = RotationSchedule(_cycle_n, active=ft_rotation,
                                         rotate_every=max(1, int(finetune_rotate_every or 1)),

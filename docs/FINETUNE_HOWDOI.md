@@ -174,6 +174,10 @@ sub-tick (on by default) routes clips to the same identity blocks — in our tes
 trains video just as well, and it makes clips far lighter on VRAM. Untick it for
 whole-model video.
 
+## Should I train the text token refiner on a fine-tune? (H3)
+
+No, unless you are testing it. The refiner is the model's bridge from the text encoder into the DiT and sets how every prompt is read. Fine-tunes used to train it on every epoch, four times as often as any block matmul, and it was the tensor that moved most in every checkpoint. LoRA runs already leave it frozen because training it softened output and made previews judder without helping likeness; fine-tune now does the same. The trigger word is learned in the blocks' attention either way. The tickbox in Other Options ("Train the text token refiner") puts it back for an A/B.
+
 ## Should I tick the training adapter on a fine-tune? (H3)
 
 You can. The training adapter (@ostris's de-distillation LoRA, on by default for every H3 LoRA run) is available under Fine-tune with the same contract: it rides frozen at 1.0 for every training step so the gradient is about your subject rather than about undoing H3's distillation, it switches off for previews, and it is never written into the checkpoint — the file you get is a plain H3 fine-tune. It is on by default under Fine-tune as it is for LoRA runs; the LoRA-mode numbers (faster likeness, higher peak, no frying with other Turbo LoRAs) are the reason, and an A/B on your own dataset — same seed, adapter on versus off — is how to check it for yourself. The file is the same one your LoRA runs use (Preferences → Training adapter, fl2va or ref2va to match the base).
