@@ -9783,7 +9783,7 @@ class LoRATrainerGUI:
             # Per-category retirement rows: only when the dataset is genuinely MIXED — with
             # one category there is nothing to finish separately.
             if hasattr(self, "_mixed_stop_label"):
-                _mixed = _has_audio and not audio_only
+                _mixed = self._minimax_dataset_mixed()
                 if _mixed:
                     self._mixed_stop_label.grid(row=28, column=0, sticky=tk.W, padx=5,
                                                 pady=(8, 2))
@@ -9797,6 +9797,13 @@ class LoRATrainerGUI:
                     self._mixed_stop_hint.grid_remove()
         except tk.TclError:
             pass
+
+    def _minimax_dataset_mixed(self):
+        """True when the training folder holds BOTH voice recordings and visuals — the only
+        case 'Finish one category early' applies to (it is what shows the row, and what the
+        command builder gates the flag on, #136)."""
+        return bool(self._count_training_audio_files() > 0
+                    and not self._training_folder_audio_only())
 
     def _training_folder_audio_only(self):
         """True when the training folder holds voice recordings and nothing visual — the state
@@ -29909,12 +29916,15 @@ class LoRATrainerGUI:
         if _hl is not None and abs(_hl - 1.0) > 1e-9 and not _ft_now:
             cmd += ["--highnoise_lr_scale", f"{_hl:g}"]
         # Per-category retirement (mixed visual+voice datasets). One category, one epoch —
-        # sent only when the epoch is set: the flag's presence means the run used it.
+        # sent only when the epoch is set AND the dataset is genuinely mixed (the row's own
+        # visibility rule): a value restored by Load Settings From Last Train from a mixed run
+        # used to retire the visuals of a photo-only run at that epoch, with the row hidden
+        # and nothing on screen to explain the frozen samples (#136).
         try:
             _n = int(str(self.settings.get("MIXED_STOP_EPOCH", "") or "").strip() or 0)
         except ValueError:
             _n = 0
-        if _n > 0:
+        if _n > 0 and self._minimax_dataset_mixed():
             _flag = ("visual" if "photo" in
                      str(self.settings.get("MIXED_STOP_CATEGORY", "")).lower() else "audio")
             # Under FT only "stop" exists (the anchor rides param-group LR machinery FT
