@@ -656,16 +656,16 @@ def plan_adapter_gb(params: int, optimizer_type: str = "adamw8bit", *,
     21 GB checkpoint, and until this existed the only coverage of the gates was grepping the
     source for the lines that implement them, which passes whether or not they run.
 
-    The gates mirror what the run actually does. Under fine-tune rotation the training adapter
-    and a Context LoRA are refused outright (they raise at load time) and EMA is forced off by
-    the FT coercion block, so none of the three is resident there. Otherwise each term counts
-    only when it is really present.
+    The gates mirror what the run actually does. The training adapter is resident under both
+    modes (under fine-tune rotation it rides as forward hooks). A Context LoRA is refused
+    under rotation (it raises at load time) and EMA is forced off by the FT coercion block,
+    so neither is resident there. Otherwise each term counts only when it is really present.
     """
     total = adapter_vram_gb(params, optimizer_type)
-    frozen = ema = 0.0
+    frozen = frozen_lora_vram_gb(training_adapter_path)
+    ema = 0.0
     if not ft_rotation:
-        frozen = (frozen_lora_vram_gb(training_adapter_path)
-                  + frozen_lora_vram_gb(context_lora_path))
+        frozen += frozen_lora_vram_gb(context_lora_path)
         if ema_decay and float(ema_decay) > 0:
             ema = ema_shadow_gb(params)
     return total + frozen + ema, frozen, ema
@@ -1309,9 +1309,31 @@ def load_preview_turbo(dit, path, strength, tag="turbo"):
     and dropping them is what made few-step audio fall apart (Peter; same finding as
     larryvrh's dedicated loader node). They come back as (adaln_module, A, B*strength)
     pairs for turbo_adaln_patch's run-time injection during previews."""
+    from fizgig.networks.lora import create_network_from_weights
+    keep, adaln_pairs, dropped = _prefilter_frozen_lora(dit, path, strength)
+    net = create_network_from_weights(None, float(strength), keep, None, dit,
+                                      for_inference=True)
+    net.apply_to(text_encoders=None, unet=dit, apply_text_encoder=False, apply_unet=True)
+    # AFTER apply_to, or the modules keep their zero init and contribute nothing — the same
+    # trap the Krea 2 context-LoRA path documents.
+    net.load_state_dict(keep, strict=False)
+    net.requires_grad_(False)
+    for m in net.unet_loras:
+        m.enabled = False
+    logger.info(f"[{tag}] {len(net.unet_loras)} modules wired at strength {strength:g}"
+                + (f" + {len(adaln_pairs)} adaln via run-time injection"
+                   if adaln_pairs else "")
+                + (f" ({len(dropped)} skipped)" if dropped else ""))
+    return net, adaln_pairs
+
+
+def _prefilter_frozen_lora(dit, path, strength):
+    """A frozen LoRA file against THIS base: -> (keep, adaln_pairs, dropped). `keep` is the
+    kohya state dict restricted to Linears that exist here with matching shapes; the
+    full-model AdaLN rows come back as (AdalnProj, A, B*strength) pairs for the run-time
+    injection; `dropped` names what matched nothing (see load_preview_turbo)."""
     from safetensors.torch import load_file
-    from fizgig.networks.lora import (create_network_from_weights,
-                                      ensure_kohya_lora_state_dict)
+    from fizgig.networks.lora import ensure_kohya_lora_state_dict
     sd = ensure_kohya_lora_state_dict(load_file(path))
     linears = {f"lora_unet_{n.replace('.', '_')}": m
                for n, m in dit.named_modules() if isinstance(m, torch.nn.Linear)}
@@ -1340,20 +1362,7 @@ def load_preview_turbo(dit, path, strength, tag="turbo"):
         dropped.append(name)
     if not keep:
         raise RuntimeError("no module in this LoRA matches the loaded base — wrong file?")
-    net = create_network_from_weights(None, float(strength), keep, None, dit,
-                                      for_inference=True)
-    net.apply_to(text_encoders=None, unet=dit, apply_text_encoder=False, apply_unet=True)
-    # AFTER apply_to, or the modules keep their zero init and contribute nothing — the same
-    # trap the Krea 2 context-LoRA path documents.
-    net.load_state_dict(keep, strict=False)
-    net.requires_grad_(False)
-    for m in net.unet_loras:
-        m.enabled = False
-    logger.info(f"[{tag}] {len(net.unet_loras)} modules wired at strength {strength:g}"
-                + (f" + {len(adaln_pairs)} adaln via run-time injection"
-                   if adaln_pairs else "")
-                + (f" ({len(dropped)} skipped)" if dropped else ""))
-    return net, adaln_pairs
+    return keep, adaln_pairs, dropped
 
 
 def park_frozen_lora(net, adaln_pairs=None):
@@ -1407,6 +1416,81 @@ def load_context_lora(dit, path, strength, device, dtype, tag="context", label="
                 + (f" + {n_ad} adaln injected" if n_ad else "")
                 + "; the trainable LoRA learns on top of it")
     return net, pairs
+
+
+class FrozenLoraHooks:
+    """A frozen LoRA riding on the DiT as FORWARD HOOKS instead of wrapped forwards.
+
+    LoRAModule.apply_to sets an instance `forward` on each Linear that captures the OLD
+    bound forward — which the fine-tune rotator's `__class__` swap (Linear4bit <-> nn.Linear
+    on the same instance) orphans. A forward hook lives on the instance and runs after
+    whatever forward is live, so it survives every rotation, the Turbo's per-preview
+    apply_to/pop bracket, and a `--dit <checkpoint>` continuation. Same contract as the
+    LoRA-mode adapter: on for every training step (`enabled`), off + parked for previews,
+    never in the saved checkpoint (it touches no weight, only activations)."""
+
+    def __init__(self, net, path):
+        self.net, self.path = net, path
+        self.handles = []
+        self.enabled = True
+
+    @property
+    def n_modules(self):
+        return len(self.handles)
+
+    def set_enabled(self, on: bool):
+        self.enabled = bool(on)
+
+    def park(self):
+        return park_frozen_lora(self.net, None)
+
+    def restore(self, device):
+        restore_frozen_lora(self.net, device)
+
+    def remove(self):
+        for h in self.handles:
+            h.remove()
+        self.handles = []
+
+
+def attach_frozen_lora_hooks(dit, path, strength, device, dtype, tag="adapter",
+                             label="Training adapter"):
+    """The training adapter under fine-tune: frozen, active at `strength` as forward hooks
+    on every Linear the file matches (see FrozenLoraHooks). AdaLN rows are NOT hosted here
+    (their injection replaces module forwards — the class-swap trap again); v1/v2 carry
+    none, a file that does is logged and its rows skipped."""
+    from fizgig.networks.lora import assert_lora_family_matches, create_network_from_weights
+    assert_lora_family_matches(path, "minimax", label)
+    keep, adaln_pairs, dropped = _prefilter_frozen_lora(dit, path, strength)
+    net = create_network_from_weights(None, float(strength), keep, None, dit,
+                                      for_inference=True)
+    hooks = FrozenLoraHooks(net, path)
+    for m in net.unet_loras:
+        lin = m.org_module_ref[0]
+        if "org_module" in m._modules:
+            # A registered child until apply_to deletes it — here nothing deletes it, and
+            # net.to() would otherwise drag the base's NF4 Linears through a device move.
+            del m.org_module
+        m.enabled = True
+        # What apply_to would have done: register the module under its lora_name, so the
+        # state dict loads into it and net.parameters() / net.to() see its weights.
+        net.add_module(m.lora_name, m)
+
+        def _hook(_mod, inp, out, _m=m, _h=hooks):
+            if not _h.enabled:
+                return out
+            return out + _m.compute_delta(inp[0])
+        hooks.handles.append(lin.register_forward_hook(_hook))
+    net.load_state_dict(keep, strict=False)
+    net.to(device=device, dtype=dtype).eval()
+    net.requires_grad_(False)
+    if adaln_pairs:
+        logger.warning(f"[{tag}] {len(adaln_pairs)} AdaLN rows in {os.path.basename(path)} "
+                       "are not hosted under fine-tune — skipped")
+    logger.info(f"[{tag}] {os.path.basename(path)} attached as forward hooks at "
+                f"{float(strength):g} — {hooks.n_modules} modules"
+                + (f" ({len(dropped)} skipped)" if dropped else ""))
+    return hooks
 
 
 @contextlib.contextmanager
@@ -3270,11 +3354,21 @@ def train_minimax(
         rotator = H3NF4Rotator(dit.blocks, master, key_prefix="blocks", device=device,
                                block_subset=ft_subset)
         _refiner = getattr(dit, "token_refiner", None)
-        if _refiner is not None:
+        if _refiner is not None and train_token_refiner:
             # The always-on analogue of Krea's txtfusion: small, text-side, unquantized in
             # the int8 checkpoint (the NF4 rotator swaps its Params4bit Linears in from the
-            # master; small dense Linears just unfreeze).
+            # master; small dense Linears just unfreeze). Off by default (15 Sep 2026, Peter),
+            # as in LoRA mode: the refiner sets how every prompt is read, it trained at 4x
+            # the duty cycle of any block matmul and moved 1-2% per run against 0.2-0.4% on
+            # the blocks (Aug checkpoint audit) — the trunk-protection story that made
+            # likeness mode win under FT points the same way. --train_token_refiner puts it
+            # back; its keys then save exactly as before.
             rotator.activate_always("token_refiner", _refiner)
+            logger.info("[h3-ft] text token refiner TRAINS alongside every window "
+                        "(--train_token_refiner)")
+        elif _refiner is not None:
+            logger.info("[h3-ft] text token refiner frozen (tick 'Train the text token "
+                        "refiner' to include it — off by default, as for LoRA runs)")
         _cycle_n = len(ft_subset) if ft_subset else _n_blocks
         rot_schedule = RotationSchedule(_cycle_n, active=ft_rotation,
                                         rotate_every=max(1, int(finetune_rotate_every or 1)),
@@ -3584,18 +3678,28 @@ def train_minimax(
                     "condition and audio rows always stay; photo steps — clip stills "
                     "included — and previews never route). arXiv 2501.04765.",
                     float(tread_ratio) * 100, int(tread_start), int(tread_end) - 1, int(tread_start))
-    if training_adapter_path or context_lora_path:
-        if rotator is not None:
-            _what = "The training adapter" if training_adapter_path else "Context LoRA"
-            raise RuntimeError(f"{_what} is not available with fine-tuning on MiniMax H3 "
-                               "— untick Fine-tune (train a LoRA) or turn it off.")
+    adapter_hooks = None
+    if context_lora_path and rotator is not None:
+        raise RuntimeError("Context LoRA is not available with fine-tuning on MiniMax H3 "
+                           "— untick Fine-tune (train a LoRA) or turn it off.")
     if training_adapter_path:
         if not os.path.isfile(training_adapter_path):
             raise FileNotFoundError(f"Training adapter not found: {training_adapter_path} — "
                                     "run the updater or the Preferences model download.")
-        adapter_net, adapter_adaln = load_context_lora(dit, training_adapter_path, 1.0,
-                                                       device, dtype, tag="adapter",
-                                                       label="Training adapter")
+        if rotator is not None:
+            # Under rotation FT the adapter rides as forward hooks (apply_to's wrapped
+            # forwards would be orphaned by the class swap). Same contract as LoRA mode:
+            # on for every training step, off for previews, never in the checkpoint.
+            adapter_hooks = attach_frozen_lora_hooks(dit, training_adapter_path, 1.0,
+                                                     device, dtype, tag="adapter",
+                                                     label="Training adapter")
+            logger.info("[h3-ft] training adapter (hooks) — %d modules: on for every "
+                        "training step, off for previews, never in the checkpoint",
+                        adapter_hooks.n_modules)
+        else:
+            adapter_net, adapter_adaln = load_context_lora(dit, training_adapter_path, 1.0,
+                                                           device, dtype, tag="adapter",
+                                                           label="Training adapter")
     if context_lora_path:
         if not os.path.isfile(context_lora_path):
             raise FileNotFoundError(f"Context LoRA not found: {context_lora_path}")
@@ -3622,6 +3726,12 @@ def train_minimax(
             logger.info("[preview] training adapter off for the render (deployment view)"
                         + (f" — parked on the CPU ({_parked / 2**30:.2f} GB back to the card"
                            f"{_free_now})" if _parked else ""))
+        if adapter_hooks is not None:
+            adapter_hooks.set_enabled(False)
+            _parked = adapter_hooks.park()
+            logger.info("[preview] training adapter (hooks) off for the render (deployment "
+                        "view)" + (f" — parked on the CPU ({_parked / 2**30:.2f} GB back to "
+                                   "the card)" if _parked else ""))
 
     def _frozen_for_training():
         """Back to the training stack: Turbo/preview rows out, adapter on, adapter +
@@ -3631,6 +3741,9 @@ def train_minimax(
             restore_frozen_lora(adapter_net, device)
             for _m in adapter_net.unet_loras:
                 _m.enabled = True
+        if adapter_hooks is not None:
+            adapter_hooks.restore(device)
+            adapter_hooks.set_enabled(True)
         if adapter_adaln or context_adaln:
             turbo_adaln_patch(dit, adapter_adaln + context_adaln, device, dtype)
     if rotator is not None:
