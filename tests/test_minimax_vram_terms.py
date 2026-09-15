@@ -140,13 +140,14 @@ for off in (0.0, 0, None, ""):
     _, _, em = plan_adapter_gb(P, "adamw", ema_decay=off)
     ck(f"EMA off ({off!r}) -> no shadow", em == 0.0, em)
 
-# Under FT rotation none of the three is resident: the frozen pair are refused at load time and
-# the FT coercion block forces ema_decay to 0 before the plan runs. Counting them there would
-# plan for memory nothing will use.
+# Under FT rotation the training adapter IS resident (it rides as forward hooks); the Context
+# LoRA is refused at load time and the FT coercion block forces ema_decay to 0 before the plan
+# runs, so neither of those counts there.
 t, fr, em = plan_adapter_gb(P, "adamw", training_adapter_path=multi, context_lora_path=p32,
                             ema_decay=0.98, ft_rotation=4)
-ck("FT rotation -> frozen LoRAs and EMA are BOTH excluded",
-   (t, fr, em) == (_base, 0.0, 0.0), (t, fr, em))
+_ad_only = frozen_lora_vram_gb(multi)
+ck("FT rotation -> the adapter counts, the Context LoRA and EMA are excluded",
+   fr == _ad_only and em == 0.0 and abs(t - (_base + _ad_only)) < 1e-9, (t, fr, em, _ad_only))
 
 # And the call site really uses it, with the run's own values.
 src = open(os.path.join(REPO, "src", "fizgig", "minimax", "trainer.py"), encoding="utf-8").read()

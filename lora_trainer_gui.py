@@ -2430,6 +2430,9 @@ class LoRATrainerGUI:
         selected_tab = self.notebook.select()
         tab_text = self.notebook.tab(selected_tab, "text")
 
+        if tab_text == "4. Samples":
+            self._refresh_samples_ft_note()
+
         # When Captions tab is selected, load images if folder is set
         if tab_text == "3. Captions":
             folder = self.image_folder_var.get()
@@ -5644,7 +5647,8 @@ class LoRATrainerGUI:
             scheduler_content,
             text="Recommended off. Does not affect the ability to use a trigger word. The refiner "
                  "sets how every prompt is read; training it softens output and makes previews "
-                 "judder between epochs. LoRA runs only.",
+                 "judder between epochs. LoRA and fine-tune runs alike (under fine-tune it would "
+                 "train alongside every window, four times the duty cycle of any block).",
             foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_refiner_hint.grid(row=36, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(0, 4))
 
@@ -7864,8 +7868,9 @@ class LoRATrainerGUI:
 
     # --- MiniMax H3 rotation fine-tune (mirrors the Krea 2 card) --------------------------
     MINIMAX_FT_DEFAULTS = {
-        "LEARNING_RATE": "1e-5",          # a starting point, NOT a calibrated H3 recipe —
-                                          # nobody has tuned FT rates on this model yet
+        "LEARNING_RATE": "3e-5",          # the tested H3 rate (1e-4 destroys; 1e-5 was the
+                                          # old default and too slow to judge from — Peter,
+                                          # 15 Sep: start here and come down if you need to)
         "MAX_TRAIN_EPOCHS": "100",        # a realistic fine-tune length (Peter, 29 Aug:
                                           # 26 was "far too small"; his field A/Bs ran 64
                                           # and kept improving). Clean at BOTH full-speed
@@ -7878,6 +7883,7 @@ class LoRATrainerGUI:
         "GRADIENT_ACCUMULATION": "1",     # fused backward consumes grads as they land
         "MAX_GRAD_NORM": "0",             # global clipping is impossible under fused backward
         "NETWORK_TYPE": "LoRA (standard)",  # FT trains the BASE — reset the adapter selector
+        "MINIMAX_TRAINING_ADAPTER": True,   # rides as forward hooks under FT; on like every LoRA preset
     }
 
     def _on_minimax_ft_toggle(self):
@@ -7894,6 +7900,7 @@ class LoRATrainerGUI:
         if bool(self.minimax_finetune_var.get()):
             self._apply_minimax_ft_defaults()
             self._refresh_minimax_ft_save_box()
+        self._refresh_samples_ft_note()
 
     def _minimax_ft_cycle_estimate(self):
         """Epochs per full rotation cycle — the 32 GB BASELINE of 4 component windows
@@ -7977,6 +7984,13 @@ class LoRATrainerGUI:
             entry = self.entries.get(key)
             if entry is None:
                 continue
+            if isinstance(entry, tk.BooleanVar):
+                if bool(entry.get()) != bool(val):
+                    entry.set(bool(val))
+                    self.settings[key] = bool(val)     # what the command builder reads
+                    changed.append(f"{key.replace('_', ' ').title()}: "
+                                   f"{'on' if not val else 'off'} -> {'on' if val else 'off'}")
+                continue
             try:
                 before = entry.get()
                 if str(before).strip() == val:
@@ -8041,6 +8055,13 @@ class LoRATrainerGUI:
             self._sync_minimax_likeness_state()
         for w in (getattr(self, "_minimax_blocks_label", None),
                   getattr(self, "_minimax_blocks_frame", None),
+                  # EMA is a LoRA-run control: the shadow it keeps is a copy of what trains,
+                  # and under fine-tune that is the whole rotating model (the trainer forces
+                  # it off). Hidden here, never emitted by the builder; the fine-tune guide
+                  # explains. Its saved value comes back as set when FT is unticked.
+                  getattr(self, "_minimax_smooth_label", None),
+                  getattr(self, "_minimax_smooth_frame", None),
+                  getattr(self, "_minimax_smooth_hint", None),
                   getattr(self, "_minimax_blocks_hint", None),
                   # Medium to High LR is a LoRA-mode knob (it rewrites the optimizer's
                   # param-group LR at boundary steps — machinery FT doesn't have). Hidden
@@ -8048,16 +8069,21 @@ class LoRATrainerGUI:
                   getattr(self, "_minimax_hnlr_label", None),
                   getattr(self, "_minimax_hnlr_frame", None),
                   getattr(self, "_minimax_hnlr_hint", None),
-                  # The training adapter is a LoRA-run aid (a frozen layer the trainable
-                  # LoRA stacks on; the rotation FT has nothing to stack). Hidden under FT
-                  # and ignored by the builder there — its saved value is left alone so it
-                  # comes back exactly as set when FT is unticked.
-                  getattr(self, "_minimax_adapter_cb", None),
-                  getattr(self, "_minimax_adapter_hint", None),
                   getattr(self, "_minimax_tread_cb", None),
                   getattr(self, "_minimax_tread_hint", None)):
             if w is not None:
                 self._set_widget_visible(w, not on)
+        # The training adapter stays visible under FT (it rides as forward hooks there —
+        # same contract: on for training, off for previews, never in the checkpoint); the FT
+        # recipe ticks it on, like every LoRA preset (Peter, 15 Sep).
+        _ah = getattr(self, "_minimax_adapter_hint", None)
+        if _ah is not None:
+            if not hasattr(self, "_minimax_adapter_hint_lora"):
+                self._minimax_adapter_hint_lora = _ah.cget("text")
+            _ah.configure(text=(
+                "Under fine-tune: the base trains against the de-distilled forward, off for "
+                "previews, never in the checkpoint (the file you get is a plain H3 fine-tune)."
+                if on else self._minimax_adapter_hint_lora))
         if hasattr(self, "_network_type_rowf"):
             self._set_widget_visible(self.labels["NETWORK_TYPE"], not on)
             self._set_widget_visible(self._network_type_rowf, not on)
@@ -8260,6 +8286,7 @@ class LoRATrainerGUI:
             for w in (self._minimax_ft_frame, self._minimax_ft_fused_cb,
                       self._minimax_reg_frame, self._minimax_ft_hint):
                 self._set_widget_visible(w, False)
+        self._refresh_samples_ft_note()
         # Network Type (LoRA/LoKR) is wired for BOTH native families (krea2_train and
         # minimax_train take --network_type/--lokr_factor); Klein trains standard only.
         # The row frame carries the combo + hint together. The speed note is Krea 2-only:
@@ -11643,6 +11670,24 @@ class LoRATrainerGUI:
         self.caption_log.configure(state="disabled")
         self.caption_log.see(tk.END)
 
+    def _refresh_samples_ft_note(self):
+        """Show the Samples-tab fine-tune note only while MiniMax H3 + Fine-tune is on."""
+        note = getattr(self, "_samples_ft_note", None)
+        if note is None:
+            return
+        on = False
+        try:
+            on = bool(self._is_minimax_arch() and getattr(self, "minimax_finetune_var", None)
+                      and self.minimax_finetune_var.get())
+        except Exception:
+            on = False
+        # grid, not pack: the Enable checkbox above it is re-managed by grid on every family
+        # switch (update_samples_for_arch calls .grid() on it), and Tk refuses to mix the two.
+        if on and not note.winfo_manager():
+            note.grid(row=1, column=0, sticky=tk.W, padx=20, pady=(0, 14))
+        elif not on and note.winfo_manager():
+            note.grid_remove()
+
     def create_samples_settings(self):
         """Create the Samples tab with sample generation settings (Start-tab styled)."""
         scrollable_frame, _ = self.create_scrollable_frame(self.samples_tab)
@@ -11727,6 +11772,17 @@ class LoRATrainerGUI:
             command=self.toggle_sample_settings,
         )
         self.sample_enabled_check.pack(anchor=tk.W, padx=20, pady=14)
+        # H3 fine-tune note (Peter, 15 Sep): people come here to set the preview cadence, but
+        # under Fine-tune previews ride the checkpoint saves. Shown only while the Training
+        # tab's Fine-tune is ticked on MiniMax H3 — see _refresh_samples_ft_note.
+        self._samples_ft_note = tk.Label(
+            enable_card,
+            text="Fine-tune is ticked on the Training tab: previews render whenever a checkpoint "
+                 "is saved (Save every N epochs on the Training tab, plus the final one), not on "
+                 "the cadence below. Keep sample generation enabled with Every N Epochs above 0, "
+                 "and set your prompt here as usual.",
+            font=(FONT_FAMILY, 9, "italic"), fg="#E0A030", bg=COLORS["bg_surface"],
+            wraplength=760, justify=tk.LEFT)
 
 
         # --- Sample settings container (the 4 cards live inside this) ---
@@ -30034,12 +30090,11 @@ class LoRATrainerGUI:
             except ValueError:
                 errors.append("Learning rate must be a valid number")
 
-        # Training adapter (MiniMax): needs the pref for the selected base, and never under FT.
+        # Training adapter (MiniMax): needs the pref for the selected base (LoRA and FT alike).
         _mm_ft_on = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
-        if (self._is_minimax_arch() and not _mm_ft_on
+        if (self._is_minimax_arch()
                 and bool(self.entries.get("MINIMAX_TRAINING_ADAPTER")
                          and self.entries["MINIMAX_TRAINING_ADAPTER"].get())):
-            # (Under fine-tune the tickbox is hidden and the builder ignores it — no error.)
             _ak = self._minimax_adapter_pref_key()
             if not self._krea2_pref(_ak):
                 errors.append("Training adapter is ticked but its file isn't set in Preferences "
@@ -31689,7 +31744,10 @@ class LoRATrainerGUI:
         # construction, and does not need an epoch count guessed up front. Never emitted.
         # EMA: "0.98 (recommended)" -> 0.98 (a saved "0.99 (recommended)" still parses to 0.99).
         _em = str(self.settings.get("MINIMAX_EMA", "0.98") or "Off").split(" ")[0]
-        if _em.lower().startswith("short"):
+        _em_ft = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
+        if _em_ft:
+            pass                                                  # no EMA under fine-tune
+        elif _em.lower().startswith("short"):
             cmd += ["--ema_decay", "short"]
         elif _em.replace(".", "", 1).isdigit():
             cmd += ["--ema_decay", _em]
@@ -31928,8 +31986,8 @@ class LoRATrainerGUI:
             cmd += ["--resume", resume_path]
         # Training adapter — Ostris's frozen de-distillation LoRA at 1.0 under everything else,
         # the file chosen to match the base this run trains on (validation already checked it
-        # exists and that this isn't a fine-tune).
-        if self.settings.get("MINIMAX_TRAINING_ADAPTER") and not _mft_cmd_on:
+        # exists). Under fine-tune the trainer rides it as forward hooks.
+        if self.settings.get("MINIMAX_TRAINING_ADAPTER"):
             _adapter = self._krea2_pref(self._minimax_adapter_pref_key())
             if _adapter:
                 cmd += ["--training_adapter_path", _adapter]

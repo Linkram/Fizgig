@@ -149,7 +149,8 @@ def setup_parser() -> argparse.ArgumentParser:
                         "the raw weights. 0 = off. 'short' = short-run mode: the window is sized "
                         "to the run (decay 1 - 4/steps, fast ramp) for short, high-LR runs.")
     p.add_argument("--train_token_refiner", action="store_true",
-                   help="Add the text token refiner's Linears to the LoRA targets. Off by default: "
+                   help="Train the text token refiner too (LoRA: its Linears join the targets; "
+                        "fine-tune: it trains alongside every window). Off by default: "
                         "the refiner is the model's bridge from the text encoder into the DiT and "
                         "sets how every prompt is read, and a LoRA on it moved that reading every "
                         "epoch (preview judder, softer output). Leaving it off does not remove the "
@@ -252,7 +253,8 @@ def setup_parser() -> argparse.ArgumentParser:
                    help="Training adapter (Ostris, ostris/minimax_h3_training_adapter): a frozen "
                         "LoRA at 1.0 that de-distills the base while yours learns — on for every "
                         "training step, off for previews. Use the fl2va or ref2va file to match "
-                        "--dit. Not available with --finetune_rotation.")
+                        "--dit. Under --finetune_rotation it rides as forward hooks (same "
+                        "contract; the checkpoint never contains it).")
     p.add_argument("--tread_ratio", type=float, default=0.0,
                    help="TREAD token routing: this fraction of the video tokens "
                         "skips the main blocks [--tread_start, --tread_end) on every CLIP "
