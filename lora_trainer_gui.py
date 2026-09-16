@@ -28685,7 +28685,14 @@ class LoRATrainerGUI:
     def _rms_import_graph_preset(self):
         from tkinter import filedialog
         from fizgig.minimax import refmod_apply as ra
-        p = filedialog.askopenfilename(title="ComfyUI graph preset", filetypes=[("Graph preset", "*.png *.json"), ("All", "*")])
+        # The pack writes its graph presets to <mods folder>/graph_presets/<name>.png (the Apply
+        # node's save_preset_as); open the dialog there when it exists, else in the mods folder.
+        _mods = self.rms_folder_var.get().strip()
+        _gp = os.path.join(_mods, "graph_presets") if _mods else ""
+        _start = _gp if os.path.isdir(_gp) else (_mods if os.path.isdir(_mods) else "")
+        p = filedialog.askopenfilename(title="ComfyUI graph preset (the pack's models/refmods/graph_presets/*.png)",
+                                       initialdir=_start or None,
+                                       filetypes=[("Graph preset", "*.png *.json"), ("All", "*")])
         if not p:
             return
         spec = ra.read_graph_preset_png(p)
