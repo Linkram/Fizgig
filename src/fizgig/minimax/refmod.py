@@ -212,10 +212,12 @@ def image_stem(cache_stem: str) -> str:
     return _STEM_RES_RX.sub("", str(cache_stem))
 
 
-def reference_face_centres(refs, image_dirs) -> dict:
+def reference_face_centres(refs, image_dirs, face_sizes: Optional[dict] = None) -> dict:
     """{cache stem: (fy, fx)} — the largest detected face in each reference's dataset image,
     normalised to the image. Only consulted when a reference has to be cropped. Empty when the
-    detector is unavailable or an image can't be found; every failure is per-reference."""
+    detector is unavailable or an image can't be found; every failure is per-reference.
+    `face_sizes`, when given, is filled with {stem: face box area / image area} from the same
+    pass (the optimiser's subset pool wants the large-in-frame faces)."""
     out = {}
     dirs = [d for d in (image_dirs or []) if d and os.path.isdir(d)]
     if not dirs or not refs:
@@ -257,9 +259,28 @@ def reference_face_centres(refs, image_dirs) -> dict:
                 W, H = im.size
             cx, cy = face.center
             out[stem] = (float(max(0.0, min(1.0, cy / float(H)))), float(max(0.0, min(1.0, cx / float(W)))))
+            if face_sizes is not None:
+                x1, y1, x2, y2 = face.bbox
+                face_sizes[stem] = float(max(0, x2 - x1) * max(0, y2 - y1)) / float(max(1, W * H))
         except Exception as exc:
             logger.info(f"[refmod] face detection skipped for {istem}: {exc}")
     return out
+
+
+def large_face_pool(refs, face_sizes: dict, k: int, min_ratio: float = 0.5) -> Optional[list]:
+    """Frame indices (in mod order) of the references the per-step subset may draw from: every
+    reference whose face box is at least `min_ratio` of the largest face's area, and never
+    fewer than `k` (topped up with the next-largest). None when no face was found anywhere —
+    the subset then draws from every reference."""
+    sized = [(float(face_sizes.get(stem, 0.0)), i) for i, (stem, _z, _k) in enumerate(refs)]
+    if not sized or max(a for a, _ in sized) <= 0.0:
+        return None
+    biggest = max(a for a, _ in sized)
+    pool = [i for a, i in sized if a >= min_ratio * biggest]
+    if len(pool) < k:
+        order = [i for _a, i in sorted(sized, key=lambda t: -t[0])]
+        pool = order[:min(k, len(order))]
+    return sorted(pool)
 
 
 def build_mod(refs, grid: Optional[int], faces: Optional[dict] = None) -> Tuple[torch.Tensor, str]:
@@ -459,7 +480,8 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
                     uncond_text: Optional[torch.Tensor] = None, uncond_frac: float = 0.1,
                     warmup: int = 20, log_every: int = 10, on_step=None,
                     target: Optional[torch.Tensor] = None, shared_epoch=None,
-                    sigma_range=DEFAULT_SIGMA_RANGE, ref_subset: int = 0) -> torch.Tensor:
+                    sigma_range=DEFAULT_SIGMA_RANGE, ref_subset: int = 0,
+                    ref_pool: Optional[list] = None) -> torch.Tensor:
     """Optimise the mod latent against the frozen H3 loss over the dataset's stills.
 
     ref_subset > 0: each step rides a random `ref_subset` of the mod's reference frames (in
@@ -498,8 +520,12 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
     opt = torch.optim.AdamW([param], lr=lr, betas=(0.9, 0.99), weight_decay=0.0, eps=1e-8)
     n_frames = int(param.shape[2])
     k_sub = int(ref_subset) if ref_subset and 0 < int(ref_subset) < n_frames else 0
+    pool = [i for i in (ref_pool or []) if 0 <= int(i) < n_frames] or list(range(n_frames))
+    if k_sub and len(pool) <= k_sub and len(pool) < n_frames:
+        k_sub = len(pool)   # a pool no bigger than the subset: ride the whole pool every step
     if k_sub:
-        logger.info(f"[refmod] each step rides {k_sub} of the {n_frames} references (random, saved order)")
+        logger.info(f"[refmod] each step rides {k_sub} of the {n_frames} references (random, saved "
+                    f"order) drawn from {len(pool)} with a large face in frame")
     step = 0
     t0 = time.time()
     run_loss, run_n = 0.0, 0
@@ -522,7 +548,7 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
             for g in opt.param_groups:
                 g["lr"] = lr * min(1.0, (step + 1) / float(max(1, warmup)))
             if k_sub:
-                _idx = torch.tensor(sorted(random.sample(range(n_frames), k_sub)), device=device)
+                _idx = torch.tensor(sorted(random.sample(pool, k_sub)), device=device)
                 ride = param.index_select(2, _idx)      # grads flow back to the picked frames
             else:
                 ride = param
@@ -685,7 +711,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     refs = collect_refs(ref_cache_dirs or cache_dirs, max_refs=max_refs)
     # Faces, for the references that end up cropped: the dataset is prepared framing, so a
     # crop keeps the face rather than the frame centre (Peter, 16 Sep 2026).
-    faces = reference_face_centres(refs, [getattr(ds, "image_directory", "") for ds in group.datasets])
+    face_sizes = {}
+    faces = reference_face_centres(refs, [getattr(ds, "image_directory", "") for ds in group.datasets],
+                                   face_sizes=face_sizes)
     if not refs:
         raise RuntimeError("No reference stills in the caches (photos, or clips cached with "
                            "'Also train the sharpest face still').")
@@ -715,6 +743,18 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                            f"more VRAM at generation. Fewer References or a pooled Grid brings it "
                            f"down.")
         source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
+
+    # The per-step subset draws from the references with a large face in frame (at least half
+    # the largest face's area), so every step's gradient comes from a face-sized signal.
+    ref_pool = None
+    if trains and ref_subset and int(ref_subset) > 0 and not init_from and len(refs) == int(mod0.shape[2]):
+        ref_pool = large_face_pool(refs, face_sizes, int(ref_subset))
+        if ref_pool is None:
+            logger.info("[refmod] no faces measured — the per-step subset draws from every reference")
+        else:
+            _names = ", ".join(refs[i][0] for i in ref_pool)
+            logger.info(f"[refmod] subset pool: {len(ref_pool)} of {len(refs)} references with a large "
+                        f"face in frame (>= half the largest face's area) — {_names}")
 
     if exclude_refs and steps > 0:
         _rm, _left = exclude_refs_from_training(group, [r[0] for r in refs])
@@ -785,7 +825,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         mod = _optimize_with_previews(dit, group, mod0, steps=steps, lr=lr, pull=pull, device=device,
                                       dtype=dtype, seed=seed, uncond_text=uncond_text,
                                       preview_every=preview_every, preview_fn=_preview,
-                                      sigma_range=sigma_range, ref_subset=ref_subset)
+                                      sigma_range=sigma_range, ref_subset=ref_subset,
+                                      ref_pool=ref_pool)
         _preview(mod, int(math.ceil(steps / float(preview_every))) if preview_every else 1)
 
     out = save_refmod(os.path.join(output_dir, output_name), mod, name=output_name, mode=mode,
@@ -803,12 +844,13 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
 
 
 def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype, seed, uncond_text,
-                            preview_every, preview_fn, sigma_range=None, ref_subset: int = 0):
+                            preview_every, preview_fn, sigma_range=None, ref_subset: int = 0,
+                            ref_pool=None):
     """optimize_refmod in chunks so interim previews render from the live latent."""
     if not preview_every or preview_every >= steps:
         return optimize_refmod(dit, group, mod0, steps=steps, lr=lr, pull=pull, device=device,
                                dtype=dtype, seed=seed, uncond_text=uncond_text, sigma_range=sigma_range,
-                               ref_subset=ref_subset)
+                               ref_subset=ref_subset, ref_pool=ref_pool)
     # chunked: each chunk restarts the optimizer state but keeps the latent — a small price,
     # and it keeps optimize_refmod itself simple. Warm-up only on the first chunk.
     mod = mod0
@@ -818,7 +860,8 @@ def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype,
         n = min(preview_every, steps - done)
         mod = optimize_refmod(dit, group, mod, steps=n, lr=lr, pull=pull, device=device, dtype=dtype,
                               seed=seed + k, uncond_text=uncond_text, warmup=(20 if k == 0 else 1),
-                              target=mod0, sigma_range=sigma_range, ref_subset=ref_subset)
+                              target=mod0, sigma_range=sigma_range, ref_subset=ref_subset,
+                              ref_pool=ref_pool)
         done += n
         k += 1
         if done < steps:
