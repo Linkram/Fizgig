@@ -87,4 +87,4 @@ The numbers are the pack's own maths, so what you see in the Studio is what the 
 
 ## Where is the file, and is it really standard?
 
-In the RefMod family's Output folder as `<name>.safetensors`. It is a standard RefMod: the pack's own file layout, loadable by its nodes with nothing special. Fizgig adds a few of its own keys to the header that the nodes ignore.
+In the RefMod family's Output folder as `<name>.safetensors`. It is a standard RefMod: the pack's own file layout, loadable by its nodes with nothing special. With Audio support on it is the pack's bundle, one file holding the visual and audio members (or, with two files chosen, the audio mod sits beside it as `<name>_audio.safetensors`). Fizgig adds a few of its own keys to the header that the nodes ignore.
