@@ -418,34 +418,63 @@ def dedup_frame_indices(z: torch.Tensor, threshold: float = 0.02) -> List[int]:
     return kept
 
 
-def fit_token_budget(latent: torch.Tensor, cap: int, label: str = "mod") -> Tuple[torch.Tensor, List[int]]:
-    """The node pack's extractor rule, at make time: bring the mod under `cap` tokens.
+def thin_motion_frames(mod: torch.Tensor, refs, cap: int, label: str = "mod"):
+    """The cap, applied to clip-as-motion frames ONLY (Peter, 16 Sep 2026: the thinning is for
+    the video mode, it never goes near photos).
 
-    Nothing happens under the cap. Over it, two passes in the pack's order: near-duplicate
-    frames go first (free — they carry nothing new), then a uniform resample down to the most
-    frames that fit. The frame size is never touched (that would move the rope grid). Returns
-    the latent and the indices of the frames kept, so the caller can say which references
-    survived."""
-    t = int(latent.shape[2])
-    per_frame = (int(latent.shape[3]) // 2) * (int(latent.shape[4]) // 2)
-    kept = list(range(t))
-    if cap <= 0 or per_frame * t <= cap:
-        return latent, kept
-    kept = dedup_frame_indices(latent)
-    if len(kept) < t:
-        logger.info(f"[refmod] {label}: over the {cap:,}-token cap — dropped {t - len(kept)} "
-                    f"near-duplicate frame(s) ({t} -> {len(kept)})")
-    if per_frame * len(kept) > cap:
-        fit_t = max(1, cap // per_frame)
-        if fit_t < len(kept):
-            idx = torch.linspace(0, len(kept) - 1, fit_t).round().long().tolist()
-            kept = [kept[i] for i in idx]
-            logger.info(f"[refmod] {label}: still over the cap — resampled to {fit_t} frame(s) "
-                        f"spread evenly across the set")
-        if per_frame * len(kept) > cap:
-            logger.warning(f"[refmod] {label}: one frame alone is {per_frame:,} tokens, above the "
-                           f"{cap:,} cap — a lower Target MP or a pooled Grid is the only way under it")
-    return latent[:, :, kept].contiguous(), kept
+    Photos and clip stills are always kept, whatever the cap. Whatever budget the cap leaves after
+    them is shared out among the motion clips in proportion to their frames, and each clip is
+    thinned the way the pack thins a clip: near-duplicate frames first, then an even resample,
+    never below one frame. `refs` is the list build_mod stacked, in order. Returns
+    (mod, kept frame indices, frames per surviving ref or None when nothing changed)."""
+    cap = int(cap or 0)
+    owner = [i for i, r in enumerate(refs) for _ in range(int(r[1].shape[1]) if r[1].dim() == 4 else 1)]
+    t = int(mod.shape[2])
+    if cap <= 0 or t != len(owner):
+        return mod, list(range(t)), None
+    per_frame = (int(mod.shape[3]) // 2) * (int(mod.shape[4]) // 2)
+    fixed = [k for k in range(t) if refs[owner[k]][2] != "clip motion"]
+    clips = {}
+    for k in range(t):
+        if refs[owner[k]][2] == "clip motion":
+            clips.setdefault(owner[k], []).append(k)
+    if not clips or per_frame * t <= cap:
+        return mod, list(range(t)), None
+    budget = cap - per_frame * len(fixed)
+    if budget < per_frame * len(clips):
+        logger.warning(f"[refmod] {label}: the photos alone are {per_frame * len(fixed):,} tokens against a "
+                       f"{cap:,} cap — they are kept whole (the cap only thins clips); each clip keeps "
+                       f"one frame")
+    # pass 1: each clip loses its near-duplicates
+    deduped = {i: [fr[j] for j in dedup_frame_indices(mod[:, :, fr])] for i, fr in clips.items()}
+    n_dup = sum(len(clips[i]) - len(deduped[i]) for i in clips)
+    if n_dup:
+        logger.info(f"[refmod] {label}: dropped {n_dup} near-duplicate clip frame(s) "
+                    f"({sum(len(v) for v in clips.values())} -> {sum(len(v) for v in deduped.values())})")
+    # pass 2: what is left of the cap, shared by frame count, each clip resampled evenly
+    total = sum(len(v) for v in deduped.values())
+    fit_frames = max(len(clips), budget // per_frame)
+    kept_m = []
+    if total > fit_frames:
+        for i, fr in deduped.items():
+            share = max(1, int(fit_frames * len(fr) / float(total)))
+            if share < len(fr):
+                idx = torch.linspace(0, len(fr) - 1, share).round().long().tolist()
+                fr = [fr[j] for j in idx]
+            kept_m += fr
+        logger.info(f"[refmod] {label}: clips resampled to {len(kept_m)} frame(s) to fit the "
+                    f"{cap:,}-token cap beside {len(fixed)} photo(s)")
+    else:
+        for fr in deduped.values():
+            kept_m += fr
+    kept = sorted(fixed + kept_m)
+    if len(kept) == t:
+        return mod, kept, None
+    per_ref = {}
+    for k in kept:
+        per_ref[owner[k]] = per_ref.get(owner[k], 0) + 1
+    frames = [per_ref[i] for i in range(len(refs))]
+    return mod[:, :, kept].contiguous(), kept, frames
 
 
 # ─── the base model, planned like a training run ────────────────────────────────────────────
@@ -835,23 +864,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                     + ", ".join(r[0] for r in refs))
         mod0, pool_label = build_mod(refs, grid, faces)
         mode = "training" if grid is not None else "encode"
-        if token_cap and int(token_cap) > 0:
-            # Thinning (the pack's extractor rule): only over the cap. A reference is kept when
-            # any of its frames is; a motion clip keeps just its surviving frames.
-            _owner = [i for i, r in enumerate(refs) for _ in range(int(r[1].shape[1]) if r[1].dim() == 4 else 1)]
-            _before = int(mod0.shape[2])
-            mod0, _kept = fit_token_budget(mod0, int(token_cap), label=output_name)
-            if len(_kept) < _before:
-                _keep_ref = sorted({_owner[k] for k in _kept})
-                _per_ref = {i: sum(1 for k in _kept if _owner[k] == i) for i in _keep_ref}
-                refs = [r for i, r in enumerate(refs) if i in _per_ref]
-                _ref_frames = [_per_ref[i] for i in _keep_ref]
-                logger.info(f"[refmod] thinned to {len(_kept)} frame(s) from {len(refs)} reference(s) "
-                            f"under the {int(token_cap):,}-token cap")
-            else:
-                _ref_frames = None
-        else:
-            _ref_frames = None
+        # Thinning: clips as motion only, never a photo (Peter, 16 Sep 2026). Every reference
+        # survives; a clip keeps just the frames the cap allows it.
+        mod0, _kept, _ref_frames = thin_motion_frames(mod0, refs, int(token_cap or 0), label=output_name)
         _tok = token_count(mod0)
         logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {_tok} tokens, "
                     f"mode {mode}) — the node pack's extractor caps at {NODE_TOKEN_CAP} by default")

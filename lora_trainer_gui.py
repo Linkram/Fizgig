@@ -1106,10 +1106,9 @@ REFMOD_CLIPS_OPTIONS = ["as their sharpest still", "as motion (all their frames)
 # together they are the mod's HINT — what RefMod Studio's '+ mod hints' and the pack's Loader
 # emit into the prompt ("identity: a ginger woman with messy hair").
 REFMOD_CONCEPT_OPTIONS = ["identity", "style", "pose_motion", "clothing", "background", "generic"]
-# Token cap (16 Sep 2026): the pack's extractor thins a mod to its cap — near-duplicate frames
-# first, then an even resample. Off by default: the person presets are measured at their full
-# reference count (16 at 1 MP is ~16,000 tokens), so a cap only belongs where the user wants it —
-# clips as motion, above all, where a held shot is mostly repeated frames.
+# Token cap (16 Sep 2026): the pack's extractor rule for CLIPS AS MOTION only — near-duplicate
+# frames first, then an even resample to what fits. Photos are never touched (Peter: "that's not
+# what it's for"); a cap with no motion clips does nothing. Off by default.
 REFMOD_TOKEN_CAP_OPTIONS = ["off (keep every frame)", "5,120 (the pack's default)", "8,192 (the library's files)",
                             "16,384"]
 REFMOD_DEFAULTS = {
@@ -4386,11 +4385,11 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_TOKEN_CAP"].set(_tc if _tc in REFMOD_TOKEN_CAP_OPTIONS else REFMOD_TOKEN_CAP_OPTIONS[0])
             self.entries["MINIMAX_REFMOD_TOKEN_CAP"].pack(side=tk.LEFT)
             ToolTip(self.entries["MINIMAX_REFMOD_TOKEN_CAP"],
-                    "Thin the mod to a token budget the way the pack's extractor does: only when the mod is "
-                    "over the cap, frames that are near-duplicates of the last kept one go first (a held shot "
-                    "in a clip is mostly those), then the rest are spread evenly down to what fits. Off keeps "
-                    "every frame — the person presets are measured that way. Worth setting for clips as "
-                    "motion, where two similar clips would otherwise carry the same frames twice.")
+                    "For clips as motion only: thin their frames to fit a token budget the way the pack's "
+                    "extractor thins a clip. Only when the mod is over the cap, each clip loses the frames "
+                    "that are near-duplicates of the last kept one (a held shot is mostly those), then what "
+                    "is left is spread evenly down to what fits. Photos are never touched, whatever the cap; "
+                    "with no motion clips this does nothing. Off keeps every frame.")
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())

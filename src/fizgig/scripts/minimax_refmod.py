@@ -73,9 +73,10 @@ def setup_parser():
                    choices=["identity", "style", "pose_motion", "clothing", "background", "generic"],
                    help="what the mod is (the pack's concept types; default identity)")
     p.add_argument("--token_cap", type=int, default=0,
-                   help="thin the mod to this many tokens the way the node pack's extractor does "
-                        "(near-duplicate frames dropped first, then an even resample); 0 = keep "
-                        "every frame (default). The pack's own default is 5120")
+                   help="thin CLIPS AS MOTION to fit this many tokens the way the node pack's extractor "
+                        "thins a clip (near-duplicate frames dropped first, then an even resample); "
+                        "photos are never touched. 0 = keep every frame (default). The pack's own "
+                        "default is 5120")
     p.add_argument("--holdout_refs", action="store_true",
                    help="hold the reference stills OUT of the optimiser's training set (default: it "
                         "trains on every still, references included)")
