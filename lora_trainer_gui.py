@@ -2357,6 +2357,7 @@ class LoRATrainerGUI:
         (separate process; switching during a run is fine)."""
         return (getattr(self, '_repair_preview_in_flight', False)
                 or getattr(self, '_explorer_generating', False)
+                or getattr(self, '_rms_busy', False)          # RefMod Studio load / render / sweep
                 or self._royale_is_busy())
 
     def _is_any_busy(self):
@@ -2376,6 +2377,8 @@ class LoRATrainerGUI:
         if getattr(self, '_repair_preview_in_flight', False):
             return True
         if getattr(self, '_explorer_generating', False):
+            return True
+        if getattr(self, '_rms_busy', False):          # RefMod Studio load / render / sweep
             return True
         if self._royale_is_busy():
             return True
@@ -27746,7 +27749,7 @@ class LoRATrainerGUI:
         _rms_tip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
                      "sound and open in the player. Sweeps always render stills.")
         ttk.Label(_sr, text="W:").pack(side=tk.LEFT, padx=(14, 2))
-        self.rms_width_var = tk.StringVar(value=str(saved.get("width", "768")))
+        self.rms_width_var = tk.StringVar(value=str(saved.get("width", "640")))
         _wc = ttk.Combobox(_sr, textvariable=self.rms_width_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
                            state="readonly", width=6)
         _wc.pack(side=tk.LEFT)
@@ -27758,12 +27761,12 @@ class LoRATrainerGUI:
         _hc.pack(side=tk.LEFT)
         _hc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
         ttk.Label(_sr, text="Steps:").pack(side=tk.LEFT, padx=(14, 2))
-        self.rms_steps_var = tk.StringVar(value=str(saved.get("steps", "6")))
+        self.rms_steps_var = tk.StringVar(value=str(saved.get("steps", "4")))
         _ste = ttk.Entry(_sr, textvariable=self.rms_steps_var, width=4)
         _ste.pack(side=tk.LEFT)
         _ste.bind("<FocusOut>", lambda e: self._rms_settings_changed())
         ttk.Label(_sr, text="Turbo:").pack(side=tk.LEFT, padx=(8, 2))
-        self.rms_turbo_var = tk.StringVar(value=str(saved.get("turbo", "0.75")))
+        self.rms_turbo_var = tk.StringVar(value=str(saved.get("turbo", "1.0")))
         _tue = ttk.Entry(_sr, textvariable=self.rms_turbo_var, width=5)
         _tue.pack(side=tk.LEFT)
         _tue.bind("<FocusOut>", lambda e: self._rms_settings_changed())
