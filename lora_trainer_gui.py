@@ -19825,7 +19825,8 @@ class LoRATrainerGUI:
             else:
                 self._repair_h3_label.grid_remove()
                 self._repair_h3_row.grid_remove()
-                self._repair_scale_controls(False)
+                # The load-strength boxes are H3 AND Krea 2 (16 Sep 2026); Klein has none.
+                self._repair_scale_controls(fam == "krea2")
                 self._repair_h3_model_label.grid_remove()
                 self._repair_h3_model_combo.grid_remove()
                 self._repair_h3_base_label.grid_remove()
@@ -21202,7 +21203,7 @@ class LoRATrainerGUI:
         return out if out and os.path.isdir(out) else ""
 
     def _build_repair_scale_control(self, parent, var, who):
-        """'at strength' spinbox after a LoRA's Browse (MiniMax H3 only — shown / hidden by
+        """'at strength' box after a LoRA's Browse (MiniMax H3 and Krea 2 — shown / hidden by
         _apply_repair_family_ui). The strength the LoRA is meant to be used at; every block
         slider stays relative to it."""
         lbl = ttk.Label(parent, text="at strength")
@@ -21239,8 +21240,8 @@ class LoRATrainerGUI:
 
     def _on_repair_scale_changed(self):
         """A load strength edited: the state carries it (slider × scale in the engine), the
-        baseline is a different render now, so re-render — H3 only."""
-        if not self._repair_is_h3():
+        baseline is a different render now, so re-render — H3 and Krea 2."""
+        if not (self._repair_is_h3() or self._repair_family_is("krea2")):
             return
         ps, ds = self._repair_scale("primary"), self._repair_scale("donor")
         if (abs(getattr(self.repair_state, "primary_scale", 1.0) - ps) < 1e-9
@@ -24773,6 +24774,10 @@ class LoRATrainerGUI:
         self.repair_state.preview_width = res
         self.repair_state.preview_height = res
         h3_opts = None
+        if self._repair_family_is("krea2"):
+            # Krea 2 carries the load strengths too (16 Sep 2026): slider × scale in the engine.
+            self.repair_state.primary_scale = self._repair_scale("primary")
+            self.repair_state.donor_scale = self._repair_scale("donor")
         if self._repair_is_h3():
             # H3 renders a clip on its own canvas — the Clip row, not the square Res combo.
             # Dial renders at the dial fraction of that canvas (Confirm at the full size).

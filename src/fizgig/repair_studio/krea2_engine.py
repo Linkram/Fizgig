@@ -234,16 +234,20 @@ class Krea2RepairEngine:
         """Push the per-block slider config into the live networks (regex-based, no reload)."""
         if self.primary_network is None:
             return
+        # Load strength (16 Sep 2026, as on H3): each slider is relative to it — a block at 1.0
+        # is that block at the load strength. Preview-time only; the bake never applies it.
+        ps = float(getattr(state, "primary_scale", 1.0))
+        ds = float(getattr(state, "donor_scale", 1.0))
         for bid, bs in state.blocks.items():
             try:
                 pat = block_regex_krea2(bid)
             except ValueError:
                 continue
             self.primary_network.set_module_enabled_by_pattern(pat, bool(bs.primary_enabled))
-            self.primary_network.set_module_multiplier_by_pattern(pat, float(bs.primary_strength))
+            self.primary_network.set_module_multiplier_by_pattern(pat, float(bs.primary_strength) * ps)
             if self.donor_network is not None:
                 self.donor_network.set_module_enabled_by_pattern(pat, bool(bs.donor_enabled))
-                self.donor_network.set_module_multiplier_by_pattern(pat, float(bs.donor_strength))
+                self.donor_network.set_module_multiplier_by_pattern(pat, float(bs.donor_strength) * ds)
 
     # ----- cancellation ------------------------------------------------------
     def request_cancel(self) -> None:
@@ -476,12 +480,17 @@ class Krea2RepairEngine:
         from fizgig.repair_studio.state import SliderState
         key = (self.primary_path, state.seed, state.prompt,
                state.preview_width, state.preview_height,
-               getattr(state, "ref_image_path", ""), round(float(getattr(state, "ref_megapixels", 1.0)), 4))
+               getattr(state, "ref_image_path", ""), round(float(getattr(state, "ref_megapixels", 1.0)), 4),
+               round(float(getattr(state, "primary_scale", 1.0)), 4),
+               round(float(getattr(state, "donor_scale", 1.0)), 4))
         if self._baseline_cache_key == key and self._baseline_cache_image is not None:
             return self._baseline_cache_image
         base = SliderState.default_krea2()
         base.seed = state.seed
         base.prompt = state.prompt
+        # The baseline is the LoRA at its LOAD strength with every slider at 1.0.
+        base.primary_scale = float(getattr(state, "primary_scale", 1.0))
+        base.donor_scale = float(getattr(state, "donor_scale", 1.0))
         base.preview_width = state.preview_width
         base.preview_height = state.preview_height
         # Same reference as the tweaked side, so the comparison differs only by the slider tweaks.
