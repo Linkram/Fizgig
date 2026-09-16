@@ -27819,8 +27819,9 @@ class LoRATrainerGUI:
         _ub.pack(side=tk.LEFT, padx=(6, 0))
         _rms_tip(_ub, "Free the base from VRAM (it also unloads when you leave the tab).")
         self.rms_status_var = tk.StringVar(value="Ready — check the folder above, set up your mods, then Render in the Preview card.")
-        tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10),
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_surface"], anchor=tk.W
+        # Status in the warning orange, bold: "loading the base" has to be seen (Peter, 16 Sep 2026).
+        tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10, "bold"),
+                 fg=COLORS["warning"], bg=COLORS["bg_surface"], anchor=tk.W
                  ).pack(side=tk.LEFT, padx=(14, 0), fill=tk.X, expand=True)
 
         # ── Card 2: Mods ───────────────────────────────────────────────────────────────
@@ -28112,10 +28113,11 @@ class LoRATrainerGUI:
         # what is happening, right under the buttons that started it
         _stat = tk.Frame(_sw, bg=COLORS["bg_surface"])
         _stat.pack(anchor=tk.W, fill=tk.X, pady=(6, 0))
-        tk.Label(_stat, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10),
-                 fg=COLORS["text_secondary"], bg=COLORS["bg_surface"], anchor=tk.W
-                 ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self._rms_progress = ttk.Progressbar(_stat, mode="indeterminate", length=160)
+        tk.Label(_stat, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10, "bold"),
+                 fg=COLORS["warning"], bg=COLORS["bg_surface"], anchor=tk.W
+                 ).pack(side=tk.LEFT)
+        # the bar sits right after the words and is long enough to read as "in progress"
+        self._rms_progress = ttk.Progressbar(_stat, mode="indeterminate", length=480)
         self._rms_progress_det = False
         self._rms_sweep_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
         self._rms_sweep_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W)
@@ -28859,7 +28861,7 @@ class LoRATrainerGUI:
         if busy:
             self._rms_progress_det = False
             if not bar.winfo_manager():
-                bar.pack(side=tk.RIGHT, padx=(12, 0))
+                bar.pack(side=tk.LEFT, padx=(14, 0))
             bar.configure(mode="indeterminate")
             bar.start(60)
             if self.rms_engine is not None and not marquee:
