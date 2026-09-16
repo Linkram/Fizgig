@@ -395,6 +395,31 @@ def prompt_hint(metas: Sequence[dict]) -> str:
     return "; ".join(bits)
 
 
+def reference_map(rows: Sequence[ModRow]) -> List[str]:
+    """The pack's Text Encode / Inspect reference map, one line per reference in bundle order:
+    "<Picture n> = name". Copies get their own labels, as the pack gives them. Stage one
+    (16 Sep 2026): every visual mod is presented as a Picture; the pack labels a video-kind
+    mod <Video n> — stage two. Zero-strength rows are left out, as the pack leaves them."""
+    out, n = [], 0
+    for r in rows:
+        if not r.enabled or r.latent is None:
+            continue
+        if r.is_axis:
+            if abs(float(r.value)) < 1e-6:
+                continue
+            name = r.b_name if float(r.value) > 0 else r.name
+            for _ in range(int(r.copies)):
+                n += 1
+                out.append(f"<Picture {n}> = {name}")
+            continue
+        if float(r.value) <= 0:
+            continue
+        for _ in range(int(r.copies)):
+            n += 1
+            out.append(f"<Picture {n}> = {r.name}")
+    return out
+
+
 def comfy_readout(rows: Sequence[ModRow], *, retention: float, frame_curve: CurveSpec,
                   scramble_seed: int, step_curve: Optional[CurveSpec], step_on: bool) -> str:
     """The pack's widget values that reproduce this setup, one node per paragraph."""

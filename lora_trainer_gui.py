@@ -28179,6 +28179,28 @@ class LoRATrainerGUI:
         _rms_tip(_hb, "Append every active mod's 'concept_type: description' to the prompt — "
                      "the Loader node's prompt_hint output, meant to be pasted into the CLIP prompt.")
         rr += 1
+        # Numbered references — the pack's H3 RefMod Text Encode: the mods are shown to the
+        # text encoder as numbered pictures, so the prompt can say "<Picture 1>".
+        _nr = tk.Frame(rset, bg=COLORS["bg_surface"])
+        _nr.grid(row=rr, column=0, columnspan=2, sticky=tk.W, pady=(0, 2))
+        self.rms_numbered_var = tk.BooleanVar(value=bool(saved.get("numbered", False)))
+        _nc = ttk.Checkbutton(_nr, text="Numbered references (the H3 RefMod Text Encode node)",
+                              variable=self.rms_numbered_var, command=self._rms_numbered_changed)
+        _nc.pack(side=tk.LEFT)
+        _rms_tip(_nc, "On: each active mod is decoded and shown to the text encoder as a numbered "
+                      "picture, the way the pack's Text Encode node presents saved references, so the "
+                      "prompt can say 'the woman in <Picture 1> stands on the left'. The map beside "
+                      "says which number is which; '+ labels' drops them into the prompt. Costs a "
+                      "decode per mod and a vision encode per prompt. For now every mod is a Picture "
+                      "(its first frame); the pack labels a stacked-photo mod <Video n>, so change the "
+                      "word when you take a prompt to ComfyUI. Audio mods are not presented here.")
+        self.rms_refmap_var = tk.StringVar(value="")
+        tk.Label(_nr, textvariable=self.rms_refmap_var, font=(FONT_FAMILY, 9), fg=COLORS["text_explain"],
+                 bg=COLORS["bg_surface"], justify=tk.LEFT).pack(side=tk.LEFT, padx=(12, 0))
+        _lb = ttk.Button(_nr, text="+ labels", width=9, command=self._rms_add_labels)
+        _lb.pack(side=tk.LEFT, padx=(10, 0))
+        _rms_tip(_lb, "Insert the numbered labels (<Picture 1>, <Picture 2>, …) at the end of the prompt.")
+        rr += 1
         _sr = tk.Frame(rset, bg=COLORS["bg_surface"])
         _sr.grid(row=rr, column=0, columnspan=2, sticky=tk.W, pady=2)
         ttk.Label(_sr, text="Seed:").pack(side=tk.LEFT)
@@ -28714,6 +28736,13 @@ class LoRATrainerGUI:
         return out
 
     def _rms_refresh_tokens(self):
+        try:
+            self._rms_refresh_refmap()
+        except Exception:
+            pass
+        return self._rms_refresh_tokens_inner()
+
+    def _rms_refresh_tokens_inner(self):
         """Tokens footer = sum of active rows' T×(H/2)×(W/2) × copies (metadata only, no tensors)."""
         from fizgig.minimax import refmod_apply as ra
         total = 0
@@ -28730,6 +28759,49 @@ class LoRATrainerGUI:
         cap = ra.NODE_TOKEN_CAP
         self.rms_tokens_var.set(f"Tokens: {total:,} / {cap:,}".replace(",", " "))
         self._rms_tokens_lbl.configure(fg=("#E05050" if total > cap else COLORS["text_secondary"]))
+
+    def _rms_status_from_thread(self, text):
+        try:
+            self.master.after(0, lambda: self.rms_status_var.set(text))
+        except Exception:
+            pass
+
+    def _rms_reference_map(self):
+        """The map lines for the current rows (empty when nothing is active)."""
+        from fizgig.minimax import refmod_apply as ra
+        try:
+            return ra.reference_map(self._rms_mod_rows())
+        except Exception:
+            return []
+
+    def _rms_numbered_changed(self):
+        self._rms_refresh_refmap()
+        self._rms_persist()
+
+    def _rms_refresh_refmap(self):
+        var = getattr(self, "rms_refmap_var", None)
+        if var is None:
+            return
+        if not self.rms_numbered_var.get():
+            var.set("")
+            return
+        lines = self._rms_reference_map()
+        var.set("   ".join(lines) if lines else "No active mod — nothing to number.")
+
+    def _rms_add_labels(self):
+        if not self.rms_numbered_var.get():
+            self.rms_numbered_var.set(True)
+            self._rms_refresh_refmap()
+        lines = self._rms_reference_map()
+        if not lines:
+            self.rms_status_var.set("No active mod — nothing to number.")
+            return
+        labels = ", ".join(ln.split(" = ")[0] for ln in lines)
+        cur = self.rms_prompt_text.get("1.0", tk.END).strip()
+        if labels in cur:
+            return
+        self.rms_prompt_text.insert(tk.END, (", " if cur else "") + labels)
+        self._rms_persist()
 
     def _rms_add_hints(self):
         from fizgig.minimax import refmod_apply as ra
@@ -28888,7 +28960,7 @@ class LoRATrainerGUI:
                 "folder": self.rms_folder_var.get(), "rows": [self._rms_row_state(r) for r in self._rms_rows],
                 "retention": self._rms_retention(), "scramble": self.rms_scramble_var.get(),
                 "frame_curve": list(self._rms_frame_curve()), "step_curve": list(self._rms_step_curve()),
-                "step_on": bool(self.rms_sc_on_var.get())}
+                "step_on": bool(self.rms_sc_on_var.get()), "numbered": bool(self.rms_numbered_var.get())}
 
     def _rms_apply_state(self, d):
         """Load a saved setup (the Load setup button) into the controls."""
@@ -28906,6 +28978,7 @@ class LoRATrainerGUI:
                 self.rms_prompt_text.insert("1.0", str(d["prompt"]))
             self.rms_sound_var.set(bool(d.get("sound", True)))
             self.rms_early_var.set(bool(d.get("early", True)))
+            self.rms_numbered_var.set(bool(d.get("numbered", False)))
             for row in list(self._rms_rows):
                 row["frame"].destroy()
             self._rms_rows = []
@@ -29187,9 +29260,17 @@ class LoRATrainerGUI:
                "schedule": sched, "retention": retention, "frame_curve": fc, "step_curve": sc if step_on else None,
                "with_audio": bool(self.rms_sound_var.get() and self._repair_h3_audio_vae_path()),
                "early": (2 if (self.rms_early_var.get() and st > 2) else 0),
+               "numbered": bool(self.rms_numbered_var.get()),
+               "ref_map": ra.reference_map(rows),
                "readout": ra.comfy_readout(rows, retention=retention, frame_curve=fc, scramble_seed=self._rms_scramble(),
                                            step_curve=sc, step_on=step_on),
                "label": ov.get("label", "")}
+        if job["numbered"]:
+            job["readout"] += ("\n\nH3 RefMod Text Encode\n  mods: the loader above; prompt: this prompt; connect its "
+                               "conditioning to the sampler and do not Apply the same mods again\n  reference map: "
+                               + ("  ".join(job["ref_map"]) or "none")
+                               + "\n  (the Studio presents every mod as a Picture; the node labels a stacked-photo "
+                                 "mod <Video n> — change the word in the prompt there)")
         # Everything the No-mod render depends on, Sound included: the audio rows ride the same
         # denoise, so a baseline made without sound is not the baseline for a render with it
         # (@mabseyuk, 16 Sep 2026).
@@ -29244,11 +29325,15 @@ class LoRATrainerGUI:
 
         def _work():
             out = {}
+            _ref_imgs = None
+            if job.get("numbered") and job["latents"]:
+                self._rms_status_from_thread("Decoding the mods for the numbered references…")
+                _ref_imgs = [eng.decode_reference_frame(z) for z in job["latents"]]
             out["tweaked"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],
                                                height=job["height"], frames=job["frames"], regime="custom",
                                                ref_latents=job["latents"], ref_schedule=job["schedule"],
                                                with_audio=job["with_audio"], early_step=job["early"], on_early=_early,
-                                               steps=job["steps"], turbo_strength=job["turbo"])
+                                               steps=job["steps"], turbo_strength=job["turbo"], ref_images=_ref_imgs)
             self.master.after(0, lambda t=out["tweaked"]: _show_tweaked(t))
             if need_base:
                 out["baseline"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],

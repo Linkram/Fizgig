@@ -1152,7 +1152,7 @@ class H3RepairEngine:
                       height: Optional[int] = None, frames: Optional[int] = None,
                       steps: Optional[int] = None, turbo_strength: Optional[float] = None,
                       keyframes=None, on_denoised=None, no_lora: bool = False,
-                      references=None, ref_latents=None, ref_schedule=None):
+                      references=None, ref_latents=None, ref_schedule=None, ref_images=None):
         """Apply the slider state and sample ONE clip: returns (latent [1,24,T,H/16,W/16] on
         CPU fp32, audio_rows [2*A, 32] on CPU fp32 or None). No decode — the caller decides
         (decode_clip_frames / decode_audio, or store it in the render cache).
@@ -1207,8 +1207,14 @@ class H3RepairEngine:
         bare_refs = bool(ref_latents) or ref_schedule is not None
         text_tags = None
         if bare_refs:
-            # RefMods: latents only, the prompt encoded plain.
-            emb = self._encode_prompt(prompt)
+            # RefMods: latents as condition rows. The prompt is encoded plain, or — numbered
+            # references, the pack's Text Encode — with the mods' decoded frames shown to the
+            # encoder as <Picture n> blocks, so "<Picture 1>" in the prompt means something.
+            if ref_images:
+                emb = self._encode_prompt(prompt, images=list(ref_images))
+                text_tags = self._prompt_cache_tags
+            else:
+                emb = self._encode_prompt(prompt)
             ref_latents = [z.to(self.device, torch.float32) for z in (ref_latents or [])]
         elif references:
             # ref2va: the prompt is encoded WITH the reference pictures (vision blocks), and
@@ -1333,6 +1339,14 @@ class H3RepairEngine:
         return lat, audio
 
     @torch.no_grad()
+    def decode_reference_frame(self, latent) -> "Image.Image":
+        """A mod latent's first frame as a PIL image — what the numbered-reference presentation
+        shows the text encoder (the same weakened latent the DiT receives, as the pack does)."""
+        z = latent.detach().to(torch.float32)
+        if z.dim() == 4:
+            z = z.unsqueeze(2)
+        return self.decode_clip_frames(z[:, :, :1])[0]
+
     def decode_clip_frames(self, latent) -> "list[Image.Image]":
         """A clip latent -> PIL frames (all of them). At 22 frames the whole clip is one
         decoder chunk, so this costs what the middle-frame decode already did."""
@@ -1489,7 +1503,7 @@ class H3RepairEngine:
     def render_refmod(self, *, seed: int, prompt: str, width: int, height: int, frames: int = 1,
                       regime: str = "confirm", ref_latents=None, ref_schedule=None,
                       with_audio: bool = True, early_step: int = 0, on_early=None,
-                      steps=None, turbo_strength=None) -> dict:
+                      steps=None, turbo_strength=None, ref_images=None) -> dict:
         """The RefMod Studio's render: the base model (no LoRA state) with bare reference
         latents as condition rows, decoded to the same clip dict render_clip returns
         ({"latent", "audio_rows", "frames", "wav", "middle", "regime", "steps",
@@ -1511,7 +1525,8 @@ class H3RepairEngine:
                                       height=height, frames=frames, steps=st,
                                       turbo_strength=strength,
                                       on_denoised=_on_denoised if early_step > 0 else None,
-                                      ref_latents=ref_latents, ref_schedule=ref_schedule)
+                                      ref_latents=ref_latents, ref_schedule=ref_schedule,
+                                      ref_images=ref_images)
         imgs = self.decode_clip_frames(lat)
         wav = self.decode_audio(aud) if (with_audio and frames > 1) else None
         return {"latent": lat, "audio_rows": aud, "frames": imgs, "wav": wav,
