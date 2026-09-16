@@ -27764,11 +27764,12 @@ class LoRATrainerGUI:
             "Which mods go into the render. Nothing on this tab edits a mod file: the rows and "
             "dials below are what you would set on the ComfyUI nodes at generation time, and the "
             "files stay as made (to write one out with a setting baked in, see Actions at the "
-            "bottom). Each row is one mod: the slider is how strongly it "
-            "applies, and copies is how many times it rides in the bundle (more copies pull harder, "
-            "each one costs its tokens). Pick a second mod under 'vs' and the row becomes a slider "
-            "between the two: left of centre leans to the first, right to the second, and the "
-            "distance from centre is how strongly. Untick a row to leave it out.")
+            "bottom). Each row is one mod: Strength is how strongly it applies (0 off, 1 as stored), "
+            "Copies is how many times it rides in the bundle (more copies pull harder, each costs its "
+            "tokens). Compare against is optional: pick a second mod there and the Strength slider "
+            "becomes a Lean between the two — drag it left of centre to lean to the first mod, right "
+            "to lean to the second, and the label beside it says which way and how far. Untick a "
+            "row to leave it out.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
@@ -27943,7 +27944,7 @@ class LoRATrainerGUI:
         _se.bind("<FocusOut>", lambda e: self._rms_persist())
         ttk.Button(_sr, text="🎲", width=3, command=self._rms_random_seed).pack(side=tk.LEFT)
         ttk.Label(_sr, text="Length:").pack(side=tk.LEFT, padx=(14, 2))
-        self.rms_frames_var = tk.StringVar(value=str(saved.get("frames", "Still (1 frame)")))
+        self.rms_frames_var = tk.StringVar(value=str(saved.get("frames", "22 frames (~1s)")))
         if self.rms_frames_var.get() not in self._RMS_LENGTHS:
             self.rms_frames_var.set("Still (1 frame)")
         _fc = ttk.Combobox(_sr, textvariable=self.rms_frames_var, values=list(self._RMS_LENGTHS),
@@ -28048,11 +28049,14 @@ class LoRATrainerGUI:
         # ── Card 5: Actions ────────────────────────────────────────────────────────────
         act = self._start_section_card(
             outer, "Actions",
-            "Take the result to ComfyUI. ComfyUI settings copies the exact values for the pack's "
-            "nodes, so you reproduce this render there with the mods as they are. Bake as new "
-            "RefMod is the only thing here that writes a file: a copy of one row's mod with its "
-            "strength, retention and frame curve baked in, so it loads plainly at 1.0 with no "
-            "curve set. Save preview keeps the picture; Save and Load setup keep this whole tab.")
+            "Take the result to ComfyUI. ComfyUI settings copies the exact values to type into the "
+            "pack's nodes, so the same render comes out there with the mod files as they are. Bake as "
+            "new RefMod is the only thing here that writes a file: it takes one row's mod and folds "
+            "that row's Strength, the master Strength and the Fade-across-the-clip curve into the "
+            "latent itself, so the new file gives this look when loaded plainly at 1.0 with no curve. "
+            "Copies, Shuffle and Change-during-the-render act at render time and cannot be baked — "
+            "they stay in the ComfyUI settings. Save preview keeps the picture; Save and Load setup "
+            "keep this whole tab.")
         _ar = tk.Frame(act, bg=COLORS["bg_surface"])
         _ar.pack(fill=tk.X)
         ttk.Button(_ar, text="💾 Save preview…", command=self._rms_save_preview).pack(side=tk.LEFT)
@@ -28064,9 +28068,11 @@ class LoRATrainerGUI:
                       "this render in the node pack, ready to copy.")
         _bk = ttk.Button(_ar, text="🧪 Bake as new RefMod…", command=self._rms_bake)
         _bk.pack(side=tk.LEFT, padx=(6, 0))
-        _rms_tip(_bk, "Write a copy of one row's mod with its strength × retention and the frame "
-                     "curve folded into the latent — loads at 1.0 in any loader. Copies, scramble and "
-                     "the step curve are runtime-only and stay in the readout.")
+        _rms_tip(_bk, "Writes a NEW mod file from one row. Carried into the file: that row's Strength "
+                     "multiplied by the master Strength (Retention), and the Fade-across-the-clip curve, "
+                     "applied to the latent itself. Load the new file in ComfyUI at 1.0 with no frame "
+                     "curve and you get this look with nothing to set. Not carried, because they act at "
+                     "render time: Copies, Shuffle and Change-during-the-render (use ComfyUI settings for those).")
         self._add_youtube_help_button(outer, "refmod_studio")
 
         # rows (restored or one empty), first scan, curve plot
@@ -28226,17 +28232,25 @@ class LoRATrainerGUI:
         row["mod_combo"].grid(row=0, column=1, padx=(2, 6))
         self._rms_make_searchable(row["mod_combo"], lambda: self._rms_row_changed(row))
         row["value_var"] = tk.DoubleVar(value=float(saved.get("value", 1.0)))
-        row["scale"] = ttk.Scale(fr, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=150, variable=row["value_var"],
+        row["slider_lbl"] = tk.Label(fr, text="Strength:", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
+        row["slider_lbl"].grid(row=0, column=2, padx=(4, 2))
+        _sf = tk.Frame(fr, bg=bg)
+        _sf.grid(row=0, column=3)
+        row["scale"] = ttk.Scale(_sf, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=150, variable=row["value_var"],
                                  command=lambda v, rw=row: self._rms_row_moved(rw))
-        row["scale"].grid(row=0, column=2)
+        row["scale"].pack(side=tk.LEFT)
         row["value_str"] = tk.StringVar(value=f"{row['value_var'].get():.2f}")
-        _ve = ttk.Entry(fr, textvariable=row["value_str"], width=6)
-        _ve.grid(row=0, column=3, padx=(4, 8))
+        _ve = ttk.Entry(_sf, textvariable=row["value_str"], width=6)
+        _ve.pack(side=tk.LEFT, padx=(4, 4))
         _ve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
         _ve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
-        row["axis_lbl"] = tk.Label(fr, text="strength", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, width=11)
-        row["axis_lbl"].grid(row=0, column=4)
-        ttk.Label(fr, text="copies:").grid(row=0, column=5, padx=(8, 2))
+        # plain row: blank; compare row: says which way the slider is leaning, live
+        row["axis_lbl"] = tk.Label(_sf, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, width=24, anchor=tk.W)
+        row["axis_lbl"].pack(side=tk.LEFT)
+        _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored). With a mod picked under "
+                               "'Compare against', the same slider becomes a lean: left of centre leans to this mod, "
+                               "right of centre to the other, the distance from centre is the strength.")
+        ttk.Label(fr, text="Copies:").grid(row=0, column=5, padx=(8, 2))
         row["copies_var"] = tk.StringVar(value=str(int(saved.get("copies", 1))))
         _cs = ttk.Spinbox(fr, from_=1, to=ra.MAX_COPIES, width=3, textvariable=row["copies_var"],
                           command=lambda rw=row: self._rms_row_changed(rw))
@@ -28244,13 +28258,15 @@ class LoRATrainerGUI:
         _cs.bind("<FocusOut>", lambda e, rw=row: self._rms_row_changed(rw))
         _rms_tip(_cs, "The same reference repeated in the bundle — 2–3 is the pack's sweet spot for a "
                      "stronger pull; every copy costs its full tokens.")
-        ttk.Label(fr, text="vs").grid(row=0, column=7, padx=(12, 2))
+        ttk.Label(fr, text="Compare against:").grid(row=0, column=7, padx=(14, 2))
         row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
         row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
         row["b_combo"].grid(row=0, column=8)
         self._rms_make_searchable(row["b_combo"], lambda: self._rms_row_changed(row))
-        _rms_tip(row["b_combo"], "Pick a second mod to turn the row into the Axis node: the slider runs "
-                                "A ◀ 0 ▶ B, its sign picks the side and its distance is the strength.")
+        _rms_tip(row["b_combo"], "Optional. Pick a second mod and the row becomes the pack's Axis node: the "
+                                "Strength slider turns into a lean between the two — drag left to lean to the "
+                                "first mod, right to the second; how far is how strongly. Leave at (none) for a "
+                                "plain mod at a strength.")
         _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
         _x.grid(row=0, column=9, padx=(10, 0))
         row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
@@ -28281,9 +28297,20 @@ class LoRATrainerGUI:
         self._rms_refresh_tokens()
         self._rms_persist()
 
+    def _rms_lean_text(self, row):
+        """What the slider means right now, in words: blank for a plain row; for a compare row,
+        which mod it leans to and how far."""
+        if not self._rms_row_is_axis(row):
+            return ""
+        v = float(row["value_var"].get())
+        if abs(v) < 0.005:
+            return "centre — neither"
+        return f"◀ to the first mod {abs(v):.2f}" if v < 0 else f"to the second mod {v:.2f} ▶"
+
     def _rms_row_moved(self, row):
         row["value_str"].set(f"{float(row['value_var'].get()):+.2f}" if self._rms_row_is_axis(row)
                              else f"{float(row['value_var'].get()):.2f}")
+        row["axis_lbl"].configure(text=self._rms_lean_text(row))
         self._rms_refresh_tokens()
         self._rms_persist()
 
@@ -28420,12 +28447,13 @@ class LoRATrainerGUI:
         axis = self._rms_row_is_axis(row)
         if axis:
             row["scale"].configure(from_=-1.0)
-            row["axis_lbl"].configure(text="A ◀ 0 ▶ B")
+            row["slider_lbl"].configure(text="Lean:")
         else:
             row["scale"].configure(from_=0.0)
-            row["axis_lbl"].configure(text="strength")
+            row["slider_lbl"].configure(text="Strength:")
             if float(row["value_var"].get()) < 0:
                 row["value_var"].set(abs(float(row["value_var"].get())))
+        row["axis_lbl"].configure(text=self._rms_lean_text(row))
         row["value_str"].set(f"{float(row['value_var'].get()):+.2f}" if axis else f"{float(row['value_var'].get()):.2f}")
         ma = self._rms_mod_meta.get(row["mod_var"].get())
         mb = self._rms_mod_meta.get(row["b_var"].get()) if axis else None
