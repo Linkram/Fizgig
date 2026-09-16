@@ -6167,7 +6167,12 @@ class LoRATrainerGUI:
     # removed optimizers) must NOT be .set() onto them — readonly Comboboxes accept any
     # value without complaint, and the bad name then dies (or misbehaves) at launch.
     _STRICT_COMBO_KEYS = {"OPTIMIZER_TYPE", "ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX", "LR_SCHEDULER",
-                          "NETWORK_TYPE"}
+                          "NETWORK_TYPE",
+                          # the RefMod card's readonly boxes: a saved label the box does not offer
+                          # (a rename between versions) must keep the current choice and say so,
+                          # not sit in the box reading as one thing and launching another
+                          "MINIMAX_REFMOD_CLIPS", "MINIMAX_REFMOD_CONCEPT", "MINIMAX_REFMOD_TOKEN_CAP",
+                          "MINIMAX_REFMOD_AUDIO", "MINIMAX_REFMOD_AUDIO_CONCEPT"}
 
     def _apply_preset_values(self, preset):
         """Apply preset values to the UI (shared by load_default_preset and load_custom_preset)"""
@@ -30669,6 +30674,23 @@ class LoRATrainerGUI:
                     errors.append(f"{label} path is empty (set it on the Preferences tab)")
                 elif not os.path.exists(path):
                     errors.append(f"{label} file does not exist: {path}")
+            # An audio mod needs the H3 audio VAE and a length: refuse here, not after a
+            # 200-step run has already written the visual mod (reviewer, 16 Sep 2026).
+            _aud = self.entries.get("MINIMAX_REFMOD_AUDIO")
+            if config.get("is_refmod") and _aud is not None and refmod_audio_on(_aud.get()):
+                _avae = self._krea2_pref("minimax_audio_vae")
+                if not _avae:
+                    errors.append("Audio mod is on but the MiniMax H3 Audio VAE path is empty — set it on "
+                                  "the Preferences tab, or set Audio mod to off")
+                elif not os.path.exists(_avae):
+                    errors.append(f"MiniMax H3 Audio VAE file does not exist: {_avae}")
+                _secs_e = self.entries.get("MINIMAX_REFMOD_AUDIO_SECONDS")
+                try:
+                    _secs = float(refmod_num(_secs_e.get() if _secs_e is not None else "30", "30", float))
+                except (TypeError, ValueError):
+                    _secs = 0.0
+                if not _secs > 0:
+                    errors.append("Audio mod: 'Up to' must be a number of seconds above 0")
             # Training Base = ref2va needs the ref2va model actually set — without this check
             # the command builder would silently fall back to fl2va, the one thing the user
             # explicitly asked it not to train on.

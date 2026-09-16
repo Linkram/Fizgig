@@ -12,7 +12,8 @@ reproduce the subject across the dataset's captions. Textual inversion, in the r
 channel. The output is still just a latent tensor in the node's own format, so the official
 loader uses it unchanged — it simply carries more of the subject than the VAE alone did.
 
-Layout contract (checked against the node pack's core.py, 9 Sep 2026, `_format_version` 2):
+Layout contract (checked against the node pack's core.py, 9 Sep 2026, `_format_version` 2; the
+pack writes 4 as of v0.2.6 and its reader takes ours unchanged, re-checked 16 Sep 2026):
   tensor  `latent`  [1, 24, T, H, W] fp16, normalized VAE units (ours are the same units —
                     the caches here are std ~1.0, and so is the node's example mod)
   header  `refmod_meta` = JSON {name, kind (image|video), latent_h, latent_w, latent_t, mode
@@ -495,6 +496,8 @@ def make_audio_refmod(image_dirs, out_path_no_ext: str, *, name: str, audio_vae_
                       device=None) -> Optional[str]:
     """The whole audio step: gather the folder's sound, encode it, write the file. Returns the
     path, or None when the folder has no sound (logged, not an error)."""
+    if not (float(max_seconds) > 0):
+        raise ValueError(f"the audio mod's length must be above 0 seconds (got {max_seconds})")
     wav, sources = collect_audio(image_dirs, max_seconds)
     if wav is None:
         logger.warning("[refmod] audio: no sound in the dataset folder (no clip with a soundtrack, "
@@ -1129,7 +1132,14 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
                 f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")
     if str(audio or "off").lower() != "off":
-        # After the visual mod, with the DiT gone: the folder's sound as a second file.
+        # After the visual mod, and only once the DiT, Turbo LoRA and decoder are off the card:
+        # the audio VAE (345 MB fp32 plus its chunk activations) must not land beside them on a
+        # 16 GB card after an optimised run with previews.
+        del dit, turbo, decoder, _preview
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         make_audio_refmod([getattr(ds, "image_directory", "") for ds in group.datasets],
                           os.path.join(output_dir, output_name + "_audio"), name=output_name + "_audio",
                           audio_vae_path=audio_vae_path, max_seconds=float(audio_max_seconds),
