@@ -1122,6 +1122,15 @@ REFMOD_BUILT_IN_PRESETS = {
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
     },
+    # The same recipe at 0.5 MP references: half the tokens per reference at generation
+    # (~8,000 for 16, the library's budget) for a lighter file (Peter, 16 Sep 2026).
+    "✨ RefMod — Fizgig recipe light (Full reference, 16 refs at 0.5 MP, optimised)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        **REFMOD_DEFAULTS,
+        "DATASET_MEGAPIXELS": "0.5",
+        "MINIMAX_CLIP_STILL": True,
+    },
     # Style (16 Sep 2026): a look, not a person — plain encode of EVERY still (the optimiser's
     # loss rewards reproducing the stills themselves, which on a style set means their subjects
     # and framing; untested there, so Steps stays 0 and anyone can type a number). Community =
