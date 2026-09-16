@@ -470,7 +470,7 @@ def refmod_step_loss(dit, mod: torch.Tensor, latents: torch.Tensor, text: torch.
     return F.mse_loss(pred.float(), (x0 - noise).float()), float(sigma.reshape(-1)[0])
 
 
-DEFAULT_LR = 1e-3
+DEFAULT_LR = 2.5e-4   # Peter, 16 Sep 2026 (the 10 Sep measurement ran at 1e-3 with every reference in every step)
 DEFAULT_PULL = 2.0
 DEFAULT_SIGMA_RANGE = (0.2, 0.8)
 
@@ -491,7 +491,7 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
     mod. 0 = every reference every step (the 10 Sep 2026 measurement).
 
     Defaults are the measured recipe (mbacc photos, 10 Sep 2026, ref2va, Full canvas, 4 seeds,
-    ArcFace vs the dataset): lr 1e-3, pull 2.0, noise window 0.2-0.8 put every seed at or
+    ArcFace vs the dataset): lr 1e-3 (now 2.5e-4 by default), pull 2.0, noise window 0.2-0.8 put every seed at or
     above the raw encode on portrait prompts (70 vs 66) and +5.5 on four off-dataset scene
     prompts (58.7 vs 53.2). lr 5e-3 / pull 0.5 on H3's full shift-12 density LOST fidelity
     (55): at the top of that schedule the loss is about global structure, and pushing the
