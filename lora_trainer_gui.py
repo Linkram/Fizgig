@@ -28350,7 +28350,51 @@ class LoRATrainerGUI:
         combo.bind("<KP_Enter>", _commit)
         combo.bind("<FocusOut>", _commit)
         combo.bind("<<ComboboxSelected>>", _selected)
-        combo._rms_handlers = (_on_key, _commit, _selected)   # reachable for headless checks
+
+        # With the list OPEN, typing jumps to the first name starting with the letters typed
+        # (a second press of the same letter moves to the next such name) — the list-box
+        # behaviour Windows users expect, which ttk's popdown does not do by itself.
+        import time as _time
+        combo._rms_jump = ["", 0.0]
+
+        def _jump(e):
+            ch = getattr(e, "char", "") or ""
+            if not ch or not ch.isprintable() or ch in (" ",):
+                return
+            try:
+                lb = combo.tk.call("ttk::combobox::PopdownWindow", combo) + ".f.l"
+                items = [str(v) for v in combo.cget("values")]
+                if not items:
+                    return
+                now = _time.time()
+                buf, t0 = combo._rms_jump
+                prefix = (buf + ch.lower()) if (now - t0) < 1.0 else ch.lower()
+                cur = combo.tk.call(lb, "curselection")
+                cur = int(cur[0]) if cur else -1
+                if len(prefix) > 1 and len(set(prefix)) == 1:
+                    prefix, start = prefix[0], cur + 1          # same letter again: next match
+                elif len(prefix) == 1:
+                    start = cur + 1
+                else:
+                    start = 0
+                order = list(range(start, len(items))) + list(range(0, start))
+                idx = next((i for i in order if items[i].lower().startswith(prefix)), None)
+                combo._rms_jump = [prefix, now]
+                if idx is None:
+                    return
+                combo.tk.call(lb, "selection", "clear", 0, "end")
+                combo.tk.call(lb, "selection", "set", idx)
+                combo.tk.call(lb, "activate", idx)
+                combo.tk.call(lb, "see", idx)
+            except tk.TclError:
+                pass
+
+        try:
+            _lb = combo.tk.call("ttk::combobox::PopdownWindow", combo) + ".f.l"
+            combo._bind(("bind", _lb), "<KeyPress>", _jump, "+")
+        except tk.TclError:
+            pass
+        combo._rms_handlers = (_on_key, _commit, _selected, _jump)   # reachable for headless checks
 
     def _rms_row_changed(self, row):
         self._rms_row_refresh(row)
