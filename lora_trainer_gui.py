@@ -4417,7 +4417,7 @@ class LoRATrainerGUI:
                     "with no motion clips this does nothing. Off keeps every frame.")
             # Third row: the audio mod — the pack's audio RefMod, a plain encode of the folder's sound.
             self._refmod_frame3 = tk.Frame(model_card, bg=COLORS["bg_surface"])
-            tk.Label(self._refmod_frame3, text="Audio mod:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame3, text="Audio support:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_AUDIO"] = ttk.Combobox(
                 self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=56)
