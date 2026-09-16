@@ -1,6 +1,6 @@
 # Fizgig v6.0.0
 
-RefMods for MiniMax H3, made with the model in the loop — and RefMod Studio, a tab to test them before ComfyUI.
+RefMods for MiniMax H3 - Train them easily, analyse them with the Refmod Studio Tab, tweak them and use some new training modes for them.
 
 A RefMod is your reference photos saved as one small file that the [ComfyUI-MiniMaxH3Mod](https://github.com/shingo257/comfyui-minimaxh3mod) nodes (by **@shingo257**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's reference path. No training run, a file in minutes, and the basic kind needs no captions. Fizgig now makes them, and adds the one thing no other maker has: it can tune the file against H3 itself. The full guide is [RefMods — how do I…?](REFMOD_HOWDOI.md).
 
