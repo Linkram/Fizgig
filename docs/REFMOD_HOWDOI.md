@@ -1,6 +1,6 @@
 # RefMods for MiniMax H3 — "How do I…?"
 
-The companion to the README's RefMod section. A RefMod is your reference photos (or clips) saved as one small file that the [ComfyUI-MiniMaxH3Mod](https://github.com/shingo257/comfyui-minimaxh3mod) nodes (by **@shingo257**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's reference path. No training run, no captions needed for the basic kind, a file in minutes. Fizgig makes them, and adds the one thing no other maker has: it can tune the file against the H3 model itself so the person survives shots your photos never showed.
+The companion to the README's RefMod section. A RefMod is your reference photos (or clips) saved as one small file that the [ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod) nodes (by **@Luisacaotica**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's reference path. No training run, no captions needed for the basic kind, a file in minutes. Fizgig makes them, and adds the one thing no other maker has: it can tune the file against the H3 model itself so the person survives shots your photos never showed.
 
 Two places in Fizgig do RefMod work:
 

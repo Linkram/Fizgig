@@ -27975,15 +27975,15 @@ class LoRATrainerGUI:
 
         # 4. step curve
         _scr2 = _block("Change during the render  (the Step Curve node)",
-                       "Off: the same strength at every step of the render. On: concept_at_end keeps the "
+                       "Off: the same strength at every step of the render. On: concept_at_start keeps the "
                        "references strong while the picture's structure forms, then eases them off for "
-                       "the final texture steps — cleaner skin, no reference grain. concept_at_start is "
+                       "the final texture steps — cleaner skin, no reference grain. concept_at_end is "
                        "the reverse: it refines the identity at the very end. 'Amount' is how far it moves.")
         sc = saved.get("step_curve") or list(ra.DEFAULT_STEP_CURVE)
         self.rms_sc_on_var = tk.BooleanVar(value=bool(saved.get("step_on", False)))
         _son = ttk.Checkbutton(_scr2, text="On", variable=self.rms_sc_on_var, command=self._rms_curve_changed)
         _son.pack(side=tk.LEFT, padx=(0, 10))
-        _rms_tip(_son, "The Step Curve node: off = not connected. concept_at_end = full references "
+        _rms_tip(_son, "The Step Curve node: off = not connected. concept_at_start = full references "
                       "in the early (structure) steps, released toward the last (texture) steps.")
         self.rms_sc_dir_var = tk.StringVar(value=str(sc[0]) if sc[0] in ra.CURVE_DIRECTIONS else ra.DEFAULT_STEP_CURVE[0])
         self.rms_sc_shape_var = tk.StringVar(value=str(sc[1]) if sc[1] in ra.CURVE_SHAPES else ra.DEFAULT_STEP_CURVE[1])
@@ -28211,9 +28211,9 @@ class LoRATrainerGUI:
         _d = ttk.Combobox(parent, textvariable=dvar, values=list(ra.CURVE_DIRECTIONS), state="readonly", width=18)
         _d.pack(side=tk.LEFT)
         _d.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_changed())
-        _rms_tip(_d, "Where the concept shows in the OUTPUT (the mirror of the strength envelope over "
-                    "the reference's timeline): concept_at_end locks the reference early and releases "
-                    "it late; concept_at_start the reverse; middle / ends peak and trough.")
+        _rms_tip(_d, "Where the reference is strong along the timeline, as the pack names it: "
+                    "concept_at_start = full at the start, fading to nothing; concept_at_end = nothing, "
+                    "rising to full; middle / ends peak and trough.")
         ttk.Label(parent, text="shape:").pack(side=tk.LEFT, padx=(10, 2))
         _s = ttk.Combobox(parent, textvariable=svar, values=list(ra.CURVE_SHAPES), state="readonly", width=12)
         _s.pack(side=tk.LEFT)

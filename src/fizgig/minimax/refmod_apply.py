@@ -38,8 +38,12 @@ CURVE_DIRECTIONS = ("constant", "concept_at_start", "concept_at_middle",
 CURVE_SHAPES = ("linear", "ease", "sigmoid", "tanh", "quadratic", "cubic",
                 "exponential", "stair", "elastic", "bump", "dip")
 RETENTION_PRESETS = (("Full", 1.0), ("Partial", 0.7), ("Attribute", 0.4), ("Weak", 0.15))
-DEFAULT_FRAME_CURVE = ("concept_at_end", "ease", 1.0)
-DEFAULT_STEP_CURVE = ("concept_at_end", "ease", 1.0)
+# The names mean what they say (the pack, v0.2.x): concept_at_start = full strength at the
+# start of the timeline fading to nothing, concept_at_end = nothing rising to full. The default
+# envelope is the one the pack ships — strong while the structure forms, released for the
+# texture steps — which under these names is concept_at_start.
+DEFAULT_FRAME_CURVE = ("concept_at_start", "ease", 1.0)
+DEFAULT_STEP_CURVE = ("concept_at_start", "ease", 1.0)
 MAX_ROWS = 8
 MAX_COPIES = 10
 NONE_MOD = "(none)"
@@ -96,10 +100,10 @@ def curve_value_at(spec: Optional[CurveSpec], x: float) -> float:
             return value
         return _clamp01(value * ease(shape, x))
     y = ease(shape, x)
-    if direction == "concept_at_start":
-        return _clamp01(value * y)
     if direction == "concept_at_end":
-        return _clamp01(value * (1.0 - y))
+        return _clamp01(value * y)              # 0 -> value: the concept shows in the second half
+    if direction == "concept_at_start":
+        return _clamp01(value * (1.0 - y))      # value -> 0: the concept shows in the first half
     if direction == "concept_at_middle":
         return _clamp01(value * (1.0 - abs(2.0 * y - 1.0)))
     if direction == "concept_at_ends":
