@@ -32,9 +32,19 @@ def ck(name, cond, detail=""):
 
 
 # ── engine: slider x load strength, baseline at the load strength ─────────────────────────
+class FakeModule:
+    """One LoRA module as the engine sees it: a lora_name and a live multiplier."""
+    def __init__(self, name):
+        self.lora_name, self.multiplier = name, 1.0
+
+
 class FakeNet:
     def __init__(self):
         self.mult, self.enabled = {}, {}
+        # 8 I/O linears OUTSIDE the block map (first, last, t/txt MLPs, projectors) + a block one
+        self.unet_loras = [FakeModule(n) for n in ("lora_unet_first", "lora_unet_last_linear", "lora_unet_tmlp_0",
+                                                   "lora_unet_tmlp_2", "lora_unet_tproj_1", "lora_unet_txtfusion_projector",
+                                                   "lora_unet_txtmlp_1", "lora_unet_txtmlp_3", "lora_unet_blocks_3_attn_wq")]
 
     def set_module_enabled_by_pattern(self, pat, on, target="unet"):
         self.enabled[pat] = bool(on)
@@ -58,6 +68,17 @@ ck("primary: slider 0.5 x strength 0.7 -> 0.35", abs(eng.primary_network.mult[p3
 ck("primary: untouched block 1.0 x 0.7 -> 0.7", abs(eng.primary_network.mult[p0] - 0.7) < 1e-9)
 ck("donor: 2.0 x 0.25 -> 0.5", abs(eng.donor_network.mult[p3] - 0.5) < 1e-9)
 ck("all 32 blocks pushed", len(eng.primary_network.mult) == 32)
+io_names = [m.lora_name for m in eng.primary_network.unet_loras if "blocks_" not in m.lora_name]
+ck("the 8 I/O linears outside the block map get the primary load strength (0.7)",
+   len(io_names) == 8 and all(m.multiplier == 0.7 for m in eng.primary_network.unet_loras if "blocks_" not in m.lora_name),
+   str({m.lora_name: m.multiplier for m in eng.primary_network.unet_loras}))
+ck("…and the donor's get the donor load strength (0.25)",
+   all(m.multiplier == 0.25 for m in eng.donor_network.unet_loras if "blocks_" not in m.lora_name))
+eng.apply_state(SliderState.default_krea2())
+ck("a default state puts every module back to 1.0", all(m.multiplier == 1.0 for m in eng.primary_network.unet_loras)
+   and abs(eng.primary_network.mult[p3] - 1.0) < 1e-9)
+st.primary_scale, st.donor_scale = 0.7, 0.25
+eng.apply_state(st)
 
 # baseline: keyed on the load strength, rendered from a default state AT that strength
 eng.primary_path = "p.safetensors"
@@ -104,6 +125,17 @@ ck("Krea 2: editing the primary strength lands in repair_state and re-renders",
    abs(app.repair_state.primary_scale - 0.8) < 1e-9 and rendered == [1])
 app._on_repair_scale_changed()
 ck("…unchanged value does not re-render", rendered == [1])
+app.repair_state.primary_scale = 0.8
+app._repair_refresh_baseline_title()
+ck("baseline pane names the strength", app._repair_baseline_title.cget("text") == "Baseline (LoRA at 0.8)",
+   app._repair_baseline_title.cget("text"))
+app.repair_state.donor_scale = 0.5
+handed = app._repair_state_for_explorer()
+ck("Explorer handoff resets both load strengths to 1.0 (it has no strength box)",
+   handed.primary_scale == 1.0 and handed.donor_scale == 1.0 and app.repair_state.primary_scale == 0.8)
+app.repair_state.primary_scale = 1.0
+app._repair_refresh_baseline_title()
+ck("…and the default wording at 1.0", app._repair_baseline_title.cget("text") == "Baseline (LoRA at default 1.0)")
 app.repair_family_var.set("minimax")
 app._on_repair_family_changed()
 root.update()

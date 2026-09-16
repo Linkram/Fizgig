@@ -238,6 +238,14 @@ class Krea2RepairEngine:
         # is that block at the load strength. Preview-time only; the bake never applies it.
         ps = float(getattr(state, "primary_scale", 1.0))
         ds = float(getattr(state, "donor_scale", 1.0))
+        # A full Krea 2 LoRA has 8 Linears outside the 32-block map (first, last, the t/txt
+        # MLPs, the projectors): no slider reaches them, but the load strength must — or a
+        # LoRA "at 0.5" renders 256 modules at half and those 8 at full (review, 16 Sep).
+        for _net, _scale in ((self.primary_network, ps), (self.donor_network, ds)):
+            if _net is None:
+                continue
+            for _m in getattr(_net, "unet_loras", ()):
+                _m.multiplier = float(_scale)
         for bid, bs in state.blocks.items():
             try:
                 pat = block_regex_krea2(bid)

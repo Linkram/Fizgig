@@ -21219,6 +21219,38 @@ class LoRATrainerGUI:
                       "like the preview.")
         self._repair_scale_widgets.append((lbl, spin))
 
+    def _repair_state_for_explorer(self):
+        """The Repair state handed to the Explorer: the block sliders, with the load strengths
+        reset to 1.0 — the Explorer has no strength box, so a Repair strength of 0.7 would
+        otherwise scale every variant invisibly and its saved file would not match its
+        previews (review, 16 Sep 2026)."""
+        s = self.repair_state.copy()
+        if (abs(float(getattr(s, "primary_scale", 1.0)) - 1.0) > 1e-9
+                or abs(float(getattr(s, "donor_scale", 1.0)) - 1.0) > 1e-9):
+            try:
+                self.update_console("[repair] Explorer works at load strength 1.0 — the "
+                                    f"strength boxes ({float(s.primary_scale):g} / "
+                                    f"{float(s.donor_scale):g}) don't carry across.\n")
+            except Exception:
+                pass
+        s.primary_scale = 1.0
+        s.donor_scale = 1.0
+        return s
+
+    def _repair_refresh_baseline_title(self):
+        """The baseline pane names the strength it renders at (H3 and Krea 2 carry one)."""
+        lbl = getattr(self, "_repair_baseline_title", None)
+        if lbl is None:
+            return
+        ps = float(getattr(self.repair_state, "primary_scale", 1.0))
+        txt = ("Baseline (LoRA at default 1.0)" if abs(ps - 1.0) < 1e-9
+               else f"Baseline (LoRA at {ps:g})")
+        try:
+            if lbl.cget("text") != txt:
+                lbl.configure(text=txt)
+        except Exception:
+            pass
+
     def _repair_scale_controls(self, show):
         for lbl, spin in getattr(self, "_repair_scale_widgets", ()):
             if show:
@@ -24778,6 +24810,7 @@ class LoRATrainerGUI:
             # Krea 2 carries the load strengths too (16 Sep 2026): slider × scale in the engine.
             self.repair_state.primary_scale = self._repair_scale("primary")
             self.repair_state.donor_scale = self._repair_scale("donor")
+            self._repair_refresh_baseline_title()
         if self._repair_is_h3():
             # H3 renders a clip on its own canvas — the Clip row, not the square Res combo.
             # Dial renders at the dial fraction of that canvas (Confirm at the full size).
@@ -24788,6 +24821,7 @@ class LoRATrainerGUI:
             self.repair_state.preview_frames = h3_opts["frames"]
             self.repair_state.primary_scale = self._repair_scale("primary")
             self.repair_state.donor_scale = self._repair_scale("donor")
+            self._repair_refresh_baseline_title()
             self._repair_peek = None      # a slider move ends a library peek
             # The interactive render always wins the engine: if the library builder is
             # mid-render, abort its entry (it retries that block after we're done).
@@ -27188,7 +27222,7 @@ class LoRATrainerGUI:
 
         # Capture current state
         lora_path = self.repair_engine.primary_path
-        current_state = self.repair_state.copy()
+        current_state = self._repair_state_for_explorer()
         prompt = self.repair_prompt_var.get()
         seed = self.repair_seed_var.get()
         res = self.repair_res_var.get()
