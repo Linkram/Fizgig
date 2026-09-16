@@ -15636,7 +15636,13 @@ class LoRATrainerGUI:
                    command=lambda: self._browse_repair_lora(self.explorer_lora_var)).pack(side=tk.LEFT, padx=2)
         ttk.Label(btn_frame, text="Strength:").pack(side=tk.LEFT, padx=(12, 4))
         self.explorer_strength_var = tk.StringVar(value="1.0")
-        ttk.Entry(btn_frame, textvariable=self.explorer_strength_var, width=5).pack(side=tk.LEFT)
+        self._explorer_strength_entry = ttk.Entry(btn_frame, textvariable=self.explorer_strength_var, width=5)
+        self._explorer_strength_entry.pack(side=tk.LEFT)
+        ToolTip(self._explorer_strength_entry,
+                "Load strength — the strength the LoRA is meant to be used at. On Krea 2 and "
+                "MiniMax H3 this works as in Repair Studio: every block slider stays relative to "
+                "it and the saved file keeps its original scale (use it at this strength). On "
+                "Klein it sets every block slider to this value.")
         r += 1
 
         ttk.Label(setup_card, text="Prompt:").grid(row=r, column=0, sticky=tk.W, padx=(0, 10), pady=2)
@@ -15887,6 +15893,26 @@ class LoRATrainerGUI:
                 else SliderState.default_h3() if fam == "minimax"
                 else SliderState.default_klein9b())
 
+    def _explorer_strength(self) -> float:
+        """The Strength box as a float (1.0 on anything unparseable)."""
+        try:
+            return float(str(self.explorer_strength_var.get()).strip() or 1.0)
+        except (TypeError, ValueError, AttributeError):
+            return 1.0
+
+    def _explorer_apply_strength(self, state) -> None:
+        """Put the Strength box into a state. Krea 2 / H3: the LOAD strength (primary_scale —
+        the engine multiplies every slider by it, the bake never applies it; 16 Sep 2026, as in
+        Repair Studio). Klein: the old behaviour, every slider set to it (its engine has no
+        load scale)."""
+        v = self._explorer_strength()
+        if self._explorer_family() in ("krea2", "minimax"):
+            state.primary_scale = v
+            state.donor_scale = 1.0
+        else:
+            for _bid, _bs in state.blocks.items():
+                _bs.primary_strength = v
+
     def _explorer_anchor_block(self):
         """The structural-composition anchor block — never locked/disabled, only inverted/pushed.
         Klein: double_0. Krea 2: block_0. MiniMax H3: h3blk_0 (each family's first block)."""
@@ -16094,12 +16120,7 @@ class LoRATrainerGUI:
                 f"Loaded: {os.path.basename(path)} "
                 f"({n_active}/{len(self._explorer_baseline_state.blocks)} blocks). "
                 f"Click Re-roll to start exploring.")
-            try:
-                base_strength = float(self.explorer_strength_var.get())
-            except ValueError:
-                base_strength = 1.0
-            for bid, bs in self._explorer_baseline_state.blocks.items():
-                bs.primary_strength = base_strength
+            self._explorer_apply_strength(self._explorer_baseline_state)
             self._explorer_baseline_state.prompt = self.explorer_prompt_var.get()
             self._explorer_baseline_state.seed = int(self.explorer_seed_var.get() or 42)
             res = int(self.explorer_res_var.get() or 512)
@@ -16524,12 +16545,7 @@ class LoRATrainerGUI:
         if choice:
             # Yes = reset to default values
             self._explorer_baseline_state = self._explorer_default_state()
-            try:
-                base_strength = float(self.explorer_strength_var.get())
-            except ValueError:
-                base_strength = 1.0
-            for bid, bs in self._explorer_baseline_state.blocks.items():
-                bs.primary_strength = base_strength
+            self._explorer_apply_strength(self._explorer_baseline_state)
             self._explorer_baseline_state.prompt = self.explorer_prompt_var.get()
             self._explorer_baseline_state.seed = int(self.explorer_seed_var.get() or 42)
             res = int(self.explorer_res_var.get() or 512)
@@ -16575,11 +16591,9 @@ class LoRATrainerGUI:
         if self._explorer_baseline_state is None or self._explorer_generating:
             return
 
-        # Find blocks that differ from default (strength != starting strength)
-        try:
-            base_strength = float(self.explorer_strength_var.get())
-        except ValueError:
-            base_strength = 1.0
+        # Find blocks that differ from default (strength != starting strength). On Krea 2 /
+        # H3 the load strength lives in primary_scale, so a slider's neutral is 1.0.
+        base_strength = self._explorer_strength() if self._explorer_family() == "klein" else 1.0
 
         tweaked = set()
         for bid, bs in self._explorer_baseline_state.blocks.items():
@@ -21220,20 +21234,17 @@ class LoRATrainerGUI:
         self._repair_scale_widgets.append((lbl, spin))
 
     def _repair_state_for_explorer(self):
-        """The Repair state handed to the Explorer: the block sliders, with the load strengths
-        reset to 1.0 — the Explorer has no strength box, so a Repair strength of 0.7 would
-        otherwise scale every variant invisibly and its saved file would not match its
-        previews (review, 16 Sep 2026)."""
+        """The Repair state handed to the Explorer: the block sliders plus the primary's load
+        strength, which also lands in the Explorer's Strength box so what the Explorer shows
+        and what the user sees agree (16 Sep 2026)."""
         s = self.repair_state.copy()
-        if (abs(float(getattr(s, "primary_scale", 1.0)) - 1.0) > 1e-9
-                or abs(float(getattr(s, "donor_scale", 1.0)) - 1.0) > 1e-9):
-            try:
-                self.update_console("[repair] Explorer works at load strength 1.0 — the "
-                                    f"strength boxes ({float(s.primary_scale):g} / "
-                                    f"{float(s.donor_scale):g}) don't carry across.\n")
-            except Exception:
-                pass
-        s.primary_scale = 1.0
+        # The primary's load strength carries into the Explorer's Strength box (it means the
+        # same thing there on Krea 2 / H3); the donor's has nowhere to go — the Explorer works
+        # on the primary alone, so the copied state drops it.
+        ps = float(getattr(s, "primary_scale", 1.0))
+        if hasattr(self, "explorer_strength_var"):
+            self.explorer_strength_var.set(f"{ps:g}")
+        s.primary_scale = ps
         s.donor_scale = 1.0
         return s
 

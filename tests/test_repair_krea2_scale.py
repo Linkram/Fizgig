@@ -131,8 +131,27 @@ ck("baseline pane names the strength", app._repair_baseline_title.cget("text") =
    app._repair_baseline_title.cget("text"))
 app.repair_state.donor_scale = 0.5
 handed = app._repair_state_for_explorer()
-ck("Explorer handoff resets both load strengths to 1.0 (it has no strength box)",
-   handed.primary_scale == 1.0 and handed.donor_scale == 1.0 and app.repair_state.primary_scale == 0.8)
+ck("Explorer handoff carries the primary load strength into the Explorer's Strength box and the state; the donor's is dropped",
+   handed.primary_scale == 0.8 and handed.donor_scale == 1.0 and app.explorer_strength_var.get() == "0.8"
+   and app.repair_state.primary_scale == 0.8)
+
+# the Explorer's own Strength box: load strength on Krea 2 / H3, slider value on Klein
+app.explorer_family_var.set("krea2")
+app.explorer_strength_var.set("0.6")
+xs = app._explorer_default_state()
+app._explorer_apply_strength(xs)
+ck("Explorer Krea 2: Strength -> primary_scale, every slider stays 1.0",
+   xs.primary_scale == 0.6 and all(b.primary_strength == 1.0 for b in xs.blocks.values()))
+app.explorer_family_var.set("minimax")
+xs = app._explorer_default_state()
+app._explorer_apply_strength(xs)
+ck("Explorer H3: the same", xs.primary_scale == 0.6 and all(b.primary_strength == 1.0 for b in xs.blocks.values()))
+app.explorer_family_var.set("klein")
+xs = app._explorer_default_state()
+app._explorer_apply_strength(xs)
+ck("Explorer Klein: old behaviour — sliders at 0.6, no load scale",
+   xs.primary_scale == 1.0 and all(b.primary_strength == 0.6 for b in xs.blocks.values()))
+app.explorer_strength_var.set("1.0")
 app.repair_state.primary_scale = 1.0
 app._repair_refresh_baseline_title()
 ck("…and the default wording at 1.0", app._repair_baseline_title.cget("text") == "Baseline (LoRA at default 1.0)")
