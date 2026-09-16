@@ -470,7 +470,7 @@ def refmod_step_loss(dit, mod: torch.Tensor, latents: torch.Tensor, text: torch.
     return F.mse_loss(pred.float(), (x0 - noise).float()), float(sigma.reshape(-1)[0])
 
 
-DEFAULT_LR = 2.5e-4   # Peter, 16 Sep 2026 (the 10 Sep measurement ran at 1e-3 with every reference in every step)
+DEFAULT_LR = 1e-3
 DEFAULT_PULL = 2.0
 DEFAULT_SIGMA_RANGE = (0.2, 0.8)
 
@@ -478,7 +478,7 @@ DEFAULT_SIGMA_RANGE = (0.2, 0.8)
 def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = DEFAULT_LR,
                     pull: float = DEFAULT_PULL, device="cuda", dtype=torch.bfloat16, seed: int = 42,
                     uncond_text: Optional[torch.Tensor] = None, uncond_frac: float = 0.1,
-                    warmup: int = 20, log_every: int = 10, on_step=None,
+                    warmup: int = 0, log_every: int = 10, on_step=None,
                     target: Optional[torch.Tensor] = None, shared_epoch=None,
                     sigma_range=DEFAULT_SIGMA_RANGE, ref_subset: int = 0,
                     ref_pool: Optional[list] = None) -> torch.Tensor:
@@ -491,7 +491,7 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
     mod. 0 = every reference every step (the 10 Sep 2026 measurement).
 
     Defaults are the measured recipe (mbacc photos, 10 Sep 2026, ref2va, Full canvas, 4 seeds,
-    ArcFace vs the dataset): lr 1e-3 (now 2.5e-4 by default), pull 2.0, noise window 0.2-0.8 put every seed at or
+    ArcFace vs the dataset): lr 1e-3, pull 2.0, noise window 0.2-0.8 put every seed at or
     above the raw encode on portrait prompts (70 vs 66) and +5.5 on four off-dataset scene
     prompts (58.7 vs 53.2). lr 5e-3 / pull 0.5 on H3's full shift-12 density LOST fidelity
     (55): at the top of that schedule the loss is about global structure, and pushing the
@@ -543,8 +543,8 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
             text = batch["hidden_states"].to(device, dtype)
             if uncond_text is not None and random.random() < uncond_frac:
                 text = uncond_text.to(device, dtype)
-            # linear warm-up, then flat — the mod starts ON the data, a full stride at step 0
-            # is the one thing that reliably breaks it
+            # full rate from step 0 (Peter, 16 Sep 2026 — the 20-step warm-up of the 10 Sep
+            # recipe is off; warmup > 0 brings it back)
             for g in opt.param_groups:
                 g["lr"] = lr * min(1.0, (step + 1) / float(max(1, warmup)))
             if k_sub:
@@ -896,7 +896,7 @@ def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype,
     while done < steps:
         n = min(preview_every, steps - done)
         mod = optimize_refmod(dit, group, mod, steps=n, lr=lr, pull=pull, device=device, dtype=dtype,
-                              seed=seed + k, uncond_text=uncond_text, warmup=(20 if k == 0 else 1),
+                              seed=seed + k, uncond_text=uncond_text, warmup=0,
                               target=mod0, sigma_range=sigma_range, ref_subset=ref_subset,
                               ref_pool=ref_pool)
         done += n
