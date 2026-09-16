@@ -1,4 +1,4 @@
-# Fizgig v5.9.0
+# Fizgig v6.0.0
 
 RefMods for MiniMax H3, made with the model in the loop — and RefMod Studio, a tab to test them before ComfyUI.
 
