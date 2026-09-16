@@ -28223,54 +28223,59 @@ class LoRATrainerGUI:
         names = [ra.NONE_MOD] + list(self._rms_mod_meta)
         bg = COLORS["bg_surface"]
         fr = tk.Frame(self._rms_rows_frame, bg=bg)
-        fr.grid(sticky=tk.EW, pady=(0, 4))
+        fr.grid(sticky=tk.EW, pady=(0, 8))
         row = {"frame": fr}
+        # Line 1: the mod, its strength, copies, remove.
         row["on_var"] = tk.BooleanVar(value=bool(saved.get("on", True)))
         ttk.Checkbutton(fr, variable=row["on_var"], command=lambda: self._rms_row_changed(row)).grid(row=0, column=0)
         row["mod_var"] = tk.StringVar(value=str(saved.get("mod", ra.NONE_MOD)))
         row["mod_combo"] = ttk.Combobox(fr, textvariable=row["mod_var"], values=names, width=self._rms_picker_width(names))
-        row["mod_combo"].grid(row=0, column=1, padx=(2, 6))
+        row["mod_combo"].grid(row=0, column=1, padx=(2, 6), sticky=tk.W)
         self._rms_make_searchable(row["mod_combo"], lambda: self._rms_row_changed(row))
         row["value_var"] = tk.DoubleVar(value=float(saved.get("value", 1.0)))
         row["slider_lbl"] = tk.Label(fr, text="Strength:", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
         row["slider_lbl"].grid(row=0, column=2, padx=(4, 2))
         _sf = tk.Frame(fr, bg=bg)
-        _sf.grid(row=0, column=3)
+        _sf.grid(row=0, column=3, sticky=tk.W)
         row["scale"] = ttk.Scale(_sf, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=150, variable=row["value_var"],
                                  command=lambda v, rw=row: self._rms_row_moved(rw))
         row["scale"].pack(side=tk.LEFT)
         row["value_str"] = tk.StringVar(value=f"{row['value_var'].get():.2f}")
         _ve = ttk.Entry(_sf, textvariable=row["value_str"], width=6)
-        _ve.pack(side=tk.LEFT, padx=(4, 4))
+        _ve.pack(side=tk.LEFT, padx=(4, 0))
         _ve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
         _ve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
-        # plain row: blank; compare row: says which way the slider is leaning, live
-        row["axis_lbl"] = tk.Label(_sf, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, width=24, anchor=tk.W)
-        row["axis_lbl"].pack(side=tk.LEFT)
         _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored). With a mod picked under "
                                "'Compare against', the same slider becomes a lean: left of centre leans to this mod, "
                                "right of centre to the other, the distance from centre is the strength.")
-        ttk.Label(fr, text="Copies:").grid(row=0, column=5, padx=(8, 2))
+        ttk.Label(fr, text="Copies:").grid(row=0, column=4, padx=(12, 2))
         row["copies_var"] = tk.StringVar(value=str(int(saved.get("copies", 1))))
         _cs = ttk.Spinbox(fr, from_=1, to=ra.MAX_COPIES, width=3, textvariable=row["copies_var"],
                           command=lambda rw=row: self._rms_row_changed(rw))
-        _cs.grid(row=0, column=6)
+        _cs.grid(row=0, column=5, sticky=tk.W)
         _cs.bind("<FocusOut>", lambda e, rw=row: self._rms_row_changed(rw))
         _rms_tip(_cs, "The same reference repeated in the bundle — 2–3 is the pack's sweet spot for a "
                      "stronger pull; every copy costs its full tokens.")
-        ttk.Label(fr, text="Compare against:").grid(row=0, column=7, padx=(14, 2))
+        _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
+        _x.grid(row=0, column=6, padx=(12, 0))
+        # Line 2: the optional second mod, and — once one is picked — what the slider now means.
+        ttk.Label(fr, text="Compare against (optional):", foreground=COLORS["text_secondary"]
+                  ).grid(row=1, column=1, sticky=tk.W, padx=(2, 0), pady=(3, 0))
+        _bf = tk.Frame(fr, bg=bg)
+        _bf.grid(row=1, column=2, columnspan=5, sticky=tk.W, pady=(3, 0))
         row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
-        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
-        row["b_combo"].grid(row=0, column=8)
+        row["b_combo"] = ttk.Combobox(_bf, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
+        row["b_combo"].pack(side=tk.LEFT)
         self._rms_make_searchable(row["b_combo"], lambda: self._rms_row_changed(row))
         _rms_tip(row["b_combo"], "Optional. Pick a second mod and the row becomes the pack's Axis node: the "
                                 "Strength slider turns into a lean between the two — drag left to lean to the "
                                 "first mod, right to the second; how far is how strongly. Leave at (none) for a "
                                 "plain mod at a strength.")
-        _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
-        _x.grid(row=0, column=9, padx=(10, 0))
+        row["axis_lbl"] = tk.Label(_bf, text="", font=(FONT_FAMILY, 10), fg=COLORS["accent"], bg=bg, anchor=tk.W)
+        row["axis_lbl"].pack(side=tk.LEFT, padx=(10, 0))
+        # Line 3: what each picked mod is.
         row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
-        row["info"].grid(row=1, column=1, columnspan=9, sticky=tk.W, pady=(0, 2))
+        row["info"].grid(row=2, column=1, columnspan=6, sticky=tk.W, pady=(0, 2))
         self._rms_rows.append(row)
         for var in (row["mod_var"], row["b_var"]):
             if var.get() not in names:
@@ -28304,8 +28309,9 @@ class LoRATrainerGUI:
             return ""
         v = float(row["value_var"].get())
         if abs(v) < 0.005:
-            return "centre — neither"
-        return f"◀ to the first mod {abs(v):.2f}" if v < 0 else f"to the second mod {v:.2f} ▶"
+            return "slider at centre — leans to neither"
+        return (f"◀ slider leans to the first mod, {abs(v):.2f}" if v < 0
+                else f"slider leans to this second mod, {v:.2f} ▶")
 
     def _rms_row_moved(self, row):
         row["value_str"].set(f"{float(row['value_var'].get()):+.2f}" if self._rms_row_is_axis(row)
