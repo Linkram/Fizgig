@@ -152,6 +152,37 @@ app._explorer_apply_strength(xs)
 ck("Explorer Klein: old behaviour — sliders at 0.6, no load scale",
    xs.primary_scale == 1.0 and all(b.primary_strength == 0.6 for b in xs.blocks.values()))
 app.explorer_strength_var.set("1.0")
+
+# second-review pins: handoffs keep the family, a live edit re-applies on Krea 2 / H3, clamp, memory
+ck("handoff family passes through (H3 stays H3, Krea 2 stays Krea 2, anything else -> Klein)",
+   app._handoff_family("minimax") == "minimax" and app._handoff_family("krea2") == "krea2"
+   and app._handoff_family("klein") == "klein" and app._handoff_family("") == "klein")
+app.explorer_family_var.set("krea2")
+app._explorer_engine = None
+app._explorer_baseline_state = app._explorer_default_state()
+app.explorer_strength_var.set("0.75")
+app._on_explorer_strength_changed()
+ck("Krea 2: editing the Strength box after load re-applies to the baseline (sliders untouched)",
+   app._explorer_baseline_state.primary_scale == 0.75
+   and all(b.primary_strength == 1.0 for b in app._explorer_baseline_state.blocks.values()))
+ck("…and the state text names the load strength",
+   "Load strength 0.75" in app._explorer_state_text.get("1.0", tk.END))
+app.explorer_family_var.set("klein")
+app._explorer_baseline_state = app._explorer_default_state()
+app.explorer_strength_var.set("0.5")
+app._on_explorer_strength_changed()
+ck("Klein: a live edit leaves the baseline alone (old contract: Load / Restart only)",
+   app._explorer_baseline_state.primary_scale == 1.0
+   and all(b.primary_strength == 1.0 for b in app._explorer_baseline_state.blocks.values()))
+app.explorer_strength_var.set("7")
+ck("Strength box clamps to [0, 2] like Repair's", app._explorer_strength() == 2.0)
+app.explorer_strength_var.set("1.0")
+ck("the Explorer strength is remembered across restarts",
+   ("explorer_strength_var", "explorer_strength") in G.LoRATrainerGUI._WORKBENCH_REMEMBER)
+src_h3 = open(os.path.join(ROOT, "src", "fizgig", "repair_studio", "h3_engine.py"), encoding="utf-8").read()
+ck("H3 engine: baseline and still-preview cache keys carry the scales",
+   src_h3.count('round(float(getattr(state, "primary_scale", 1.0)), 4)') >= 2
+   and "base.primary_scale = float(getattr(state, \"primary_scale\", 1.0))" in src_h3)
 app.repair_state.primary_scale = 1.0
 app._repair_refresh_baseline_title()
 ck("…and the default wording at 1.0", app._repair_baseline_title.cget("text") == "Baseline (LoRA at default 1.0)")

@@ -1092,7 +1092,9 @@ class H3RepairEngine:
         # blocks / 8 steps). Kept for programmatic use and as the base for a future
         # multi-step-aware cache; _turbo_enabled stays False for previews.
         cache_key = (self.primary_path, self.donor_path, int(seed), prompt,
-                     width, height, frames)
+                     width, height, frames,
+                     round(float(getattr(state, "primary_scale", 1.0)), 4),
+                     round(float(getattr(state, "donor_scale", 1.0)), 4))
         ctx = None
         if self._turbo_enabled and override_ctx is None and seed_b is None:
             resume = None
@@ -1582,7 +1584,9 @@ class H3RepairEngine:
         (primary_path, seed, prompt, w, h) — slider tweaks don't invalidate it."""
         from fizgig.repair_studio.state import SliderState
         key = (self.primary_path, state.seed, state.prompt,
-               state.preview_width, state.preview_height)
+               state.preview_width, state.preview_height,
+               round(float(getattr(state, "primary_scale", 1.0)), 4),
+               round(float(getattr(state, "donor_scale", 1.0)), 4))
         if self._baseline_cache_key == key and self._baseline_cache_image is not None:
             return self._baseline_cache_image
         base = SliderState.default_h3()
@@ -1590,6 +1594,9 @@ class H3RepairEngine:
         base.prompt = state.prompt
         base.preview_width = state.preview_width
         base.preview_height = state.preview_height
+        # The baseline is the LoRA at its LOAD strength with every slider at 1.0.
+        base.primary_scale = float(getattr(state, "primary_scale", 1.0))
+        base.donor_scale = float(getattr(state, "donor_scale", 1.0))
         img = self.generate_preview(base)
         self._baseline_cache_key = key
         self._baseline_cache_image = img

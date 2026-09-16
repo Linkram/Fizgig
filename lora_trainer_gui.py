@@ -2443,6 +2443,7 @@ class LoRATrainerGUI:
         ("explorer_intensity_var", "explorer_intensity"),
         ("explorer_mutations_var", "explorer_mutations"),
         ("explorer_structure_var", "explorer_structure"),
+        ("explorer_strength_var", "explorer_strength"),
     ]
 
     def _restore_workbench_setup_fields(self):
@@ -15638,6 +15639,8 @@ class LoRATrainerGUI:
         self.explorer_strength_var = tk.StringVar(value="1.0")
         self._explorer_strength_entry = ttk.Entry(btn_frame, textvariable=self.explorer_strength_var, width=5)
         self._explorer_strength_entry.pack(side=tk.LEFT)
+        self._explorer_strength_entry.bind("<Return>", lambda e: self._on_explorer_strength_changed())
+        self._explorer_strength_entry.bind("<FocusOut>", lambda e: self._on_explorer_strength_changed())
         ToolTip(self._explorer_strength_entry,
                 "Load strength — the strength the LoRA is meant to be used at. On Krea 2 and "
                 "MiniMax H3 this works as in Repair Studio: every block slider stays relative to "
@@ -15896,11 +15899,38 @@ class LoRATrainerGUI:
                 else SliderState.default_klein9b())
 
     def _explorer_strength(self) -> float:
-        """The Strength box as a float (1.0 on anything unparseable)."""
+        """The Strength box as a float, clamped to [0, 2] like Repair's (1.0 on anything
+        unparseable)."""
         try:
-            return float(str(self.explorer_strength_var.get()).strip() or 1.0)
+            return max(0.0, min(2.0, float(str(self.explorer_strength_var.get()).strip() or 1.0)))
         except (TypeError, ValueError, AttributeError):
             return 1.0
+
+    @staticmethod
+    def _handoff_family(fam) -> str:
+        """The family a Repair <-> Explorer handoff lands on: the same one. (Used to collapse
+        MiniMax H3 to Klein — an H3 LoRA on the Klein engine, review 16 Sep 2026.)"""
+        fam = str(fam or "")
+        return fam if fam in ("krea2", "minimax") else "klein"
+
+    def _on_explorer_strength_changed(self):
+        """Strength box edited with a LoRA loaded: on Krea 2 / H3 the baseline takes the new
+        load strength and re-renders, as Repair Studio does. Klein keeps the old contract —
+        the box fills the sliders at Load / Restart only, so a mid-session edit must not
+        overwrite explored tweaks."""
+        st = getattr(self, "_explorer_baseline_state", None)
+        if st is None or self._explorer_family() == "klein":
+            return
+        v = self._explorer_strength()
+        if abs(float(getattr(st, "primary_scale", 1.0)) - v) < 1e-9:
+            return
+        self._explorer_apply_strength(st)
+        try:
+            self._explorer_update_state_text(st)
+        except Exception:
+            pass
+        if self._explorer_engine is not None and not getattr(self, "_explorer_generating", False):
+            self._explorer_generate_baseline_and_roll()
 
     def _explorer_apply_strength(self, state) -> None:
         """Put the Strength box into a state. Krea 2 / H3: the LOAD strength (primary_scale —
@@ -16353,6 +16383,9 @@ class LoRATrainerGUI:
                 lines.append(f"{bid}: {en} @ {bs.primary_strength:+.2f}{lock}")
         if not lines:
             lines = ["All blocks at default (1.0)"]
+        ps = float(getattr(state, "primary_scale", 1.0))
+        if abs(ps - 1.0) > 1e-9:
+            lines.insert(0, f"Load strength {ps:g} (every block relative to it; the saved file keeps its scale)")
         self._explorer_state_text.configure(state="normal")
         self._explorer_state_text.delete("1.0", tk.END)
         self._explorer_state_text.insert("1.0", "\n".join(lines))
@@ -16712,13 +16745,16 @@ class LoRATrainerGUI:
 
         # Handoff inherits the Explorer's family — switch Repair Studio to match (rebuilds the
         # slider panel for the right block layout so the value-push loop below finds the block ids).
-        target_family = "krea2" if self._explorer_is_krea2() else "klein"
+        target_family = self._handoff_family(self._explorer_family())
         if hasattr(self, "repair_family_var") and self.repair_family_var.get() != target_family:
             self.repair_family_var.set(target_family)
             self._on_repair_family_changed()
 
-        # Set the LoRA path in Repair Studio
+        # Set the LoRA path in Repair Studio — and the load strength, which means the same
+        # thing in both tabs on Krea 2 / H3 (Repair reads its box at render).
         self.repair_primary_var.set(lora_path)
+        if target_family != "klein" and hasattr(self, "repair_primary_scale_var"):
+            self.repair_primary_scale_var.set(f"{float(getattr(baseline, 'primary_scale', 1.0)):g}")
 
         # Unload Explorer engine to free VRAM
         self._unload_explorer_models()
@@ -16782,9 +16818,13 @@ class LoRATrainerGUI:
             summary = save_repaired_lora(primary_path, self._explorer_baseline_state, out)
             _fmt_note = ("\n\nSaved natively in LyCORIS format — lossless, no conversion."
                          if summary.get('format_out') == 'lycoris' else "")
+            _ps = float(getattr(self._explorer_baseline_state, "primary_scale", 1.0))
+            _scale_note = (f"\n\nUse it at strength {_ps:g} — the file keeps its original scale, "
+                           "as the previews were rendered at that load strength."
+                           if abs(_ps - 1.0) > 1e-9 else "")
             messagebox.showinfo("Explored LoRA saved",
                                 f"Saved: {out}\n\nKeys: {summary['keys_in']} -> {summary['keys_out']}"
-                                + _fmt_note)
+                                + _fmt_note + _scale_note)
         except UnsupportedLoRAFormat as ex:
             messagebox.showerror("Unsupported LoRA format", str(ex))
         except Exception:
@@ -27256,11 +27296,11 @@ class LoRATrainerGUI:
 
         # Handoff inherits the Repair Studio's family — switch the Explorer to match (so it loads
         # the right engine + hides the DiT radio/ref-strength for krea2).
-        target_family = "krea2" if self.repair_family_var.get() == "krea2" else "klein"
+        target_family = self._handoff_family(self.repair_family_var.get())
         if self.explorer_family_var.get() != target_family:
             self.explorer_family_var.set(target_family)
             self.last_used["explorer_family"] = target_family
-            self._apply_explorer_family_ui(target_family == "krea2")
+            self._apply_explorer_family_ui(target_family != "klein")
 
         # Switch to Explorer tab
         self.notebook.select(self.explorer_tab)
