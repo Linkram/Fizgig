@@ -4433,28 +4433,32 @@ class LoRATrainerGUI:
                     "as the visual mod (components: Audio) or on its own. Needs the Audio VAE path in "
                     "Preferences. RefMod Studio renders visual mods only; audio mods play in ComfyUI. "
                     "The pack's own tests carried music across but not a speaker's voice.")
-            tk.Label(self._refmod_frame3, text="Kind:", font=(FONT_FAMILY, 10),
+            # Kind and Up-to belong to an audio mod: shown only while Audio support is on.
+            self._refmod_audio_opts = tk.Frame(self._refmod_frame3, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_audio_opts, text="Kind:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"] = ttk.Combobox(
-                self._refmod_frame3, values=list(REFMOD_AUDIO_CONCEPT_OPTIONS), state="readonly", width=12)
+                self._refmod_audio_opts, values=list(REFMOD_AUDIO_CONCEPT_OPTIONS), state="readonly", width=12)
             _ac = str(self.settings.get("MINIMAX_REFMOD_AUDIO_CONCEPT", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO_CONCEPT"]))
             self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"].set(_ac if _ac in REFMOD_AUDIO_CONCEPT_OPTIONS else REFMOD_AUDIO_CONCEPT_OPTIONS[0])
             self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"].pack(side=tk.LEFT)
             ToolTip(self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"],
                     "What the sound is, in the pack's terms: voice, singing, music_style, sound_fx, ambience. "
                     "Stored in the file as its concept type.")
-            tk.Label(self._refmod_frame3, text="Up to:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_audio_opts, text="Up to:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"] = ttk.Combobox(
-                self._refmod_frame3, values=list(REFMOD_AUDIO_SECONDS_OPTIONS), width=5)
+                self._refmod_audio_opts, values=list(REFMOD_AUDIO_SECONDS_OPTIONS), width=5)
             self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_AUDIO_SECONDS", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO_SECONDS"])))
             self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"].pack(side=tk.LEFT)
-            tk.Label(self._refmod_frame3, text="seconds", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_audio_opts, text="seconds", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(6, 0))
             ToolTip(self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"],
                     "How much sound goes in, from the start of the folder's files. Every 1/40 s costs 2 "
                     "tokens at generation: 30 s is 2,400 tokens, the pack's default length.")
+            self.entries["MINIMAX_REFMOD_AUDIO"].bind("<<ComboboxSelected>>", lambda e: self._refmod_audio_opts_refresh())
+            self._refmod_audio_opts_refresh()
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
@@ -6176,6 +6180,12 @@ class LoRATrainerGUI:
 
     def _apply_preset_values(self, preset):
         """Apply preset values to the UI (shared by load_default_preset and load_custom_preset)"""
+        try:
+            return self._apply_preset_values_inner(preset)
+        finally:
+            getattr(self, "_refmod_audio_opts_refresh", lambda: None)()
+
+    def _apply_preset_values_inner(self, preset):
         # A preset or Load-Settings-From-Last-Train snapshot written before the Training mode
         # dropdown (10 Sep 2026) carries the old Optimised Likeness boolean, whose key no longer
         # exists in self.entries — without this the whole choice is dropped in silence and the
@@ -7913,6 +7923,21 @@ class LoRATrainerGUI:
             return per, per * max(1, int(float(r)))
         except ValueError:
             return per, per * 8
+
+    def _refmod_audio_opts_refresh(self):
+        """Kind / Up-to shown only while Audio support is on (hidden, not greyed)."""
+        fr = getattr(self, "_refmod_audio_opts", None)
+        box = self.entries.get("MINIMAX_REFMOD_AUDIO") if hasattr(self, "entries") else None
+        if fr is None or box is None:
+            return
+        try:
+            on = refmod_audio_on(box.get())
+            if on and not fr.winfo_manager():
+                fr.pack(side=tk.LEFT)
+            elif not on and fr.winfo_manager():
+                fr.pack_forget()
+        except tk.TclError:
+            pass
 
     def _refresh_refmod_tokens(self):
         lbl = getattr(self, "_refmod_tokens_lbl", None)
