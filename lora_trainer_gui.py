@@ -4259,8 +4259,8 @@ class LoRATrainerGUI:
                 wraplength=760, justify=tk.LEFT,
             )
             self._minimax_sample_note.pack(anchor=tk.W, pady=(10, 0))
-            if not self._is_minimax_arch():
-                self._minimax_sample_note.pack_forget()
+            if not self._is_minimax_arch() or self._is_refmod_arch():
+                self._minimax_sample_note.pack_forget()   # RefMod has no previews
 
             # MiniMax H3 RefMod: the whole job is two dropdowns, shown here in place of the
             # Training-tab sections (which _apply_refmod_visibility hides). Registered in
@@ -8275,7 +8275,7 @@ class LoRATrainerGUI:
         # selector when that family is picked, hide it otherwise.
         _note = getattr(self, "_minimax_sample_note", None)
         if _note is not None:
-            if is_minimax:
+            if is_minimax and not self._is_refmod_arch():   # RefMod has no previews
                 if not _note.winfo_manager():
                     _note.pack(anchor=tk.W, pady=(10, 0))
             elif _note.winfo_manager():
