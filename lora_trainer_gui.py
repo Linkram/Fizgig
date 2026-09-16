@@ -4324,30 +4324,33 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_REFS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_REFS", REFMOD_DEFAULTS["MINIMAX_REFMOD_REFS"])))
             self.entries["MINIMAX_REFMOD_REFS"].pack(side=tk.LEFT)
-            tk.Label(self._refmod_frame, text="Steps:", font=(FONT_FAMILY, 10),
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            # Live token estimate: what the references cost at generation, against the node
+            # pack's default extractor cap (5,120). A readout, not the Clip token cap below.
+            self._refmod_tokens_lbl = tk.Label(self._refmod_frame, text="", font=(FONT_FAMILY, 9),
+                                               fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
+            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 0))
+            # Second line of the row (16 Sep 2026: one line ran past the window's minimum width).
+            self._refmod_frame1b = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_frame1b, text="Steps:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
-                self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), width=40)
+                self._refmod_frame1b, values=list(REFMOD_STEP_OPTIONS), width=40)
             self.entries["MINIMAX_REFMOD_STEPS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_DEFAULTS["MINIMAX_REFMOD_STEPS"])))
             self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT)
-            # Live token estimate against the node pack's default extractor cap (5,120).
-            self._refmod_tokens_lbl = tk.Label(self._refmod_frame, text="", font=(FONT_FAMILY, 9),
-                                               fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
-            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 18))
             # Target Megapixels: the SAME variable as the Dataset section's control (hidden under
             # RefMod) — the one MiniMax default Peter wants in view here (10 Sep 2026); the
             # references are encoded at this resolution.
-            tk.Label(self._refmod_frame, text="Target MP:", font=(FONT_FAMILY, 10),
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            tk.Label(self._refmod_frame1b, text="Target MP:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self._refmod_mp_combo = ttk.Combobox(
-                self._refmod_frame, textvariable=self.dataset_megapixels_var,
+                self._refmod_frame1b, textvariable=self.dataset_megapixels_var,
                 values=["0.25", "0.37", "0.5", "0.75", "1.0"], width=6, state="readonly")
             self._refmod_mp_combo.pack(side=tk.LEFT)
-            tk.Label(self._refmod_frame, text="Clips:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame1b, text="Clips:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_CLIPS"] = ttk.Combobox(
-                self._refmod_frame, values=list(REFMOD_CLIPS_OPTIONS), state="readonly", width=26)
+                self._refmod_frame1b, values=list(REFMOD_CLIPS_OPTIONS), state="readonly", width=26)
             self.entries["MINIMAX_REFMOD_CLIPS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_CLIPS", REFMOD_DEFAULTS["MINIMAX_REFMOD_CLIPS"])))
             self.entries["MINIMAX_REFMOD_CLIPS"].pack(side=tk.LEFT)
@@ -4416,6 +4419,7 @@ class LoRATrainerGUI:
             self._refmod_std_hint = None
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
+                self._refmod_frame1b.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_frame2.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
 
@@ -7852,12 +7856,14 @@ class LoRATrainerGUI:
                 getattr(self, "dataset_megapixels_var", None) and self.dataset_megapixels_var.get())
             cap = self.REFMOD_TOKEN_CAP
             if total is None:
-                lbl.config(text=f"≈ {per:,} tokens per reference (standard cap {cap:,} ≈ {max(1, cap // per)} refs)",
+                lbl.config(text=f"≈ {per:,} tokens per reference at generation "
+                                f"(the pack's {cap:,} default fits {max(1, cap // per)})",
                            fg=COLORS["text_secondary"])
             else:
                 over = total > cap
-                lbl.config(text=f"≈ {total:,} tokens ({per:,} per ref; standard cap {cap:,}"
-                                + (" — OVER" if over else "") + ")",
+                lbl.config(text=f"≈ {total:,} tokens at generation ({per:,} per reference"
+                                + (f"; above the pack's {cap:,} default, slower at every step)" if over
+                                   else f"; under the pack's {cap:,} default)"),
                            fg=COLORS["warning"] if over else COLORS["text_secondary"])
         except Exception:
             pass
@@ -8612,17 +8618,17 @@ class LoRATrainerGUI:
                 _note = getattr(self, "_minimax_sample_note", None)
                 _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
                 _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
-                _fr2 = getattr(self, "_refmod_frame2", None)
-                if _fr2 is not None:
-                    _fr2.pack(anchor=tk.W, pady=(6, 0), **_kw)
+                for _frx in (getattr(self, "_refmod_frame1b", None), getattr(self, "_refmod_frame2", None)):
+                    if _frx is not None:
+                        _frx.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
                 if _std is not None:
                     _std.pack(anchor=tk.W, pady=(6, 0), **_kw)
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
-                _fr2 = getattr(self, "_refmod_frame2", None)
-                if _fr2 is not None:
-                    _fr2.pack_forget()
+                for _frx in (getattr(self, "_refmod_frame1b", None), getattr(self, "_refmod_frame2", None)):
+                    if _frx is not None:
+                        _frx.pack_forget()
                 _hint.pack_forget()
                 if _std is not None:
                     _std.pack_forget()
