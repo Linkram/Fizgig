@@ -155,7 +155,7 @@ class ToolTip:
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
 
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT, wraplength=520,   # long tips wrap, never run off the screen
                         background=COLORS["bg_surface"], foreground=COLORS["text_primary"],
                         relief=tk.SOLID, borderwidth=1,
                         font=(FONT_FAMILY, self.size), padx=8, pady=6)
