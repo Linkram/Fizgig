@@ -817,28 +817,9 @@ BUILT_IN_PRESETS = {
 # ships a single sensible-defaults entry. Users can still save their own via Save Preset —
 # those land in the per-architecture preset folder and appear alongside this one.
 KREA2_BUILT_IN_PRESETS = {
-    "✨ Krea 2 Defaults (rank 32, full model)": {
-        "NETWORK_DIM": 32, "NETWORK_ALPHA": 32, "NETWORK_TYPE": "LoRA (standard)",
-        "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 64, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
-        "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
-        "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
-        "OPTIMIZER_TYPE": "adamw8bit",
-        "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
-        "DATASET_MEGAPIXELS": "0.25",
-        # Memory settings all auto — each resolves from the actual GPU at launch.
-        # BLOCKS_SWAP must be the combobox's exact label: _apply_preset_values matches a
-        # preset value against the offered options on its first token, case-sensitively,
-        # so a bare "auto" would not select "Auto (detect from GPU)".
-        "BLOCKS_SWAP": "Auto (detect from GPU)",
-        "QUANT_4BIT_MODE": "auto", "COMPILE_BLOCKS": "Auto",
-        # Per-image loss watch: detection + the LR throttle on, the two interventions that
-        # rewrite captions or pre-judge images left off — those want a deliberate choice.
-        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True,
-        "KREA2_AUTO_RECAPTION": False, "KREA2_WARMUP_LOOK": False,
-    },
-    # Rank 8 + Adaptive LR at an aggressive floor: fewer epochs to a usable LoRA. Everything
-    # else identical to Krea 2 Defaults (which stays the preset applied on family switch).
+    # THE DEFAULT (applied on the first visit to Krea 2 — first entry wins): rank 8 with
+    # Adaptive LR at an aggressive floor. Rank 8 is more than enough for a character on a
+    # 12.9B model and lands the right result more reliably than 32 (Peter, 16 Sep 2026).
     "✨ Krea 2 Ultra Fast (rank 8, adaptive LR)": {
         "NETWORK_DIM": 8, "NETWORK_ALPHA": 8, "NETWORK_TYPE": "LoRA (standard)",
         "LEARNING_RATE": 1e-4,
@@ -869,6 +850,26 @@ KREA2_BUILT_IN_PRESETS = {
     #
     # Fewer epochs (15) because style overbakes fast, and on Krea 2 that shows up as
     # generations dragging toward the training set's COMPOSITIONS, not just its look —
+    "✨ Krea 2 Standard (rank 32, full model)": {
+        "NETWORK_DIM": 32, "NETWORK_ALPHA": 32, "NETWORK_TYPE": "LoRA (standard)",
+        "LEARNING_RATE": 1e-4,
+        "MAX_TRAIN_EPOCHS": 64, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
+        "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
+        "OPTIMIZER_TYPE": "adamw8bit",
+        "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
+        "DATASET_MEGAPIXELS": "0.25",
+        # Memory settings all auto — each resolves from the actual GPU at launch.
+        # BLOCKS_SWAP must be the combobox's exact label: _apply_preset_values matches a
+        # preset value against the offered options on its first token, case-sensitively,
+        # so a bare "auto" would not select "Auto (detect from GPU)".
+        "BLOCKS_SWAP": "Auto (detect from GPU)",
+        "QUANT_4BIT_MODE": "auto", "COMPILE_BLOCKS": "Auto",
+        # Per-image loss watch: detection + the LR throttle on, the two interventions that
+        # rewrite captions or pre-judge images left off — those want a deliberate choice.
+        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True,
+        "KREA2_AUTO_RECAPTION": False, "KREA2_WARMUP_LOOK": False,
+    },
     # so save every epoch and scrub for the sweet spot in LoRA Royale.
     "✨ Krea 2 Style (rank 16, gentle LR)": {
         "NETWORK_DIM": 16, "NETWORK_ALPHA": 16, "NETWORK_TYPE": "LoRA (standard)",
@@ -11968,7 +11969,7 @@ class LoRATrainerGUI:
         #
         # Naming a preset without applying it is a lie the user acts on: switching to Krea 2
         # left Klein's 55 epochs / rank 16 sitting in the fields while the dropdown read
-        # "Krea 2 Defaults (rank 32, full model)". Those values don't transfer — Klein's
+        # "Krea 2 Standard (rank 32, full model)". Those values don't transfer — Klein's
         # rank/epoch/block-targeting recipe is meaningless for Krea 2.
         #
         # Per-family memory: first visit to a family gets its default preset, every later

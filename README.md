@@ -86,7 +86,7 @@ Distil any Klein, Krea 2 or MiniMax H3 LoRA to a lower rank — Fast presets run
 
 ## Krea 2 — second model family
 
-A from-scratch native port: 12.9B single-stream MMDiT, Qwen-Image VAE, Qwen3-VL-4B text encoder. Train on the **RAW model**; previews render on the training model itself with the official Turbo LoRA (auto-downloads) applied for the render only. Pick Krea 2 from the **Base Model selector** on the Training tab and the **✨ Krea 2 Defaults** preset applies itself.
+A from-scratch native port: 12.9B single-stream MMDiT, Qwen-Image VAE, Qwen3-VL-4B text encoder. Train on the **RAW model**; previews render on the training model itself with the official Turbo LoRA (auto-downloads) applied for the render only. Pick Krea 2 from the **Base Model selector** on the Training tab and the **✨ Krea 2 Standard** preset applies itself.
 
 Everything works on Krea 2: all five workbench tools, **Pause/Resume**, **Context LoRA**, **Adaptive LR**, reference images, the live sample override — **Weight averaging (EMA)** on by default at 0.98 (checkpoints and previews come from a running average of the adapter's recent steps; measured on both families, it lifts late-epoch likeness and steadies the epochs), and **LoKR training** (pick it from Network Type, factor 8 or below, and drop the learning rate to 5e-5 whichever preset you started from — or, with Adaptive LR, set Min 5e-5 and Max 1e-4; standard LoRA is ~20% faster and stays the default). Output is ComfyUI-ready.
 
