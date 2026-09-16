@@ -1098,16 +1098,6 @@ REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
 }
 REFMOD_BUILT_IN_PRESETS = {
-    # Measured 10 Sep 2026: the Full-canvas mod with 16 references is the strongest file
-    # (portraits 70 vs 60 for 8), and 200 optimisation steps add ~5 on top. A companion LoRA
-    # in the same file was tried in eleven configurations and never lifted likeness beyond
-    # noise while dropping portraits ~10 (pose drift) — removed 14 Sep 2026.
-    "✨ RefMod — Fizgig recipe (Full reference, 16 refs, optimised)": {
-        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
-        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
-        **REFMOD_DEFAULTS,
-        "MINIMAX_CLIP_STILL": True,
-    },
     # The community recipe (16 Sep 2026): the node pack's own extractor path — encode mode (no
     # optimisation), full-resolution references, under its 8 192-token cap (8 references at
     # 1 MP ~ 8 000 tokens). Same photos as the Fizgig recipe, for a fair comparison.
@@ -1117,6 +1107,16 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "8",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "DATASET_MEGAPIXELS": "1.0",
+        "MINIMAX_CLIP_STILL": True,
+    },
+    # Measured 10 Sep 2026: the Full-canvas mod with 16 references is the strongest file
+    # (portraits 70 vs 60 for 8), and 200 optimisation steps add ~5 on top. A companion LoRA
+    # in the same file was tried in eleven configurations and never lifted likeness beyond
+    # noise while dropping portraits ~10 (pose drift) — removed 14 Sep 2026.
+    "✨ RefMod — Fizgig recipe (Full reference, 16 refs, optimised)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
     },
     # Library match (16 Sep 2026): what the most-downloaded RefMod library's files actually
@@ -1724,8 +1724,8 @@ class LoRATrainerGUI:
     def __init__(self, master):
         self.master = master
         master.title("Fizgig — Klein 9B & Krea 2 LoRA Studio")
-        master.geometry("1450x1124")  # wide enough that the IDLE/BUSY light clears the last tab ("Preferences") with the Metadata tab in the strip; +100 height for the bottom status bar
-        master.minsize(1180, 900)  # keeps the tab row clear of the status light + tab content not cut off
+        master.geometry("1580x1124")  # wide enough that the IDLE/BUSY light clears the last tab ("Preferences") with the Metadata tab in the strip; +130 for the RefMod Studio tab (16 Sep 2026: 105 px of bold 11pt text + 12 px padding each side); +100 height for the bottom status bar
+        master.minsize(1310, 900)  # keeps the tab row clear of the status light + tab content not cut off
         master.configure(bg=BG_COLOR)
         # Closing the window must not orphan a training subprocess: Tk's default destroy
         # exits the interpreter but the trainer runs in its own process (no job object on
@@ -4288,56 +4288,19 @@ class LoRATrainerGUI:
                 pass
             self._refresh_refmod_tokens()
 
+            # One line (Peter, 16 Sep 2026: no walls of text here — the README has the detail).
             self._refmod_hint = tk.Label(
                 model_card,
-                text=("A RefMod is your references saved as a file the ComfyUI-MiniMaxH3Mod "
-                      "nodes load like a LoRA. Fizgig builds it from the dataset's photos and "
-                      "clip stills (photos first), then does what no other maker does: with the "
-                      "H3 base loaded and frozen, Steps of the ordinary training loss tune the "
-                      "mod itself toward what makes H3 reproduce the subject across your "
-                      "captions. Measured: the Full mod with 16 references is the strongest "
-                      "file (likeness at the level of a second real photo), and 200 steps lift "
-                      "it further on portraits and on scenes the references never showed. "
-                      "Grid: Full keeps every reference at its latent size on the first "
-                      "reference's canvas — the only setting that carries a face; the pooled "
-                      "grids are small, stackable, concept-level mods. References: how many "
-                      "stills stack into the mod. Steps: 0 is the plain encode, the same file "
-                      "the node pack's extractor makes. Each optimisation step rides one reference "
-                      "(random, from those with a large face in frame) on the NF4 base, so the steps "
-                      "stay quick whatever the count. Target MP sizes the references; with "
-                      "Steps above 0 the optimiser's own stills are always cached at 0.25 MP "
-                      "(a second, lighter pass), the measured recipe. Output: <name>.safetensors in the LoRA "
-                      "output folder — copy it to ComfyUI/models/refmods/ and load it with "
-                      "Load H3 RefMods → Apply H3 RefMod. No previews here: judge the mod in "
-                      "RefMod Studio. Mods ride H3's Reference (ref2va) model — Training Base "
-                      "switches to it here, and that is the model to load in ComfyUI with the mod."),
+                text=("Steps 0 writes the plain encode (no captions needed). Steps above 0 optimise the "
+                      "mod against H3: level on shots like your photos, well ahead on looks they never "
+                      "showed, cleaner skin in both. Output: <name>.safetensors in the LoRA output folder "
+                      "→ copy to ComfyUI/models/refmods/."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
-            # The standard node pack's own defaults and ranges (ComfyUI-MiniMaxH3Mod, Extract /
-            # Load nodes, read from its source 10 Sep 2026), so every dial above can be judged
-            # against what a regular RefMod is.
-            self._refmod_std_hint = tk.Label(
-                model_card,
-                text=("Standard RefMod for comparison (ComfyUI-MiniMaxH3Mod Extract node): "
-                      "up to 16 images + 8 videos per mod; mode 'training' (pooled) by default, "
-                      "'encode' (full) is what its README says to use for people; reference "
-                      "resolution 1024 px short edge (range 256-2048); pool grid 16×16 "
-                      "(range 2-64, must be even; the README says pool 32 at least for a "
-                      "face); its 'identity' refinement 500 model-free steps (0-2000) — not "
-                      "the same thing as Steps here, which run against the H3 model; token cap "
-                      "5,120 (0 = off, max 65,536). Load node: strength 0-1 (its retention "
-                      "presets: 1.0 fully preserved, 0.7 partially, 0.4 attribute transfer, "
-                      "0.15 weak), copies 1-10. Popular settings: encode at 1024 with 8-20 "
-                      "images for a character; pooled 16×16 for a concept or motion to stack "
-                      "with others. Here: Full = their encode at your dataset's resolution "
-                      "(0.25 MP ≈ 240 tokens per reference, 8 references ≈ 1,900 tokens); "
-                      "16×16 = their pooled default; References 16 = their per-mod maximum."),
-                font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"],
-                bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
+            self._refmod_std_hint = None
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
-                self._refmod_std_hint.pack(anchor=tk.W, pady=(6, 0))
 
         # === Presets card ===
         preset_card = self._start_section_card(
