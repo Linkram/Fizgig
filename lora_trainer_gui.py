@@ -7677,6 +7677,16 @@ class LoRATrainerGUI:
     def _is_refmod_arch(self) -> bool:
         return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_refmod", False)
 
+    def _refmod_plain_encode(self) -> bool:
+        """RefMod at Steps 0: a plain encode of the references. Nothing trains, so the run
+        needs no captions and no text-encoder caches — the launch path reads this to skip
+        both the caption check and the text-encoder stage (Peter, 16 Sep 2026)."""
+        if not self._is_refmod_arch():
+            return False
+        _e = self.entries.get("MINIMAX_REFMOD_STEPS")
+        _raw = _e.get() if _e is not None else self.settings.get("MINIMAX_REFMOD_STEPS", "")
+        return refmod_steps_value(_raw) == "0"
+
     REFMOD_TOKEN_CAP = 5120      # the node pack's Extract default max_tokens
 
     def refmod_token_estimate(self, grid_label, refs_label, megapixels):
@@ -30383,7 +30393,9 @@ class LoRATrainerGUI:
         # last pointed at — silently, under this run's name.
         if image_dir and not os.path.isdir(image_dir):
             errors.append(f"Training image folder does not exist: {image_dir}")
-        if image_dir and os.path.isdir(image_dir) and caption_ext:
+        # A RefMod plain encode (Steps 0) trains nothing and reads no captions — the photos
+        # alone are the references — so the caption check does not apply to it.
+        if image_dir and os.path.isdir(image_dir) and caption_ext and not self._refmod_plain_encode():
             import glob as _glob
             # glob.escape is load-bearing here: a folder like "[subject] photos" made this
             # find zero captions and block training with "No caption files found", while the
@@ -30842,6 +30854,13 @@ class LoRATrainerGUI:
                 self.run_subprocess(command, "Training", on_training_complete)
 
             def on_cache_preparation_complete():
+                if config.get("is_refmod") and self._refmod_plain_encode():
+                    # Steps 0: the references are the latent caches alone — no captions are
+                    # read and no text-encoder cache is needed, so that stage is skipped.
+                    self.update_console("Cache preparation completed.\nPlain encode — no captions "
+                                        "needed, skipping text encoder caching.\nStarting...\n")
+                    self.run_subprocess(command, "Training", on_training_complete)
+                    return
                 self.update_console("Cache preparation completed.\nStarting text encoder caching...\n")
                 self.run_subprocess(cache_text_cmd, "Text Encoder Caching", on_text_encoder_caching_complete)
 
@@ -31300,6 +31319,9 @@ class LoRATrainerGUI:
             # re-encodes only the clips that have no pick yet.
             if self.settings.get("MINIMAX_CLIP_STILL"):
                 cmd += ["--clip_still"]
+            # A RefMod plain encode takes every image, captioned or not (nothing trains).
+            if config.get("is_refmod") and self._refmod_plain_encode():
+                cmd += ["--captions_optional"]
             return cmd
         arch = self.settings["ARCHITECTURE"]
         python_path = self._venv_python()

@@ -572,6 +572,12 @@ class BucketBatchManager:
 class ImageDirectoryDatasource:
     """Loads images (and optional control images) from a directory on disk."""
 
+    # A job that never trains (the RefMod plain encode) has no use for captions: with this set
+    # on the CLASS before the dataset is built, every image is taken whether or not a caption
+    # file sits beside it, and a missing caption reads as "". Training paths leave it False —
+    # there the caption filter is what keeps an uncaptioned stray out of the run.
+    captions_optional: bool = False
+
     def __init__(
         self,
         image_directory: str,
@@ -589,7 +595,8 @@ class ImageDirectoryDatasource:
 
         logger.info(f"glob images in {self.image_directory}")
         self.image_paths = glob_images(self.image_directory,
-                                       caption_extension=self.caption_extension,
+                                       caption_extension=(None if self.captions_optional
+                                                          else self.caption_extension),
                                        extra_extensions=self.extra_extensions)
         _clips = sum(1 for p in self.image_paths
                      if os.path.splitext(p)[1].lower() in {e.lower() for e in VIDEO_EXTENSIONS})
@@ -714,6 +721,8 @@ class ImageDirectoryDatasource:
     def get_caption(self, idx: int) -> Tuple[str, str]:
         image_path = self.image_paths[idx]
         caption_path = os.path.splitext(image_path)[0] + self.caption_extension if self.caption_extension else ""
+        if self.captions_optional and not (caption_path and os.path.isfile(caption_path)):
+            return image_path, ""
         with open(caption_path, "rb") as f:
             raw = f.read()
         return image_path, decode_caption(raw, caption_path).strip()

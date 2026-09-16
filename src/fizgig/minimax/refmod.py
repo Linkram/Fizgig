@@ -632,14 +632,21 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
 
     # dataset (stills; clip stills as photos so every clip lends its sharpest face)
     ImageDataset.clip_still_as_photo = True
+    # Steps 0 is a plain encode: nothing trains, so no captions and no text-encoder caches are
+    # needed — the references are the latent caches alone. The training set (which needs both)
+    # is only built when there are steps to run on it.
+    trains = steps > 0
+    if not trains:
+        from fizgig.dataset.image_dataset import ImageDirectoryDatasource
+        ImageDirectoryDatasource.captions_optional = True
     user_config = load_user_config(dataset_config)
     blueprint = BlueprintGenerator(ConfigSanitizer()).generate(
         user_config, argparse.Namespace(), architecture=ARCHITECTURE_MINIMAX)
     shared_epoch = Value("i", 0)
     group = generate_dataset_group_by_blueprint(
-        blueprint.dataset_group, training=True, num_timestep_buckets=None, shared_epoch=shared_epoch)
+        blueprint.dataset_group, training=trains, num_timestep_buckets=None, shared_epoch=shared_epoch)
     group._fizgig_shared_epoch = shared_epoch
-    if group.num_train_items == 0:
+    if trains and group.num_train_items == 0:
         raise RuntimeError("No training items — run the MiniMax cache steps first.")
     cache_dirs = [getattr(ds, "cache_directory", "") for ds in group.datasets]
     refs = collect_refs(cache_dirs, max_refs=max_refs)
@@ -706,8 +713,13 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
 
     tags = [f"{n_img} img, {n_st} clip stills", "fizgig"]
 
-    dit, base_mode, n_swap = plan_and_load_dit(dit_path, device=device, dtype=dtype,
-                                               base_quant=base_quant, blocks_to_swap=blocks_to_swap, mp=mp)
+    if trains or encoded:
+        dit, base_mode, n_swap = plan_and_load_dit(dit_path, device=device, dtype=dtype,
+                                                   base_quant=base_quant, blocks_to_swap=blocks_to_swap, mp=mp)
+    else:
+        # plain encode, no previews: the model is never touched
+        dit, base_mode, n_swap = None, "none", 0
+        logger.info("[refmod] plain encode — no steps and no previews, so the H3 base is not loaded")
     decoder = None
     if vae_path and encoded:
         from safetensors import safe_open

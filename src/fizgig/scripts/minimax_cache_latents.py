@@ -44,6 +44,9 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num_workers", type=int, default=None, help="Number of workers")
     parser.add_argument("--skip_existing", action="store_true", help="Skip existing cache files")
     parser.add_argument("--keep_cache", action="store_true", help="Keep stale cache files")
+    parser.add_argument("--captions_optional", action="store_true",
+                        help="take every image, captioned or not (a job that never trains — the "
+                             "RefMod plain encode — has no use for captions)")
     parser.add_argument("--clip_still", action="store_true",
                         help="For every clip, also pick its sharpest frame that shows a face and "
                              "cache it as a still (the 'clip still as a photo' training item). "
@@ -61,6 +64,10 @@ def main():
     logger.info(f"Loading dataset config from {args.dataset_config}")
     user_config = load_user_config(args.dataset_config)
     blueprint = blueprint_gen.generate(user_config, args, architecture=ARCHITECTURE_MINIMAX)
+    if args.captions_optional:
+        from fizgig.dataset.image_dataset import ImageDirectoryDatasource
+        ImageDirectoryDatasource.captions_optional = True
+        logger.info("[cache] captions optional — every image is taken, captioned or not")
     datasets = generate_dataset_group_by_blueprint(blueprint.dataset_group).datasets
 
     logger.info(f"Loading H3 video VAE from {args.vae}")
