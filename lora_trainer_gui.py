@@ -1124,7 +1124,7 @@ REFMOD_BUILT_IN_PRESETS = {
     },
     # The same recipe at 0.5 MP references: half the tokens per reference at generation
     # (~8,000 for 16, the library's budget) for a lighter file (Peter, 16 Sep 2026).
-    "✨ RefMod — Fizgig recipe light (Full reference, 16 refs at 0.5 MP, optimised)": {
+    "✨ RefMod — Fizgig recipe lite (Full reference, 16 refs at 0.5 MP, optimised)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         **REFMOD_DEFAULTS,
