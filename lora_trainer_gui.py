@@ -15871,7 +15871,9 @@ class LoRATrainerGUI:
         self._explorer_gallery_frame.columnconfigure(1, weight=1)
 
         # Apply the persisted family (krea2 hides the DiT radio + ref Strength).
-        self._apply_explorer_family_ui(str(self.explorer_family_var.get()) == "krea2")
+        # "not Klein", like the click handler: a restored MiniMax H3 family used to fall through
+        # to the Klein layout and show the Distilled/Base radio (Peter, 16 Sep 2026).
+        self._apply_explorer_family_ui(str(self.explorer_family_var.get()) != "klein")
 
         self._add_youtube_help_button(outer, "explorer")
 
