@@ -154,7 +154,7 @@ colour into the render.
 
 A **RefMod** is a MiniMax H3 reference saved as a file: the reference images run once through the video VAE and stored as a small `.safetensors` that the [ComfyUI-MiniMaxH3Mod](https://github.com/shingo257/comfyui-minimaxh3mod) nodes (by **@shingo257**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's Reference-to-Video path. Every maker of them, that pack included, is a VAE encode with optional pooling: nothing in the file has met the model.
 
-Fizgig makes them with the model in the loop. Pick **MiniMax H3 RefMod** in the Base Model selector and the Training tab becomes Output plus a short card. Two presets ship: the **Fizgig recipe** (Full reference, 16 references, optimised against the model) and the **community recipe** (plain encode, 8 references at 1 MP — the settings the popular RefMod library was made with), so you can make the same photos both ways and compare. The card is:
+Fizgig makes them with the model in the loop. Pick **MiniMax H3 RefMod** in the Base Model selector and the Training tab becomes Output plus a short card. Three presets ship: the **Fizgig recipe** (Full reference, 16 references, optimised against the model), the **community recipe** (plain encode, 8 references at 1 MP — the node pack's own extractor path under its token cap) and **library match** (plain encode, 20 references at 0.25 MP — what the files in the popular RefMod library actually contain, read from their headers), so you can make the same photos all three ways and compare. The card is:
 
 | Control | What it does |
 |---|---|
