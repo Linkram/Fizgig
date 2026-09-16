@@ -11,7 +11,7 @@ Two places in Fizgig do RefMod work:
 
 ## How do I make a RefMod?
 
-1. On the **Start** tab, point Fizgig at a folder of photos of the person (or clips — see "clips" below). The usual Image Prep face crops are ideal: the face large in frame, consistent quality.
+1. On the **Start** tab, point Fizgig at a folder of photos of the person. Photos are the main event: a folder of good stills makes the best mod. Clips work too, as stills or as motion, and their sound can go into an audio mod (both below). Prepare clips with **Gizmo** first, the way you would for H3 training: it cuts them to H3's frame grid at the right size, and its mute option marks the clips whose sound you do not want. The usual Image Prep face crops are ideal: the face large in frame, consistent quality.
 2. On the **Training** tab, pick **MiniMax H3 RefMod** in the Base Model selector. The tab shrinks to Output plus one card.
 3. Pick a preset from **Load Preset** (see the next answer). The card fills in.
 4. Set the **Output Directory** to your ComfyUI `models/refmods` folder. It is remembered per model family, so you only do this once, and every mod lands ready to load.
