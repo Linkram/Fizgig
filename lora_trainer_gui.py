@@ -1119,19 +1119,6 @@ REFMOD_BUILT_IN_PRESETS = {
         **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
     },
-    # Library match (16 Sep 2026): what the most-downloaded RefMod library's files actually
-    # contain — read from their headers, 60 sampled: every one a plain encode of 19-24 stacked
-    # references, 512x512 px (a 32x32 latent, 256 tokens each) in 50 of the 60, so ~5 600
-    # tokens. Fewer pixels per face than the community recipe, more faces. Here so the same
-    # photos can be made the library's way and the resolution effect measured, not argued.
-    "✨ RefMod — library match (plain encode, 20 refs at 0.25 MP)": {
-        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
-        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
-        "MINIMAX_REFMOD_REFS": "20",
-        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
-        "DATASET_MEGAPIXELS": "0.25",
-        "MINIMAX_CLIP_STILL": True,
-    },
 }
 
 
