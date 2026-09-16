@@ -470,7 +470,7 @@ def refmod_step_loss(dit, mod: torch.Tensor, latents: torch.Tensor, text: torch.
     return F.mse_loss(pred.float(), (x0 - noise).float()), float(sigma.reshape(-1)[0])
 
 
-DEFAULT_LR = 1e-3
+DEFAULT_LR = 5e-3   # trial (Peter, 16 Sep 2026): 5x the 10 Sep rate, flat, no warm-up, pull unchanged
 DEFAULT_PULL = 2.0
 DEFAULT_SIGMA_RANGE = (0.2, 0.8)
 

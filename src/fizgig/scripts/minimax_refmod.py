@@ -40,7 +40,7 @@ def setup_parser():
                    help="references each optimisation step rides, picked at random from the ones "
                         "with a large face in frame (default 1 — one reference beside the still "
                         "keeps the step small enough to skip recompute on a 32 GB card; 0 = all)")
-    p.add_argument("--lr", type=float, default=1e-3, help="latent-space AdamW rate (default 1e-3, measured; no warm-up)")
+    p.add_argument("--lr", type=float, default=5e-3, help="latent-space AdamW rate (default 5e-3, flat, no warm-up)")
     p.add_argument("--pull", type=float, default=2.0,
                    help="weight of the L2 pull toward the initial encode (default 2.0, measured)")
     p.add_argument("--max_refs", type=int, default=16, help="references stacked into the mod (default 16, measured)")
