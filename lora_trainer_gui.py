@@ -27804,16 +27804,11 @@ class LoRATrainerGUI:
         _br.grid(row=r, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
         self._rms_load_btn = ttk.Button(_br, text="Load base", width=12, command=self._rms_load)
         self._rms_load_btn.pack(side=tk.LEFT)
-        self._rms_render_btn = ttk.Button(_br, text="▶ Render", width=12, command=self._rms_render)
-        self._rms_render_btn.pack(side=tk.LEFT, padx=(6, 0))
-        _rms_tip(self._rms_render_btn, "Render No mod (once per setup, cached) and With mods at the "
-                                      "current rows / retention / curves. Loads the base first if needed.")
-        self._rms_cancel_btn = ttk.Button(_br, text="Cancel", width=8, command=self._rms_cancel, state="disabled")
-        self._rms_cancel_btn.pack(side=tk.LEFT, padx=(6, 0))
+        _rms_tip(self._rms_load_btn, "Load the model into VRAM once; Render does this for you if you skip it.")
         _ub = ttk.Button(_br, text="Unload", width=8, command=self._rms_unload)
         _ub.pack(side=tk.LEFT, padx=(6, 0))
         _rms_tip(_ub, "Free the base from VRAM (it also unloads when you leave the tab).")
-        self.rms_status_var = tk.StringVar(value="Ready — pick a RefMod folder below, then Load base.")
+        self.rms_status_var = tk.StringVar(value="Ready — check the folder above, set up your mods, then Render in the Preview card.")
         tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10),
                  fg=COLORS["text_secondary"], bg=COLORS["bg_surface"], anchor=tk.W
                  ).pack(side=tk.LEFT, padx=(14, 0), fill=tk.X, expand=True)
@@ -27847,26 +27842,38 @@ class LoRATrainerGUI:
         # ── Card 3: Apply ──────────────────────────────────────────────────────────────
         apply_card = self._start_section_card(
             outer, "Apply",
-            "How the mods are applied while the clip renders. Retention is a master strength over "
-            "every row: 1.0 uses the references in full, lower softens them (each is blended toward "
-            "a blurred copy of itself), 0 switches them off. Scramble seed shuffles which references "
-            "lead, so a different one leads each render. Frame curve fades a video mod's own frames "
-            "up or down along its length (a still mod has one frame and ignores it). Step curve "
-            "changes the reference strength as the picture forms: strong early locks composition "
-            "and identity and easing off late gives cleaner texture; strong late refines the identity "
-            "at the end. The graphs show both curves as you set them.")
-        apply_card.columnconfigure(1, weight=1)
+            "How the mods are applied while the picture renders. Each control below is one setting "
+            "on the pack's Apply and Step Curve nodes — the node name is in the heading.")
+        apply_card.columnconfigure(0, weight=1)
         r = 0
-        ttk.Label(apply_card, text="Retention:").grid(row=r, column=0, sticky=tk.W, pady=2)
-        _rr = tk.Frame(apply_card, bg=COLORS["bg_surface"])
-        _rr.grid(row=r, column=1, sticky=tk.W, pady=2)
+
+        def _block(title, text):
+            """A heading, a plain-English line under it, then a frame for the control."""
+            nonlocal r
+            tk.Label(apply_card, text=title, font=(FONT_FAMILY, 11, "bold"), fg=COLORS["text_primary"],
+                     bg=COLORS["bg_surface"], anchor=tk.W).grid(row=r, column=0, sticky=tk.W, pady=(10, 0))
+            r += 1
+            tk.Label(apply_card, text=text, font=(FONT_FAMILY, 10), fg=COLORS["text_explain"],
+                     bg=COLORS["bg_surface"], wraplength=900, justify=tk.LEFT, anchor=tk.W
+                     ).grid(row=r, column=0, sticky=tk.W, pady=(0, 4))
+            r += 1
+            fr_ = tk.Frame(apply_card, bg=COLORS["bg_surface"])
+            fr_.grid(row=r, column=0, sticky=tk.W, pady=(0, 2))
+            r += 1
+            return fr_
+
+        # 1. strength
+        _rr = _block("Strength  (the Apply node's Retention)",
+                     "How much of the references reaches the picture. 1.0 uses them exactly as stored. "
+                     "0.7 keeps most of it. 0.4 keeps the look and frees the scene (the pack calls this "
+                     "'attribute transfer'). 0 switches them off. It multiplies every row's own slider.")
         self.rms_retention_var = tk.DoubleVar(value=float(saved.get("retention", 1.0)))
         self.rms_retention_str = tk.StringVar(value=f"{self.rms_retention_var.get():.2f}")
-        _rs = ttk.Scale(_rr, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=180,
+        _rs = ttk.Scale(_rr, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=220,
                         variable=self.rms_retention_var, command=lambda v: self._rms_retention_moved())
         _rs.pack(side=tk.LEFT)
         _re = ttk.Entry(_rr, textvariable=self.rms_retention_str, width=5)
-        _re.pack(side=tk.LEFT, padx=(6, 8))
+        _re.pack(side=tk.LEFT, padx=(6, 10))
         _re.bind("<Return>", lambda e: self._rms_retention_typed())
         _re.bind("<FocusOut>", lambda e: self._rms_retention_typed())
         for name, val in ra.RETENTION_PRESETS:
@@ -27876,55 +27883,71 @@ class LoRATrainerGUI:
         _rms_tip(_rs, "A master multiplier on every row's strength: 1.0 keeps the references as "
                      "stored; 0.4 ('attribute transfer') keeps the look and frees the scene; "
                      "0 injects nothing.")
-        r += 1
-        ttk.Label(apply_card, text="Scramble seed:").grid(row=r, column=0, sticky=tk.W, pady=2)
-        _scr = tk.Frame(apply_card, bg=COLORS["bg_surface"])
-        _scr.grid(row=r, column=1, sticky=tk.W, pady=2)
+
+        # 2. shuffle
+        _scr = _block("Shuffle  (the Apply node's Scramble seed)",
+                      "Which reference leads. Off keeps your row order. Any seed shuffles the bundle and "
+                      "keeps a random half or more of it, so a different seed puts a different reference "
+                      "first and a different detail comes through. Only matters with more than one entry.")
         self.rms_scramble_var = tk.StringVar(value=str(saved.get("scramble", "-1")))
+        ttk.Label(_scr, text="Seed:").pack(side=tk.LEFT, padx=(0, 4))
         _sce = ttk.Entry(_scr, textvariable=self.rms_scramble_var, width=12)
         _sce.pack(side=tk.LEFT)
         _sce.bind("<FocusOut>", lambda e: self._rms_persist())
-        ttk.Button(_scr, text="🎲", width=3, command=self._rms_random_scramble).pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Button(_scr, text="Off", width=4, command=lambda: (self.rms_scramble_var.set("-1"), self._rms_persist())
+        ttk.Button(_scr, text="🎲 Random", width=10, command=self._rms_random_scramble).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(_scr, text="Off", width=5, command=lambda: (self.rms_scramble_var.set("-1"), self._rms_persist())
                    ).pack(side=tk.LEFT, padx=(4, 0))
         _rms_tip(_sce, "-1 = off. A seed ≥ 0 shuffles the bundle and keeps a random 50–100% of it — "
                       "which reference sits first changes what 'pops'. Needs more than one entry.")
-        r += 1
-        # curves: two rows of combos + one canvas
-        ttk.Label(apply_card, text="Frame curve:").grid(row=r, column=0, sticky=tk.W, pady=2)
-        _fcr = tk.Frame(apply_card, bg=COLORS["bg_surface"])
-        _fcr.grid(row=r, column=1, sticky=tk.W, pady=2)
+
+        # 3. frame curve
+        _fcr = _block("Fade across the clip  (the Apply node's Frame curve — video mods only)",
+                      "How strongly a video mod's own frames apply along its length. A still mod has one "
+                      "frame and ignores this. 'Where' is which part of the mod carries the strength, "
+                      "'shape' is how it moves between them, 'amount' is how far it fades — 1.0 all the "
+                      "way, 0 flat.")
         fc = saved.get("frame_curve") or list(ra.DEFAULT_FRAME_CURVE)
         self.rms_fc_dir_var = tk.StringVar(value=str(fc[0]) if fc[0] in ra.CURVE_DIRECTIONS else ra.DEFAULT_FRAME_CURVE[0])
         self.rms_fc_shape_var = tk.StringVar(value=str(fc[1]) if fc[1] in ra.CURVE_SHAPES else ra.DEFAULT_FRAME_CURVE[1])
         self.rms_fc_value_var = tk.DoubleVar(value=float(fc[2]))
         self._rms_curve_combos(_fcr, self.rms_fc_dir_var, self.rms_fc_shape_var, self.rms_fc_value_var)
-        r += 1
-        ttk.Label(apply_card, text="Step curve:").grid(row=r, column=0, sticky=tk.W, pady=2)
-        _scr2 = tk.Frame(apply_card, bg=COLORS["bg_surface"])
-        _scr2.grid(row=r, column=1, sticky=tk.W, pady=2)
+
+        # 4. step curve
+        _scr2 = _block("Change during the render  (the Step Curve node)",
+                       "Off: the same strength at every step of the render. On: concept_at_end keeps the "
+                       "references strong while the picture's structure forms, then eases them off for "
+                       "the final texture steps — cleaner skin, no reference grain. concept_at_start is "
+                       "the reverse: it refines the identity at the very end. 'Amount' is how far it moves.")
         sc = saved.get("step_curve") or list(ra.DEFAULT_STEP_CURVE)
         self.rms_sc_on_var = tk.BooleanVar(value=bool(saved.get("step_on", False)))
         _son = ttk.Checkbutton(_scr2, text="On", variable=self.rms_sc_on_var, command=self._rms_curve_changed)
-        _son.pack(side=tk.LEFT, padx=(0, 6))
+        _son.pack(side=tk.LEFT, padx=(0, 10))
         _rms_tip(_son, "The Step Curve node: off = not connected. concept_at_end = full references "
                       "in the early (structure) steps, released toward the last (texture) steps.")
         self.rms_sc_dir_var = tk.StringVar(value=str(sc[0]) if sc[0] in ra.CURVE_DIRECTIONS else ra.DEFAULT_STEP_CURVE[0])
         self.rms_sc_shape_var = tk.StringVar(value=str(sc[1]) if sc[1] in ra.CURVE_SHAPES else ra.DEFAULT_STEP_CURVE[1])
         self.rms_sc_value_var = tk.DoubleVar(value=float(sc[2]))
         self._rms_curve_combos(_scr2, self.rms_sc_dir_var, self.rms_sc_shape_var, self.rms_sc_value_var)
+
+        # 5. the graph
+        tk.Label(apply_card, text="Both curves as set — left to right is the mod's frames (top) and the "
+                                  "render's steps (bottom); height is reference strength.",
+                 font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 wraplength=900, justify=tk.LEFT, anchor=tk.W).grid(row=r, column=0, sticky=tk.W, pady=(12, 2))
         r += 1
         self._rms_curve_canvas = tk.Canvas(apply_card, width=560, height=150, bg=COLORS["bg_deep"],
                                            highlightthickness=0)
-        self._rms_curve_canvas.grid(row=r, column=0, columnspan=2, sticky=tk.W, pady=(6, 2))
+        self._rms_curve_canvas.grid(row=r, column=0, sticky=tk.W, pady=(0, 2))
         r += 1
-        _pr = tk.Frame(apply_card, bg=COLORS["bg_surface"])
-        _pr.grid(row=r, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
-        ttk.Label(_pr, text="Curve preset:").pack(side=tk.LEFT)
+
+        # 6. presets
+        _pr = _block("Curve presets",
+                     "Save the two curves under a name to use again, or load one. Import reads a curve "
+                     "from one of the pack's graph preset images.")
         self.rms_curve_preset_var = tk.StringVar(value="")
         self._rms_curve_preset_combo = ttk.Combobox(_pr, textvariable=self.rms_curve_preset_var,
                                                     values=self._rms_curve_presets(), state="readonly", width=22)
-        self._rms_curve_preset_combo.pack(side=tk.LEFT, padx=(4, 4))
+        self._rms_curve_preset_combo.pack(side=tk.LEFT, padx=(0, 4))
         self._rms_curve_preset_combo.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_preset_load())
         ttk.Button(_pr, text="Save…", width=7, command=self._rms_curve_preset_save).pack(side=tk.LEFT)
         ttk.Button(_pr, text="Delete", width=7, command=self._rms_curve_preset_delete).pack(side=tk.LEFT, padx=(4, 0))
@@ -27956,18 +27979,38 @@ class LoRATrainerGUI:
             lbl.bind("<Button-1>", lambda e, s=side: self._rms_open_preview(s))
             h.bind("<Configure>", lambda e, s=side: self._rms_schedule_redraw(s))
             self._rms_holders[side], self._rms_labels[side] = h, lbl
+        # Two ways to render, each on its own line with a sentence saying which is which
+        # (Peter, 16 Sep 2026: two render buttons with no explanation read as a mistake).
         _sw = tk.Frame(prev, bg=COLORS["bg_surface"])
-        _sw.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(4, 2))
-        ttk.Label(_sw, text="Sweep:").pack(side=tk.LEFT)
+        _sw.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
+        _rrow = tk.Frame(_sw, bg=COLORS["bg_surface"])
+        _rrow.pack(anchor=tk.W, fill=tk.X)
+        self._rms_render_btn = ttk.Button(_rrow, text="▶ Render", width=14, command=self._rms_render)
+        self._rms_render_btn.pack(side=tk.LEFT)
+        _rms_tip(self._rms_render_btn, "Render No mod (once per setup, cached) and With mods at the "
+                                      "current rows / strength / curves. Loads the base first if needed.")
+        self._rms_cancel_btn = ttk.Button(_rrow, text="Cancel", width=8, command=self._rms_cancel, state="disabled")
+        self._rms_cancel_btn.pack(side=tk.LEFT, padx=(6, 0))
+        tk.Label(_rrow, text="Render this setup: No mod beside With mods, same seed, everything as set above.",
+                 font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 anchor=tk.W).pack(side=tk.LEFT, padx=(12, 0))
+        _srow = tk.Frame(_sw, bg=COLORS["bg_surface"])
+        _srow.pack(anchor=tk.W, fill=tk.X, pady=(8, 0))
         self.rms_sweep_var = tk.StringVar(value=self._RMS_SWEEPS[0])
-        _swc = ttk.Combobox(_sw, textvariable=self.rms_sweep_var, values=list(self._RMS_SWEEPS), state="readonly", width=32)
-        _swc.pack(side=tk.LEFT, padx=(4, 4))
-        self._rms_sweep_btn = ttk.Button(_sw, text="Render sweep", width=13, command=self._rms_sweep)
+        self._rms_sweep_btn = ttk.Button(_srow, text="▶ Render sweep", width=14, command=self._rms_sweep)
         self._rms_sweep_btn.pack(side=tk.LEFT)
         _rms_tip(self._rms_sweep_btn, "Render the current setup as a strip of stills with ONE dial "
                                      "stepped through its useful values — the fastest way to see what a "
                                      "control does to this mod. Click a chip for the full size.")
-        ttk.Button(_sw, text="💾 Save strip…", width=13, command=self._rms_save_strip).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Label(_srow, text="of").pack(side=tk.LEFT, padx=(8, 4))
+        _swc = ttk.Combobox(_srow, textvariable=self.rms_sweep_var, values=list(self._RMS_SWEEPS), state="readonly", width=32)
+        _swc.pack(side=tk.LEFT)
+        ttk.Button(_srow, text="💾 Save strip…", width=13, command=self._rms_save_strip).pack(side=tk.LEFT, padx=(6, 0))
+        tk.Label(_sw, text="Or sweep instead of a single render: one dial steps through its useful values, everything "
+                           "else stays as set, and you get a strip of stills to compare — the quickest way to see "
+                           "what a control does to this mod. Click a still in the strip for the full size.",
+                 font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 wraplength=900, justify=tk.LEFT, anchor=tk.W).pack(anchor=tk.W, pady=(2, 0))
         self._rms_sweep_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
         self._rms_sweep_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W)
         ttk.Label(prev, text="History (last 12 renders — hover for the settings, click to view):",
@@ -28009,16 +28052,18 @@ class LoRATrainerGUI:
 
     def _rms_curve_combos(self, parent, dvar, svar, vvar):
         from fizgig.minimax import refmod_apply as ra
+        ttk.Label(parent, text="where:").pack(side=tk.LEFT, padx=(0, 2))
         _d = ttk.Combobox(parent, textvariable=dvar, values=list(ra.CURVE_DIRECTIONS), state="readonly", width=18)
         _d.pack(side=tk.LEFT)
         _d.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_changed())
         _rms_tip(_d, "Where the concept shows in the OUTPUT (the mirror of the strength envelope over "
                     "the reference's timeline): concept_at_end locks the reference early and releases "
                     "it late; concept_at_start the reverse; middle / ends peak and trough.")
+        ttk.Label(parent, text="shape:").pack(side=tk.LEFT, padx=(10, 2))
         _s = ttk.Combobox(parent, textvariable=svar, values=list(ra.CURVE_SHAPES), state="readonly", width=12)
-        _s.pack(side=tk.LEFT, padx=(6, 0))
+        _s.pack(side=tk.LEFT)
         _s.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_changed())
-        ttk.Label(parent, text="value:").pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Label(parent, text="amount:").pack(side=tk.LEFT, padx=(10, 2))
         _v = ttk.Scale(parent, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=110, variable=vvar,
                        command=lambda v: self._rms_curve_changed())
         _v.pack(side=tk.LEFT)
