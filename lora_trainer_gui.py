@@ -27702,10 +27702,10 @@ class LoRATrainerGUI:
         # ── Card 1: Setup ──────────────────────────────────────────────────────────────
         setup = self._start_section_card(
             outer, "Setup",
-            "The folder your mods live in — ComfyUI reads models/refmods, and Fizgig writes new mods "
-            "to the RefMod family's Output folder on the Training tab, so point that at the same "
-            "place. The model they run on, its VAE, text encoder and Turbo LoRA come from "
-            "Preferences. Load once per session.")
+            "Where your mods are and what runs them. ComfyUI reads models/refmods, and Fizgig writes "
+            "new mods to the RefMod family's Output folder on the Training tab, so point that at the "
+            "same place. The model, its VAE, text encoder and Turbo LoRA come from Preferences; Load "
+            "once per session (Render loads it for you if you skip this).")
         setup.columnconfigure(1, weight=1)
         # The mods folder first — it is the one thing every row below depends on.
         _fr = tk.Frame(setup, bg=COLORS["bg_surface"])
@@ -27732,74 +27732,6 @@ class LoRATrainerGUI:
         _rms_tip(_bc, "Same tiers as Repair Studio: int8 on big cards, streamed blocks for "
                      "long clips, NF4 for the smallest footprint. Applies at the next Load.")
         r += 1
-        ttk.Label(setup, text="Prompt:").grid(row=r, column=0, sticky=tk.NW, pady=2)
-        _pf = tk.Frame(setup, bg=COLORS["bg_surface"])
-        _pf.grid(row=r, column=1, sticky=tk.EW, pady=2)
-        _pf.columnconfigure(0, weight=1)
-        self.rms_prompt_text = tk.Text(_pf, height=3, wrap=tk.WORD, font=(FONT_FAMILY, 10),
-                                       bg=COLORS["bg_input"] if "bg_input" in COLORS else COLORS["bg_surface"],
-                                       fg=COLORS["text_primary"], insertbackground=COLORS["text_primary"],
-                                       relief="flat", bd=1)
-        self.rms_prompt_text.grid(row=0, column=0, sticky=tk.EW)
-        self.rms_prompt_text.insert("1.0", str(saved.get("prompt", "a woman smiles at the camera, soft window light")))
-        self.rms_prompt_text.bind("<KeyRelease>", lambda e: self._rms_persist())
-        _hb = ttk.Button(_pf, text="+ mod hints", width=12, command=self._rms_add_hints)
-        _hb.grid(row=0, column=1, sticky=tk.N, padx=(6, 0))
-        _rms_tip(_hb, "Append every active mod's 'concept_type: description' to the prompt — "
-                     "the Loader node's prompt_hint output, meant to be pasted into the CLIP prompt.")
-        r += 1
-        _sr = tk.Frame(setup, bg=COLORS["bg_surface"])
-        _sr.grid(row=r, column=0, columnspan=2, sticky=tk.W, pady=2)
-        ttk.Label(_sr, text="Seed:").pack(side=tk.LEFT)
-        self.rms_seed_var = tk.StringVar(value=str(saved.get("seed", "300")))
-        _se = ttk.Entry(_sr, textvariable=self.rms_seed_var, width=10)
-        _se.pack(side=tk.LEFT, padx=(4, 2))
-        _se.bind("<FocusOut>", lambda e: self._rms_persist())
-        ttk.Button(_sr, text="🎲", width=3, command=self._rms_random_seed).pack(side=tk.LEFT)
-        ttk.Label(_sr, text="Length:").pack(side=tk.LEFT, padx=(14, 2))
-        self.rms_frames_var = tk.StringVar(value=str(saved.get("frames", "Still (1 frame)")))
-        if self.rms_frames_var.get() not in self._RMS_LENGTHS:
-            self.rms_frames_var.set("Still (1 frame)")
-        _fc = ttk.Combobox(_sr, textvariable=self.rms_frames_var, values=list(self._RMS_LENGTHS),
-                           state="readonly", width=17)
-        _fc.pack(side=tk.LEFT)
-        _fc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
-        _rms_tip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
-                     "sound and open in the player. Sweeps always render stills.")
-        ttk.Label(_sr, text="W:").pack(side=tk.LEFT, padx=(14, 2))
-        self.rms_width_var = tk.StringVar(value=str(saved.get("width", "640")))
-        _wc = ttk.Combobox(_sr, textvariable=self.rms_width_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
-                           state="readonly", width=6)
-        _wc.pack(side=tk.LEFT)
-        _wc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
-        ttk.Label(_sr, text="H:").pack(side=tk.LEFT, padx=(8, 2))
-        self.rms_height_var = tk.StringVar(value=str(saved.get("height", "768")))
-        _hc = ttk.Combobox(_sr, textvariable=self.rms_height_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
-                           state="readonly", width=6)
-        _hc.pack(side=tk.LEFT)
-        _hc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
-        ttk.Label(_sr, text="Steps:").pack(side=tk.LEFT, padx=(14, 2))
-        self.rms_steps_var = tk.StringVar(value=str(saved.get("steps", "4")))
-        _ste = ttk.Entry(_sr, textvariable=self.rms_steps_var, width=4)
-        _ste.pack(side=tk.LEFT)
-        _ste.bind("<FocusOut>", lambda e: self._rms_settings_changed())
-        ttk.Label(_sr, text="Turbo:").pack(side=tk.LEFT, padx=(8, 2))
-        self.rms_turbo_var = tk.StringVar(value=str(saved.get("turbo", "1.0")))
-        _tue = ttk.Entry(_sr, textvariable=self.rms_turbo_var, width=5)
-        _tue.pack(side=tk.LEFT)
-        _tue.bind("<FocusOut>", lambda e: self._rms_settings_changed())
-        _rms_tip(_tue, "Turbo LoRA strength for the render: 6 steps at 0.75 is the training-preview "
-                      "regime; 4 at 1.0 is the fast dial. 0 = Turbo off (20-step quality, slow).")
-        self.rms_sound_var = tk.BooleanVar(value=bool(saved.get("sound", True)))
-        self._rms_sound_chk = ttk.Checkbutton(_sr, text="Sound", variable=self.rms_sound_var,
-                                              command=self._rms_persist)
-        self._rms_sound_chk.pack(side=tk.LEFT, padx=(14, 0))
-        _rms_tip(self._rms_sound_chk, "Decode the clip's soundtrack (needs the audio VAE in Preferences).")
-        self.rms_early_var = tk.BooleanVar(value=bool(saved.get("early", True)))
-        _ec = ttk.Checkbutton(_sr, text="Show early", variable=self.rms_early_var, command=self._rms_persist)
-        _ec.pack(side=tk.LEFT, padx=(8, 0))
-        _rms_tip(_ec, "Put up the pass-2 estimate while the remaining passes run.")
-        r += 1
         _br = tk.Frame(setup, bg=COLORS["bg_surface"])
         _br.grid(row=r, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
         self._rms_load_btn = ttk.Button(_br, text="Load base", width=12, command=self._rms_load)
@@ -27812,13 +27744,14 @@ class LoRATrainerGUI:
         tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10),
                  fg=COLORS["text_secondary"], bg=COLORS["bg_surface"], anchor=tk.W
                  ).pack(side=tk.LEFT, padx=(14, 0), fill=tk.X, expand=True)
-        self._rms_progress = ttk.Progressbar(_br, mode="indeterminate", length=160)
-        self._rms_progress_det = False
 
         # ── Card 2: Mods ───────────────────────────────────────────────────────────────
         mods = self._start_section_card(
             outer, "Mods",
-            "Which mods go into the render. Each row is one mod: the slider is how strongly it "
+            "Which mods go into the render. Nothing on this tab edits a mod file: the rows and "
+            "dials below are what you would set on the ComfyUI nodes at generation time, and the "
+            "files stay as made (to write one out with a setting baked in, see Actions at the "
+            "bottom). Each row is one mod: the slider is how strongly it "
             "applies, and copies is how many times it rides in the bundle (more copies pull harder, "
             "each one costs its tokens). Pick a second mod under 'vs' and the row becomes a slider "
             "between the two: left of centre leans to the first, right to the second, and the "
@@ -27842,8 +27775,10 @@ class LoRATrainerGUI:
         # ── Card 3: Apply ──────────────────────────────────────────────────────────────
         apply_card = self._start_section_card(
             outer, "Apply",
-            "How the mods are applied while the picture renders. Each control below is one setting "
-            "on the pack's Apply and Step Curve nodes — the node name is in the heading.")
+            "How the mods are applied while the picture renders. None of this changes the mod files: "
+            "each control is a setting on the pack's Apply and Step Curve nodes (the node name is in "
+            "the heading), so what you find here is what you type into ComfyUI. Bake as new RefMod, "
+            "in Actions, is the one thing that writes a setting into a file.")
         apply_card.columnconfigure(0, weight=1)
         r = 0
 
@@ -27958,21 +27893,92 @@ class LoRATrainerGUI:
 
         # ── Card 4: Preview ────────────────────────────────────────────────────────────
         prev = self._start_section_card(
-            outer, "Preview",
-            "Render to see what the mods do. No mod is the base model alone at the same seed and "
-            "prompt, rendered once and kept; With mods is your rows applied, so the difference "
-            "between the two is the mods. Click a still to pop it out; a clip opens the player. "
-            "Render sweep steps one dial through its useful values and lines the results up, the "
-            "quickest way to see what a control does to this mod.")
+            outer, "Render",
+            "What to render and the result. Set the prompt, seed, length, size and steps, press "
+            "Render, and the picture appears below: No mod is the base model alone at the same seed "
+            "and prompt (rendered once and kept), With mods is your rows applied — the difference "
+            "between the two is the mods. Click a still to pop it out; a clip opens the player.")
         prev.columnconfigure(0, weight=1)
         prev.columnconfigure(1, weight=1)
-        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=0, column=0, pady=(2, 0))
+        # the per-render settings, first (moved down from Setup so the journey runs top to bottom)
+        rset = tk.Frame(prev, bg=COLORS["bg_surface"])
+        rset.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
+        rset.columnconfigure(1, weight=1)
+        rr = 0
+        ttk.Label(rset, text="Prompt:").grid(row=rr, column=0, sticky=tk.NW, pady=2)
+        _pf = tk.Frame(rset, bg=COLORS["bg_surface"])
+        _pf.grid(row=rr, column=1, sticky=tk.EW, pady=2)
+        _pf.columnconfigure(0, weight=1)
+        self.rms_prompt_text = tk.Text(_pf, height=3, wrap=tk.WORD, font=(FONT_FAMILY, 10),
+                                       bg=COLORS["bg_input"] if "bg_input" in COLORS else COLORS["bg_surface"],
+                                       fg=COLORS["text_primary"], insertbackground=COLORS["text_primary"],
+                                       relief="flat", bd=1)
+        self.rms_prompt_text.grid(row=0, column=0, sticky=tk.EW)
+        self.rms_prompt_text.insert("1.0", str(saved.get("prompt", "a woman smiles at the camera, soft window light")))
+        self.rms_prompt_text.bind("<KeyRelease>", lambda e: self._rms_persist())
+        _hb = ttk.Button(_pf, text="+ mod hints", width=12, command=self._rms_add_hints)
+        _hb.grid(row=0, column=1, sticky=tk.N, padx=(6, 0))
+        _rms_tip(_hb, "Append every active mod's 'concept_type: description' to the prompt — "
+                     "the Loader node's prompt_hint output, meant to be pasted into the CLIP prompt.")
+        rr += 1
+        _sr = tk.Frame(rset, bg=COLORS["bg_surface"])
+        _sr.grid(row=rr, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Label(_sr, text="Seed:").pack(side=tk.LEFT)
+        self.rms_seed_var = tk.StringVar(value=str(saved.get("seed", "300")))
+        _se = ttk.Entry(_sr, textvariable=self.rms_seed_var, width=10)
+        _se.pack(side=tk.LEFT, padx=(4, 2))
+        _se.bind("<FocusOut>", lambda e: self._rms_persist())
+        ttk.Button(_sr, text="🎲", width=3, command=self._rms_random_seed).pack(side=tk.LEFT)
+        ttk.Label(_sr, text="Length:").pack(side=tk.LEFT, padx=(14, 2))
+        self.rms_frames_var = tk.StringVar(value=str(saved.get("frames", "Still (1 frame)")))
+        if self.rms_frames_var.get() not in self._RMS_LENGTHS:
+            self.rms_frames_var.set("Still (1 frame)")
+        _fc = ttk.Combobox(_sr, textvariable=self.rms_frames_var, values=list(self._RMS_LENGTHS),
+                           state="readonly", width=17)
+        _fc.pack(side=tk.LEFT)
+        _fc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
+        _rms_tip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
+                     "sound and open in the player. Sweeps always render stills.")
+        ttk.Label(_sr, text="W:").pack(side=tk.LEFT, padx=(14, 2))
+        self.rms_width_var = tk.StringVar(value=str(saved.get("width", "640")))
+        _wc = ttk.Combobox(_sr, textvariable=self.rms_width_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
+                           state="readonly", width=6)
+        _wc.pack(side=tk.LEFT)
+        _wc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
+        ttk.Label(_sr, text="H:").pack(side=tk.LEFT, padx=(8, 2))
+        self.rms_height_var = tk.StringVar(value=str(saved.get("height", "768")))
+        _hc = ttk.Combobox(_sr, textvariable=self.rms_height_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
+                           state="readonly", width=6)
+        _hc.pack(side=tk.LEFT)
+        _hc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
+        ttk.Label(_sr, text="Steps:").pack(side=tk.LEFT, padx=(14, 2))
+        self.rms_steps_var = tk.StringVar(value=str(saved.get("steps", "4")))
+        _ste = ttk.Entry(_sr, textvariable=self.rms_steps_var, width=4)
+        _ste.pack(side=tk.LEFT)
+        _ste.bind("<FocusOut>", lambda e: self._rms_settings_changed())
+        ttk.Label(_sr, text="Turbo:").pack(side=tk.LEFT, padx=(8, 2))
+        self.rms_turbo_var = tk.StringVar(value=str(saved.get("turbo", "1.0")))
+        _tue = ttk.Entry(_sr, textvariable=self.rms_turbo_var, width=5)
+        _tue.pack(side=tk.LEFT)
+        _tue.bind("<FocusOut>", lambda e: self._rms_settings_changed())
+        _rms_tip(_tue, "Turbo LoRA strength for the render: 6 steps at 0.75 is the training-preview "
+                      "regime; 4 at 1.0 is the fast dial. 0 = Turbo off (20-step quality, slow).")
+        self.rms_sound_var = tk.BooleanVar(value=bool(saved.get("sound", True)))
+        self._rms_sound_chk = ttk.Checkbutton(_sr, text="Sound", variable=self.rms_sound_var,
+                                              command=self._rms_persist)
+        self._rms_sound_chk.pack(side=tk.LEFT, padx=(14, 0))
+        _rms_tip(self._rms_sound_chk, "Decode the clip's soundtrack (needs the audio VAE in Preferences).")
+        self.rms_early_var = tk.BooleanVar(value=bool(saved.get("early", True)))
+        _ec = ttk.Checkbutton(_sr, text="Show early", variable=self.rms_early_var, command=self._rms_persist)
+        _ec.pack(side=tk.LEFT, padx=(8, 0))
+        _rms_tip(_ec, "Put up the pass-2 estimate while the remaining passes run.")
+        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=2, column=0, pady=(10, 0))
         self._rms_tweaked_title = ttk.Label(prev, text="With mods", font=(FONT_FAMILY, 10, "bold"))
-        self._rms_tweaked_title.grid(row=0, column=1, pady=(2, 0))
+        self._rms_tweaked_title.grid(row=2, column=1, pady=(10, 0))
         self._rms_holders, self._rms_labels = {}, {}
         for col, side in ((0, "baseline"), (1, "tweaked")):
             h = tk.Frame(prev, width=448, height=448, bg="#1c1c1c", highlightthickness=0)
-            h.grid(row=1, column=col, padx=4, pady=4, sticky="nsew")
+            h.grid(row=3, column=col, padx=4, pady=4, sticky="nsew")
             h.pack_propagate(False)
             lbl = ttk.Label(h, text="(no render yet)", anchor=tk.CENTER, background="#1c1c1c", cursor="hand2")
             lbl.pack(fill=tk.BOTH, expand=True)
@@ -27982,7 +27988,7 @@ class LoRATrainerGUI:
         # Two ways to render, each on its own line with a sentence saying which is which
         # (Peter, 16 Sep 2026: two render buttons with no explanation read as a mistake).
         _sw = tk.Frame(prev, bg=COLORS["bg_surface"])
-        _sw.grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
+        _sw.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
         _rrow = tk.Frame(_sw, bg=COLORS["bg_surface"])
         _rrow.pack(anchor=tk.W, fill=tk.X)
         self._rms_render_btn = ttk.Button(_rrow, text="▶ Render", width=14, command=self._rms_render)
@@ -28011,18 +28017,29 @@ class LoRATrainerGUI:
                            "what a control does to this mod. Click a still in the strip for the full size.",
                  font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=900, justify=tk.LEFT, anchor=tk.W).pack(anchor=tk.W, pady=(2, 0))
+        # what is happening, right under the buttons that started it
+        _stat = tk.Frame(_sw, bg=COLORS["bg_surface"])
+        _stat.pack(anchor=tk.W, fill=tk.X, pady=(6, 0))
+        tk.Label(_stat, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10),
+                 fg=COLORS["text_secondary"], bg=COLORS["bg_surface"], anchor=tk.W
+                 ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self._rms_progress = ttk.Progressbar(_stat, mode="indeterminate", length=160)
+        self._rms_progress_det = False
         self._rms_sweep_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
-        self._rms_sweep_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W)
+        self._rms_sweep_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W)
         ttk.Label(prev, text="History (last 12 renders — hover for the settings, click to view):",
-                  font=(FONT_FAMILY, 10), foreground=COLORS["text_secondary"]).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+                  font=(FONT_FAMILY, 10), foreground=COLORS["text_secondary"]).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
         self._rms_history_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
-        self._rms_history_frame.grid(row=5, column=0, columnspan=2, sticky=tk.W)
+        self._rms_history_frame.grid(row=6, column=0, columnspan=2, sticky=tk.W)
 
         # ── Card 5: Actions ────────────────────────────────────────────────────────────
         act = self._start_section_card(
             outer, "Actions",
-            "Take the result to ComfyUI: copy the exact settings for the pack's nodes, or save a "
-            "new mod with the current strength and curves baked in so it loads plainly.")
+            "Take the result to ComfyUI. ComfyUI settings copies the exact values for the pack's "
+            "nodes, so you reproduce this render there with the mods as they are. Bake as new "
+            "RefMod is the only thing here that writes a file: a copy of one row's mod with its "
+            "strength, retention and frame curve baked in, so it loads plainly at 1.0 with no "
+            "curve set. Save preview keeps the picture; Save and Load setup keep this whole tab.")
         _ar = tk.Frame(act, bg=COLORS["bg_surface"])
         _ar.pack(fill=tk.X)
         ttk.Button(_ar, text="💾 Save preview…", command=self._rms_save_preview).pack(side=tk.LEFT)
