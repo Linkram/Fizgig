@@ -48,9 +48,6 @@ def setup_parser() -> argparse.ArgumentParser:
                         help="encode at this target megapixels instead of the config's resolution "
                              "(the RefMod maker's reference pass: the mod's references at Target MP "
                              "while the optimiser's own stills stay at 0.25 MP)")
-    parser.add_argument("--allow_upscale", action="store_true",
-                        help="let small images be scaled UP to the target size (bucket_no_upscale off for this "
-                             "pass) — the RefMod reference pass: H3 wants a reference with a side of 768 or more")
     parser.add_argument("--cache_suffix", default="",
                         help="append to every dataset's cache folder (a second resolution cannot "
                              "share a folder — cache files are named by the source image size)")
@@ -81,12 +78,6 @@ def main():
             if "resolution" in _ds:
                 _ds["resolution"] = [_side, _side]
         logger.info(f"[cache] resolution override: {args.megapixels:g} MP -> {_side}x{_side}")
-    if args.allow_upscale:
-        user_config.setdefault("general", {})["bucket_no_upscale"] = False
-        for _ds in user_config.get("datasets", []) or []:
-            if "bucket_no_upscale" in _ds:
-                _ds["bucket_no_upscale"] = False
-        logger.info("[cache] small images may be scaled up to the target size for this pass")
     if args.cache_suffix:
         for _ds in user_config.get("datasets", []) or []:
             _base = _ds.get("cache_directory") or _ds.get("image_directory") or ""
