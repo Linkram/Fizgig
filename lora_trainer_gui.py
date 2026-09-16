@@ -28036,6 +28036,17 @@ class LoRATrainerGUI:
             "in Actions, is the one thing that writes a setting into a file.")
         apply_card.columnconfigure(0, weight=1)
         r = 0
+        # Numbered references on = the pack's Text Encode path, which has none of these nodes.
+        self._rms_numbered_note = tk.Label(
+            apply_card,
+            text=("Numbered references is on, so this render takes the pack's Text Encode path: each row's "
+                  "Strength only. Retention, the fades, Shuffle and the Step Curve are not applied here, "
+                  "because that ComfyUI graph has no Apply or Step Curve node. Untick it to use them."),
+            font=(FONT_FAMILY, 10, "italic"), fg=COLORS["warning"], bg=COLORS["bg_surface"],
+            wraplength=900, justify=tk.LEFT)
+        self._rms_numbered_note.grid(row=r, column=0, sticky=tk.W, pady=(0, 8))
+        self._rms_numbered_note.grid_remove()
+        r += 1
 
         def _block(title, text):
             """A heading, a plain-English line under it, then a frame for the control."""
@@ -28193,8 +28204,9 @@ class LoRATrainerGUI:
                       "timestamps), a bundled audio member as the <Audio n> label — so the prompt can say "
                       "'the woman in <Picture 1> stands on the left' and mean the same thing in ComfyUI. "
                       "The map beside says which number is which; '+ labels' drops them into the prompt. "
-                      "Costs a decode per mod and a vision encode per prompt. With Shuffle on, the numbers "
-                      "follow the shuffled order.")
+                      "Costs a decode per mod and a vision encode per prompt. This is the node's own path: "
+                      "loader order, every copy, each row's Strength only — retention, the fades, Shuffle and "
+                      "the Step Curve are not applied while it is on (the Apply card says so).")
         self.rms_refmap_var = tk.StringVar(value="")
         tk.Label(_nr, textvariable=self.rms_refmap_var, font=(FONT_FAMILY, 9), fg=COLORS["text_explain"],
                  bg=COLORS["bg_surface"], justify=tk.LEFT).pack(side=tk.LEFT, padx=(12, 0))
@@ -28772,15 +28784,28 @@ class LoRATrainerGUI:
         when nothing is active)."""
         from fizgig.minimax import refmod_apply as ra
         try:
-            _l, _d, entries = ra.build_bundle_entries(self._rms_mod_rows(), retention=self._rms_retention(),
-                                                      curve=self._rms_frame_curve(), scramble_seed=self._rms_scramble())
+            # the Text Encode path: loader order, every copy, strengths only (see _rms_job)
+            _l, _d, entries = ra.build_bundle_entries(self._rms_mod_rows(), retention=1.0, curve=None, scramble_seed=-1)
             return ra.reference_map(entries)
         except Exception:
             return []
 
     def _rms_numbered_changed(self):
         self._rms_refresh_refmap()
+        self._rms_refresh_numbered_note()
         self._rms_persist()
+
+    def _rms_refresh_numbered_note(self):
+        note = getattr(self, "_rms_numbered_note", None)
+        if note is None:
+            return
+        try:
+            if self.rms_numbered_var.get():
+                note.grid()
+            else:
+                note.grid_remove()
+        except tk.TclError:
+            pass
 
     def _rms_refresh_refmap(self):
         var = getattr(self, "rms_refmap_var", None)
@@ -28983,6 +29008,7 @@ class LoRATrainerGUI:
             self.rms_sound_var.set(bool(d.get("sound", True)))
             self.rms_early_var.set(bool(d.get("early", True)))
             self.rms_numbered_var.set(bool(d.get("numbered", False)))
+            self._rms_refresh_numbered_note()
             for row in list(self._rms_rows):
                 row["frame"].destroy()
             self._rms_rows = []
@@ -29255,8 +29281,15 @@ class LoRATrainerGUI:
         fc = tuple(ov.get("frame_curve", self._rms_frame_curve()))
         sc = tuple(ov.get("step_curve", self._rms_step_curve()))
         step_on = bool(ov.get("step_on", self.rms_sc_on_var.get()))
-        latents, describe, entries = ra.build_bundle_entries(rows, retention=retention, curve=fc,
-                                                             scramble_seed=self._rms_scramble())
+        numbered = bool(self.rms_numbered_var.get())
+        if numbered:
+            # The pack's Text Encode path: the loader's mods in loader order, every copy, each
+            # row's strength and nothing else — no retention, no fade, no shuffle, no step curve.
+            retention, fc, step_on = 1.0, None, False
+            latents, describe, entries = ra.build_bundle_entries(rows, retention=1.0, curve=None, scramble_seed=-1)
+        else:
+            latents, describe, entries = ra.build_bundle_entries(rows, retention=retention, curve=fc,
+                                                                 scramble_seed=self._rms_scramble())
         sched = ra.step_schedule(sc, latents) if step_on else None
         frames = int(ov.get("frames", self._rms_frames()))
         seed = int(ov.get("seed", self._rms_seed()))
@@ -29265,18 +29298,20 @@ class LoRATrainerGUI:
                "schedule": sched, "retention": retention, "frame_curve": fc, "step_curve": sc if step_on else None,
                "with_audio": bool(self.rms_sound_var.get() and self._repair_h3_audio_vae_path()),
                "early": (2 if (self.rms_early_var.get() and st > 2) else 0),
-               "numbered": bool(self.rms_numbered_var.get()),
+               "numbered": numbered,
                "entries": entries,
                "ref_map": ra.reference_map(entries),
                "readout": ra.comfy_readout(rows, retention=retention, frame_curve=fc, scramble_seed=self._rms_scramble(),
                                            step_curve=sc, step_on=step_on),
                "label": ov.get("label", "")}
         if job["numbered"]:
-            job["readout"] += ("\n\nH3 RefMod Text Encode\n  mods: the loader above; prompt: this prompt; connect its "
-                               "conditioning to the sampler and do not Apply the same mods again\n  reference map: "
-                               + ("  ".join(job["ref_map"]) or "none")
-                               + "\n  (the same numbering the node gives these mods: pictures, videos and bundled "
-                                 "audio counted apart; with Shuffle on, the order is the shuffled one)")
+            # No Apply / Step Curve node on this path: keep the loader paragraphs, add Text Encode.
+            job["readout"] = (job["readout"].split("\nApply RefMods")[0].rstrip()
+                              + "\n\nH3 RefMod Text Encode\n  mods: the loader above; prompt: this prompt; connect its "
+                                "conditioning to the sampler — no Apply node, no Step Curve node on this path\n  reference map: "
+                              + ("  ".join(job["ref_map"]) or "none")
+                              + "\n  (the same numbering the node gives these mods: loader order, every copy, "
+                                "pictures, videos and bundled audio counted apart; row strengths only)")
         # Everything the No-mod render depends on, Sound included: the audio rows ride the same
         # denoise, so a baseline made without sound is not the baseline for a render with it
         # (@mabseyuk, 16 Sep 2026).
@@ -30651,7 +30686,8 @@ class LoRATrainerGUI:
                 self._set_training_progress_phase("Visual and audio RefMod saved", percent=100)
                 return True
             if "[refmod] saved" in _low:
-                self._set_training_progress_phase("RefMod saved", percent=100)
+                self._set_training_progress_phase("Visual and audio RefMod saved" if "as one file" in _low else "RefMod saved",
+                                                  percent=100)
                 return True
             if "[refmod] plain encode" in _low or "[refmod] optimising" in _low:
                 self._set_training_progress_phase("Making the RefMod…", percent=0)

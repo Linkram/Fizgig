@@ -1035,6 +1035,14 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     dtype = torch.bfloat16
     torch.manual_seed(seed)
     os.makedirs(output_dir, exist_ok=True)
+    if str(audio or "off").lower() != "off":
+        # Refuse a bad audio setup here, before a run that may optimise for minutes: the
+        # audio step comes last, and a bundle has nothing to write until it succeeds.
+        if not (float(audio_max_seconds) > 0):
+            raise ValueError(f"the audio mod's length must be above 0 seconds (got {audio_max_seconds})")
+        if not audio_vae_path or not os.path.isfile(audio_vae_path):
+            raise RuntimeError("an audio mod needs the H3 audio VAE — set the Audio VAE path in "
+                               "Preferences (Model Paths, MiniMax H3), or set Audio support to off")
 
     # dataset (stills; clip stills as photos so every clip lends its sharpest face)
     ImageDataset.clip_still_as_photo = True
@@ -1224,9 +1232,19 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                           concept_type=audio_concept, description=description, device=device)
         return out
     # One file (the pack's bundle): the visual member and the audio member together. No sound
-    # in the folder -> the plain visual file, so the run still ends with a mod.
-    _lat_a, _sources = encode_folder_audio(_dirs, audio_vae_path=audio_vae_path,
-                                           max_seconds=float(audio_max_seconds), device=device)
+    # in the folder -> the plain visual file, so the run still ends with a mod. Should the
+    # audio step fail for any other reason, the visual mod is written first, then the error.
+    try:
+        _lat_a, _sources = encode_folder_audio(_dirs, audio_vae_path=audio_vae_path,
+                                               max_seconds=float(audio_max_seconds), device=device)
+    except Exception:
+        out = save_refmod(_out_base, mod, extra=_extra, **_save_kw)
+        logger.error(f"[refmod] the audio step failed — the visual mod was saved on its own as {out}")
+        raise
+    _stale = _out_base + "_audio.safetensors"
+    if os.path.isfile(_stale):
+        logger.warning(f"[refmod] {os.path.basename(_stale)} is left over from an earlier two-file run; the "
+                       f"bundle carries its own audio member, so delete the old file or the loader will list both")
     if _lat_a is None:
         out = save_refmod(_out_base, mod, extra=_extra, **_save_kw)
         logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens) as a plain visual mod — "

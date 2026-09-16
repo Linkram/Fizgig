@@ -236,7 +236,20 @@ def build_bundle_entries(rows: Sequence[ModRow], *, retention: float = 1.0,
         m = meta or {}
         t = int(m.get("latent_t") or latent.shape[2])
         entries.append({"name": name, "kind": "video" if t > 1 else "image", "latent_t": t,
-                        "audio_members": list(m.get("bundle_audio") or [])})
+                        "path": str(m.get("path", "")), "bundle_audio": list(m.get("bundle_audio") or []),
+                        "audio_members": []})
+    # A bundle's audio members ride ONCE per bundle, after the last of that bundle's visual
+    # entries, one label per visual copy present — the pack's loader expands a bundle slot as
+    # all the visual copies, then all the audio copies (V V A A), and lists the audio once.
+    seen = set()
+    for i, e in enumerate(entries):
+        key = e["path"]
+        if not e["bundle_audio"] or not key or key in seen:
+            continue
+        seen.add(key)
+        same = [j for j, o in enumerate(entries) if o["path"] == key]
+        n = len(same)
+        entries[same[-1]]["audio_members"] = [a for a in e["bundle_audio"] for _ in range(n)]
     return latents, describe, entries
 
 
