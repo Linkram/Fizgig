@@ -433,14 +433,10 @@ ARCHITECTURES["MiniMax H3 RefMod"] = {
     "is_refmod": True,
     "train_script": "src/fizgig/scripts/minimax_refmod.py",
     "lora_name_suffix": "refmod",
-    # Previews OFF by default here (the node pack's extractor has none, and they are the only
-    # thing that puts a 14 GB model on the card during a plain encode); when on, 22-frame
-    # 640x768 clips — a mod rides a video model (Peter, 16 Sep 2026). The toggle and length
-    # are restored on leaving the family.
-    "sample_width_default": 640,
-    "sample_height_default": 768,
-    "sample_enabled_default": False,
-    "sample_frames_default": "22 frames (~1s)",
+    # No previews, ever (Peter, 16 Sep 2026): the node pack's extractor has none, they were the
+    # only thing putting a 14 GB model on the card during a plain encode, and a mod is judged
+    # in RefMod Studio. The Samples pane is ignored and its settings left alone.
+    "supports_samples": False,
 }
 
 # Saved configs written before 3.6.1 carry the old label. Every lookup here is a .get() that
@@ -4312,8 +4308,8 @@ class LoRATrainerGUI:
                       "Steps above 0 the optimiser's own stills are always cached at 0.25 MP "
                       "(a second, lighter pass), the measured recipe. Output: <name>.safetensors in the LoRA "
                       "output folder — copy it to ComfyUI/models/refmods/ and load it with "
-                      "Load H3 RefMods → Apply H3 RefMod. Previews are off here by default; on, "
-                      "they are 22-frame 640x768 clips with the mod as it will be used. Mods ride H3's Reference (ref2va) model — Training Base "
+                      "Load H3 RefMods → Apply H3 RefMod. No previews here: judge the mod in "
+                      "RefMod Studio. Mods ride H3's Reference (ref2va) model — Training Base "
                       "switches to it here, and that is the model to load in ComfyUI with the mod."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
@@ -11885,16 +11881,16 @@ class LoRATrainerGUI:
         # --- Video model warning (hidden by default; grid_remove'd at the end) ---
         self.video_model_warning_frame = ttk.Frame(grid_holder)
         self.video_model_warning_frame.grid(row=0, column=0, sticky=tk.EW, padx=36, pady=(0, 16))
-        ttk.Label(
+        self._no_samples_label_1 = ttk.Label(
             self.video_model_warning_frame,
             text="Sample generation is not available for video models (t2v, i2v).",
-            font=("Arial", 10, "italic")
-        ).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(
+            font=("Arial", 10, "italic"))
+        self._no_samples_label_1.pack(anchor=tk.W, pady=(0, 5))
+        self._no_samples_label_2 = ttk.Label(
             self.video_model_warning_frame,
             text="Video sampling during training is too slow and memory-intensive.",
-            font=("Arial", 10, "italic")
-        ).pack(anchor=tk.W, pady=(0, 15))
+            font=("Arial", 10, "italic"))
+        self._no_samples_label_2.pack(anchor=tk.W, pady=(0, 15))
         video_viewer_frame = ttk.Frame(self.video_model_warning_frame)
         video_viewer_frame.pack(anchor=tk.W, pady=10)
         ttk.Button(video_viewer_frame, text="View Samples Gallery", command=self.open_samples_gallery).pack(side=tk.LEFT, padx=5)
@@ -12462,7 +12458,16 @@ class LoRATrainerGUI:
         supports_samples = config.get("supports_samples", False)
 
         if not supports_samples:
-            # Show warning, hide settings
+            # Show warning, hide settings — worded for the family that has none
+            try:
+                if config.get("is_refmod"):
+                    self._no_samples_label_1.configure(text="RefMods have no previews — this pane is not used.")
+                    self._no_samples_label_2.configure(text="Judge a mod in RefMod Studio once it is made.")
+                else:
+                    self._no_samples_label_1.configure(text="Sample generation is not available for video models (t2v, i2v).")
+                    self._no_samples_label_2.configure(text="Video sampling during training is too slow and memory-intensive.")
+            except Exception:
+                pass
             self.video_model_warning_frame.grid()
             self.sample_enabled_check.grid_remove()
             self.sample_settings_frame.grid_remove()
@@ -12508,25 +12513,6 @@ class LoRATrainerGUI:
                         self.sample_width_var.set(str(config["sample_width_default"]))
                     if config.get("sample_height_default") is not None:
                         self.sample_height_var.set(str(config["sample_height_default"]))
-                # The previews toggle and clip length are family-owned only where a family
-                # declares them (RefMod: off, 22 frames). Entering such a family remembers
-                # what the user had; leaving it puts that back, so H3 training keeps its own.
-                _owns = (config.get("sample_enabled_default") is not None
-                         or config.get("sample_frames_default") is not None)
-                _prev_owned = getattr(self, "_family_sample_prev", None)
-                if _owns:
-                    if _prev_owned is None and hasattr(self, "sample_frames_var"):
-                        self._family_sample_prev = (bool(self.sample_enabled_var.get()),
-                                                    self.sample_frames_var.get())
-                    if config.get("sample_enabled_default") is not None:
-                        self.sample_enabled_var.set(bool(config["sample_enabled_default"]))
-                    if config.get("sample_frames_default") is not None and hasattr(self, "sample_frames_var"):
-                        self.sample_frames_var.set(str(config["sample_frames_default"]))
-                elif _prev_owned is not None:
-                    self.sample_enabled_var.set(bool(_prev_owned[0]))
-                    if hasattr(self, "sample_frames_var"):
-                        self.sample_frames_var.set(str(_prev_owned[1]))
-                    self._family_sample_prev = None
                 self._sample_defaults_arch = arch
 
             # Enable/disable flow shift based on architecture
@@ -32012,31 +31998,9 @@ class LoRATrainerGUI:
                     self.update_console(f"[refmod] caching is off and {_d} does not exist — the "
                                         f"references come from the dataset caches (0.25 MP) this "
                                         f"run; tick Enable Cache for a Target MP reference pass\n")
-        if self.sample_enabled_var.get():
-            prompt_file = self._write_krea2_sample_prompts("minimax_prompts.txt")
-            _te = self._krea2_pref("minimax_text_encoder")
-            if prompt_file and _te:
-                try:
-                    _seed = str(int(self.sample_seed_var.get().strip()))
-                except (ValueError, AttributeError):
-                    _seed = str(self.settings.get("SAMPLE_SEED", 42))
-                # "22 frames (~1s)" -> 22; a Still stays 1. Sound variants render silent here.
-                _sf = str(getattr(self, "sample_frames_var", None)
-                          and self.sample_frames_var.get() or "").split(" ")[0]
-                cmd += ["--sample_prompts", prompt_file,
-                        "--sample_width", (self.sample_width_var.get().strip() or "640"),
-                        "--sample_height", (self.sample_height_var.get().strip() or "768"),
-                        "--sample_frames", _sf if _sf.isdigit() else "1",
-                        "--sample_seed", _seed,
-                        "--text_encoder", _te,
-                        "--vae", self._krea2_pref("minimax_vae")]
-                _turbo = self._krea2_pref("minimax_turbo_lora")
-                if _turbo and os.path.isfile(_turbo):
-                    _ts = str(getattr(self, "sample_steps_var", None) and self.sample_steps_var.get() or "").strip()
-                    cmd += ["--turbo_lora_path", _turbo, "--sample_steps", _ts if _ts.isdigit() else "8"]
-            elif not _te:
-                self.update_console("[samples] previews need the Qwen3-VL-32B text encoder path "
-                                    "(Preferences) — the mod still builds, without previews\n")
+        # No previews from the GUI (Peter, 16 Sep 2026): the Samples pane is ignored for this
+        # family — a mod is judged in RefMod Studio. (minimax_refmod.py keeps its --sample_*
+        # flags for command-line sweeps.)
         return cmd
 
     def _build_minimax_train_command(self):
