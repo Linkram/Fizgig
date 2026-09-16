@@ -44,6 +44,9 @@ def setup_parser():
     p.add_argument("--pull", type=float, default=2.0,
                    help="weight of the L2 pull toward the initial encode (default 2.0, measured)")
     p.add_argument("--max_refs", type=int, default=16, help="references stacked into the mod (default 16, measured)")
+    p.add_argument("--clips", choices=["still", "motion"], default="still",
+                   help="how a clip enters the mod: its sharpest-face still (default) or every one of its "
+                        "latent frames as motion (the node pack's video reference)")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--base_quant", default="nf4",
                    help="nf4 (default: the base at 10.5 GB fits beside the step without recompute on "
@@ -99,7 +102,7 @@ def main():
                sample_seed=a.sample_seed, preview_every=a.preview_every, sample_frames=a.sample_frames,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, init_from=a.init_from, exclude_refs=a.holdout_refs,
-               ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset,
+               ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset, clips=a.clips,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 
 

@@ -48,15 +48,18 @@ MAX_REFS_DEFAULT = 16      # measured 10 Sep 2026: 16 references scored 70 on po
 
 # ─── references from the caches ─────────────────────────────────────────────────────────────
 
-def collect_refs(cache_dirs, max_refs: int = MAX_REFS_DEFAULT) -> List[Tuple[str, torch.Tensor, str]]:
-    """The dataset's own H3 latent caches -> up to `max_refs` (name, latent [24, h, w], kind).
+def collect_refs(cache_dirs, max_refs: int = MAX_REFS_DEFAULT,
+                 clips: str = "still") -> List[Tuple[str, torch.Tensor, str]]:
+    """The dataset's own H3 latent caches -> up to `max_refs` (name, latent, kind).
 
-    Photos come first (each a normalized still latent at its bucket size), then clip stills
-    (the sharpest-face frame minimax_cache_latents picked and encoded as `still_latent`).
-    A clip cached without a still contributes nothing — a whole clip is not a reference frame.
-    Sorted by name so the pick is stable run to run."""
+    Photos come first (each a normalized still latent [24, h, w] at its bucket size), then the
+    clips. clips="still": each clip is its sharpest-face frame (`still_latent`, [24, h, w]) —
+    a clip cached without a still contributes nothing. clips="motion": each clip is ALL of its
+    latent frames ([24, T, h, w]), the node pack's video reference — a run of frames the model
+    reads as motion. Sorted by name so the pick is stable run to run."""
     from safetensors.torch import load_file
     photos, stills = [], []
+    motion = str(clips or "still").lower().startswith("motion")
     seen = set()
     for d in cache_dirs:
         if not d or not os.path.isdir(d):
@@ -72,17 +75,20 @@ def collect_refs(cache_dirs, max_refs: int = MAX_REFS_DEFAULT) -> List[Tuple[str
                 logger.warning(f"[refmod] skipped {base}: {exc}")
                 continue
             stem = base[: -len(f"_{ARCH}.safetensors")]
+            lat_keys = [k for k in sd if k.startswith("latent_")]
+            zc = sd[lat_keys[0]] if lat_keys else None
+            if motion and zc is not None and zc.dim() == 4:      # (C, T, H, W): the whole clip
+                stills.append((stem, zc.float(), "clip motion"))
+                continue
             if "still_latent" in sd:
                 z = sd["still_latent"]
                 if z.dim() == 3:
                     stills.append((stem, z.float(), "clip still"))
                 continue
-            lat_keys = [k for k in sd if k.startswith("latent_")]
-            if not lat_keys:
+            if zc is None:
                 continue
-            z = sd[lat_keys[0]]
-            if z.dim() == 3:                       # (C, H, W): a still; clips are 4-D
-                photos.append((stem, z.float(), "photo"))
+            if zc.dim() == 3:                      # (C, H, W): a still; clips are 4-D
+                photos.append((stem, zc.float(), "photo"))
     refs = (photos + stills)[:max_refs]
     return refs
 
@@ -307,6 +313,8 @@ def build_mod(refs, grid: Optional[int], faces: Optional[dict] = None) -> Tuple[
     frames = []
     n_cropped = 0
     for stem, z, _ in refs:
+        # a clip-as-motion reference is [24, T, h, w]: every frame goes in, cropped alike
+        z_frames = [z] if z.dim() == 3 else [z[:, t] for t in range(int(z.shape[1]))]
         h, w = int(z.shape[-2]), int(z.shape[-1])
         sc = max(ch / float(h), cw / float(w))
         nh, nw = max(ch, int(round(h * sc))), max(cw, int(round(w * sc)))
@@ -324,10 +332,11 @@ def build_mod(refs, grid: Optional[int], faces: Optional[dict] = None) -> Tuple[
                         else "face kept, at the edge — the canvas can't centre it without cropping more")
             logger.info("[refmod] %s: %.0f%% cropped to the %dx%d canvas (%s)", stem, lost * 100,
                         cw * 16, ch * 16, _how)
-        z4 = cover_crop(z.float().unsqueeze(0), ch, cw, centre)      # [1, 24, ch, cw], aspect kept
-        if grid is not None:
-            z4 = F.adaptive_avg_pool2d(z4, (gh, gw))
-        frames.append(z4)
+        for zf in z_frames:
+            z4 = cover_crop(zf.float().unsqueeze(0), ch, cw, centre)   # [1, 24, ch, cw], aspect kept
+            if grid is not None:
+                z4 = F.adaptive_avg_pool2d(z4, (gh, gw))
+            frames.append(z4)
     if n_cropped:
         logger.info("[refmod] %d of %d references were cropped to the canvas; the rest are used "
                     "whole (a same-aspect set is never cropped)", n_cropped, len(refs))
@@ -704,7 +713,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
-               ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1) -> str:
+               ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1,
+               clips: str = "still") -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -746,7 +756,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     # stills are only the loss target, and the recipe was measured at 0.25 (16 Sep 2026).
     if ref_cache_dirs:
         logger.info(f"[refmod] references from {', '.join(ref_cache_dirs)}")
-    refs = collect_refs(ref_cache_dirs or cache_dirs, max_refs=max_refs)
+    refs = collect_refs(ref_cache_dirs or cache_dirs, max_refs=max_refs, clips=clips)
     # Faces, for the references that end up cropped: the dataset is prepared framing, so a
     # crop keeps the face rather than the frame centre (Peter, 16 Sep 2026).
     face_sizes = {}
@@ -756,7 +766,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         raise RuntimeError("No reference stills in the caches (photos, or clips cached with "
                            "'Also train the sharpest face still').")
     n_img = sum(1 for r in refs if r[2] == "photo")
-    n_st = len(refs) - n_img
+    n_mo = sum(1 for r in refs if r[2] == "clip motion")
+    n_st = len(refs) - n_img - n_mo
     mp = max((r[1].shape[-2] * 16) * (r[1].shape[-1] * 16) for r in refs) / 1e6
     if init_from:
         # start from an existing mod (re-preview it, or keep optimising it)
@@ -780,7 +791,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                            f"those tokens rides in the sequence at each sampling step — slower and "
                            f"more VRAM at generation. Fewer References or a pooled Grid brings it "
                            f"down.")
-        source_shape = " +".join(f"1x{r[1].shape[-2]}x{r[1].shape[-1]}" for r in refs)
+        source_shape = " +".join(f"{(r[1].shape[1] if r[1].dim() == 4 else 1)}x{r[1].shape[-2]}x{r[1].shape[-1]}"
+                                 for r in refs)
 
     # The per-step subset draws from the references with a large face in frame (at least half
     # the largest face's area), so every step's gradient comes from a face-sized signal.
@@ -822,7 +834,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         logger.info(f"[preview] pre-encoding {len(sample_prompts)} sample prompt(s)...")
         encoded = encode_sample_prompts(te_path, sample_prompts, device=device, quantize=True)
 
-    tags = [f"{n_img} img, {n_st} clip stills", "fizgig"]
+    tags = [f"{n_img} img, {n_st} clip stills" + (f", {n_mo} clips as motion" if n_mo else ""), "fizgig"]
 
     if trains or encoded:
         _n_ride = (min(int(ref_subset), int(mod0.shape[2])) if ref_subset and int(ref_subset) > 0

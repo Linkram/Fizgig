@@ -1099,10 +1099,19 @@ REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32�
 REFMOD_STEP_OPTIONS = ["0 (plain encode — what the node pack makes)", "200 (optimised against H3 — recommended)",
                        "500", "1000"]
 REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
+# How a clip in the dataset enters the mod (16 Sep 2026): its sharpest-face still (one frame,
+# the identity choice) or every latent frame as motion (the node pack's video reference).
+REFMOD_CLIPS_OPTIONS = ["as their sharpest still", "as motion (all their frames)"]
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "16",
     "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
+    "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
 }
+
+
+def refmod_clips_value(label) -> str:
+    """'as motion (all their frames)' -> 'motion'; anything else -> 'still'."""
+    return "motion" if str(label or "").strip().lower().startswith("as motion") else "still"
 REFMOD_BUILT_IN_PRESETS = {
     # The community recipe (16 Sep 2026): the node pack's own extractor path — encode mode (no
     # optimisation), full-resolution references, under its 8 192-token cap (8 references at
@@ -1112,6 +1121,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         "MINIMAX_REFMOD_REFS": "8",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
     },
@@ -1147,6 +1157,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[2],
         "MINIMAX_REFMOD_REFS": "all",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
     },
@@ -1155,6 +1166,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         "MINIMAX_REFMOD_REFS": "all",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
     },
@@ -4303,6 +4315,18 @@ class LoRATrainerGUI:
                 self._refmod_frame, textvariable=self.dataset_megapixels_var,
                 values=["0.25", "0.37", "0.5", "0.75", "1.0"], width=6, state="readonly")
             self._refmod_mp_combo.pack(side=tk.LEFT)
+            tk.Label(self._refmod_frame, text="Clips:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_CLIPS"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_CLIPS_OPTIONS), state="readonly", width=26)
+            self.entries["MINIMAX_REFMOD_CLIPS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_CLIPS", REFMOD_DEFAULTS["MINIMAX_REFMOD_CLIPS"])))
+            self.entries["MINIMAX_REFMOD_CLIPS"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_CLIPS"],
+                    "How a clip in the dataset enters the mod. Sharpest still: one frame, the face — "
+                    "the identity choice. Motion: every latent frame of the clip, the node pack's video "
+                    "reference (a dance, a camera move); tokens are per frame, so a clip costs its length. "
+                    "Prepare clips with Gizmo first — cut to H3's frame grid at the right size, they work best.")
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
@@ -32194,6 +32218,7 @@ class LoRATrainerGUI:
             "--output_dir", self.settings["LORA_OUTPUT_DIR"],
             "--output_name", self.settings["LORA_NAME"],
             "--grid", _grid, "--steps", _steps, "--max_refs", _refs_arg,
+            "--clips", refmod_clips_value(self.settings.get("MINIMAX_REFMOD_CLIPS", _d["MINIMAX_REFMOD_CLIPS"])),
             "--seed", str(self.settings.get("SEED", 42) or 42),
         ]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
