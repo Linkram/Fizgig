@@ -159,19 +159,35 @@ def aspect_grid(pool: int, aspect_hw: float) -> Tuple[int, int]:
 
 def _canvas_ref(refs) -> Tuple[int, int]:
     """The canvas every reference is fitted to: the MAJORITY aspect among the references (a
-    portrait set on a portrait canvas, a square set on a square one), sized by the largest
-    reference of that aspect. Whichever file sorts first is not a canvas policy."""
+    portrait set on a portrait canvas, a square set on a square one), sized by the MEDIAN
+    reference of that aspect (16 Sep 2026 — the largest used to set it, which interpolated
+    every smaller reference UP in latent space and blurred it; at the median most references
+    are used at native scale and only the biggest scale down). Whichever file sorts first is
+    not a canvas policy."""
     from collections import Counter
     keys = [round(int(z.shape[-2]) / float(int(z.shape[-1])), 1) for _, z, _ in refs]
     top = Counter(keys).most_common(1)[0][0]
-    cands = [z for (_, z, _), k in zip(refs, keys) if k == top]
-    best = max(cands, key=lambda z: int(z.shape[-2]) * int(z.shape[-1]))
+    cands = sorted([z for (_, z, _), k in zip(refs, keys) if k == top],
+                   key=lambda z: int(z.shape[-2]) * int(z.shape[-1]))
+    best = cands[len(cands) // 2]                       # upper-middle: lean larger on a tie
     return int(best.shape[-2]), int(best.shape[-1])
 
 
-def cover_crop(z4: torch.Tensor, gh: int, gw: int) -> torch.Tensor:
+def crop_window(nh: int, nw: int, gh: int, gw: int, centre=None) -> Tuple[int, int]:
+    """(top, left) of a gh x gw window inside an nh x nw latent. centre = (fy, fx) in [0, 1]
+    (a face, normalised) puts the window around it, clamped to the edges; None = the middle."""
+    if centre is None:
+        return (nh - gh) // 2, (nw - gw) // 2
+    fy, fx = float(centre[0]), float(centre[1])
+    top = int(round(fy * nh - gh / 2.0))
+    left = int(round(fx * nw - gw / 2.0))
+    return max(0, min(nh - gh, top)), max(0, min(nw - gw, left))
+
+
+def cover_crop(z4: torch.Tensor, gh: int, gw: int, centre=None) -> torch.Tensor:
     """[1, 24, h, w] -> [1, 24, gh, gw] with the ASPECT KEPT: scale so the latent covers the
-    canvas, then centre-crop — the node pack's `crop="center"` cover-crop, on latents. A
+    canvas, then crop — the node pack's `crop="center"` cover-crop, on latents, except that a
+    face `centre` (normalised (y, x)) slides the window to keep the face (16 Sep 2026). A
     portrait latent on a square canvas loses its top/bottom instead of being squashed (the
     first version resized straight to the canvas and squashed faces — Peter, 10 Sep 2026)."""
     h, w = int(z4.shape[-2]), int(z4.shape[-1])
@@ -179,11 +195,73 @@ def cover_crop(z4: torch.Tensor, gh: int, gw: int) -> torch.Tensor:
     nh, nw = max(gh, int(round(h * s))), max(gw, int(round(w * s)))
     if (nh, nw) != (h, w):
         z4 = F.interpolate(z4, size=(nh, nw), mode="bilinear", align_corners=False)
-    top, left = (nh - gh) // 2, (nw - gw) // 2
+    top, left = crop_window(nh, nw, gh, gw, centre)
     return z4[..., top:top + gh, left:left + gw]
 
 
-def build_mod(refs, grid: Optional[int]) -> Tuple[torch.Tensor, str]:
+_STEM_RES_RX = None
+
+
+def image_stem(cache_stem: str) -> str:
+    """'shot (1)_1024x1024' (a cache file's stem) -> 'shot (1)' (the dataset image's stem)."""
+    import re
+    global _STEM_RES_RX
+    if _STEM_RES_RX is None:
+        _STEM_RES_RX = re.compile(r"_\d+x\d+$")
+    return _STEM_RES_RX.sub("", str(cache_stem))
+
+
+def reference_face_centres(refs, image_dirs) -> dict:
+    """{cache stem: (fy, fx)} — the largest detected face in each reference's dataset image,
+    normalised to the image. Only consulted when a reference has to be cropped. Empty when the
+    detector is unavailable or an image can't be found; every failure is per-reference."""
+    out = {}
+    dirs = [d for d in (image_dirs or []) if d and os.path.isdir(d)]
+    if not dirs or not refs:
+        return out
+    try:
+        import sys as _sys
+        _root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        if _root not in _sys.path:
+            _sys.path.insert(0, _root)
+        from face_utils import FaceDetector
+        from PIL import Image as _Image
+        det = FaceDetector()
+        _avail = getattr(det, "available", True)
+        if not (_avail() if callable(_avail) else _avail):
+            return out
+    except Exception as exc:
+        logger.info(f"[refmod] face-centred cropping unavailable ({exc}); centre crops")
+        return out
+    exts = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+    for stem, _z, _kind in refs:
+        istem = image_stem(stem)
+        path = None
+        for d in dirs:
+            for e in exts:
+                cand = os.path.join(d, istem + e)
+                if os.path.isfile(cand):
+                    path = cand
+                    break
+            if path:
+                break
+        if not path:
+            continue
+        try:
+            faces = det.detect_all(path)
+            face = det.get_largest(faces) if faces else None
+            if face is None:
+                continue
+            with _Image.open(path) as im:
+                W, H = im.size
+            cx, cy = face.center
+            out[stem] = (float(max(0.0, min(1.0, cy / float(H)))), float(max(0.0, min(1.0, cx / float(W)))))
+        except Exception as exc:
+            logger.info(f"[refmod] face detection skipped for {istem}: {exc}")
+    return out
+
+
+def build_mod(refs, grid: Optional[int], faces: Optional[dict] = None) -> Tuple[torch.Tensor, str]:
     """(name, [24, h, w], kind) refs -> the mod latent [1, 24, T, gh, gw] fp32 + a pool label.
 
     Every reference is cover-cropped (aspect kept) onto one canvas — the majority aspect among
@@ -203,11 +281,32 @@ def build_mod(refs, grid: Optional[int]) -> Tuple[torch.Tensor, str]:
         gh, gw = aspect_grid(int(grid), ch / float(cw))
         label = f"{len(refs)}x{gh}x{gw}"
     frames = []
-    for _, z, _ in refs:
-        z4 = cover_crop(z.float().unsqueeze(0), ch, cw)              # [1, 24, ch, cw], aspect kept
+    n_cropped = 0
+    for stem, z, _ in refs:
+        h, w = int(z.shape[-2]), int(z.shape[-1])
+        sc = max(ch / float(h), cw / float(w))
+        nh, nw = max(ch, int(round(h * sc))), max(cw, int(round(w * sc)))
+        lost = 1.0 - (ch * cw) / float(nh * nw)
+        centre = (faces or {}).get(stem)
+        if lost > 0.005:
+            n_cropped += 1
+            _how = "centre — no face found"
+            if centre:
+                # The window slides within the overflow only — never a tighter crop. A face
+                # near an edge lands the window at that edge; say so rather than crop more.
+                _top, _left = crop_window(nh, nw, ch, cw, centre)
+                _want_t, _want_l = int(round(centre[0] * nh - ch / 2.0)), int(round(centre[1] * nw - cw / 2.0))
+                _how = ("around the face" if (_top, _left) == (_want_t, _want_l)
+                        else "face kept, at the edge — the canvas can't centre it without cropping more")
+            logger.info("[refmod] %s: %.0f%% cropped to the %dx%d canvas (%s)", stem, lost * 100,
+                        cw * 16, ch * 16, _how)
+        z4 = cover_crop(z.float().unsqueeze(0), ch, cw, centre)      # [1, 24, ch, cw], aspect kept
         if grid is not None:
             z4 = F.adaptive_avg_pool2d(z4, (gh, gw))
         frames.append(z4)
+    if n_cropped:
+        logger.info("[refmod] %d of %d references were cropped to the canvas; the rest are used "
+                    "whole (a same-aspect set is never cropped)", n_cropped, len(refs))
     latent = torch.stack(frames, dim=2)                               # [1, 24, T, gh, gw]
     return latent.contiguous(), label
 
@@ -544,6 +643,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         raise RuntimeError("No training items — run the MiniMax cache steps first.")
     cache_dirs = [getattr(ds, "cache_directory", "") for ds in group.datasets]
     refs = collect_refs(cache_dirs, max_refs=max_refs)
+    # Faces, for the references that end up cropped: the dataset is prepared framing, so a
+    # crop keeps the face rather than the frame centre (Peter, 16 Sep 2026).
+    faces = reference_face_centres(refs, [getattr(ds, "image_directory", "") for ds in group.datasets])
     if not refs:
         raise RuntimeError("No reference stills in the caches (photos, or clips cached with "
                            "'Also train the sharpest face still').")
@@ -561,7 +663,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     else:
         logger.info(f"[refmod] {len(refs)} reference(s): {n_img} photo(s), {n_st} clip still(s) — "
                     + ", ".join(r[0] for r in refs))
-        mod0, pool_label = build_mod(refs, grid)
+        mod0, pool_label = build_mod(refs, grid, faces)
         mode = "training" if grid is not None else "encode"
         _tok = token_count(mod0)
         logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {_tok} tokens, "
