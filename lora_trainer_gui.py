@@ -1111,6 +1111,11 @@ REFMOD_CONCEPT_OPTIONS = ["identity", "style", "pose_motion", "clothing", "backg
 # what it's for"); a cap with no motion clips does nothing. Off by default.
 REFMOD_TOKEN_CAP_OPTIONS = ["off (every clip frame kept)", "5,120 (the pack's default)", "8,192 (the library's files)",
                             "16,384"]
+# Audio mod (16 Sep 2026): the pack's audio RefMod, a plain encode of the folder's sound through
+# the H3 audio VAE, written as a second file <name>_audio.safetensors. Off by default.
+REFMOD_AUDIO_OPTIONS = ["off (visual mod only)", "from the folder's clips and audio files"]
+REFMOD_AUDIO_CONCEPT_OPTIONS = ["voice", "singing", "music_style", "sound_fx", "ambience"]
+REFMOD_AUDIO_SECONDS_OPTIONS = ["10", "20", "30", "60"]
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "16",
     "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
@@ -1118,7 +1123,15 @@ REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_DESC": "",
     "MINIMAX_REFMOD_CONCEPT": REFMOD_CONCEPT_OPTIONS[0],
     "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
+    "MINIMAX_REFMOD_AUDIO": REFMOD_AUDIO_OPTIONS[0],
+    "MINIMAX_REFMOD_AUDIO_CONCEPT": REFMOD_AUDIO_CONCEPT_OPTIONS[0],
+    "MINIMAX_REFMOD_AUDIO_SECONDS": "30",
 }
+
+
+def refmod_audio_on(label) -> bool:
+    """'from the folder…' -> True; 'off …', blank or anything else -> False."""
+    return str(label or "").strip().lower().startswith("from")
 
 
 def refmod_token_cap_value(label) -> str:
@@ -1144,6 +1157,9 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO": REFMOD_AUDIO_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO_CONCEPT": REFMOD_AUDIO_CONCEPT_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO_SECONDS": "30",
         "MINIMAX_REFMOD_CONCEPT": "identity",
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
@@ -1182,6 +1198,9 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO": REFMOD_AUDIO_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO_CONCEPT": REFMOD_AUDIO_CONCEPT_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO_SECONDS": "30",
         "MINIMAX_REFMOD_CONCEPT": "style",
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
@@ -1195,6 +1214,9 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO": REFMOD_AUDIO_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO_CONCEPT": REFMOD_AUDIO_CONCEPT_OPTIONS[0],
+        "MINIMAX_REFMOD_AUDIO_SECONDS": "30",
         "MINIMAX_REFMOD_CONCEPT": "style",
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
@@ -4393,6 +4415,44 @@ class LoRATrainerGUI:
                     "that are near-duplicates of the last kept one (a held shot is mostly those), then what "
                     "is left is spread evenly down to what fits. Photos are never touched, whatever the cap; "
                     "with no motion clips this does nothing. Off keeps every frame.")
+            # Third row: the audio mod — the pack's audio RefMod, a plain encode of the folder's sound.
+            self._refmod_frame3 = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_frame3, text="Audio mod:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_AUDIO"] = ttk.Combobox(
+                self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=36)
+            _au = str(self.settings.get("MINIMAX_REFMOD_AUDIO", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO"]))
+            self.entries["MINIMAX_REFMOD_AUDIO"].set(_au if _au in REFMOD_AUDIO_OPTIONS else REFMOD_AUDIO_OPTIONS[0])
+            self.entries["MINIMAX_REFMOD_AUDIO"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_AUDIO"],
+                    "Also write <name>_audio.safetensors: the folder's sound (each clip's soundtrack and "
+                    "any audio file, in file order, muted clips skipped) through the H3 audio VAE, the "
+                    "pack's audio RefMod. A plain encode, no training. Load it in the same loader slot "
+                    "as the visual mod (components: Audio) or on its own. Needs the Audio VAE path in "
+                    "Preferences. RefMod Studio renders visual mods only; audio mods play in ComfyUI. "
+                    "The pack's own tests carried music across but not a speaker's voice.")
+            tk.Label(self._refmod_frame3, text="Kind:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"] = ttk.Combobox(
+                self._refmod_frame3, values=list(REFMOD_AUDIO_CONCEPT_OPTIONS), state="readonly", width=12)
+            _ac = str(self.settings.get("MINIMAX_REFMOD_AUDIO_CONCEPT", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO_CONCEPT"]))
+            self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"].set(_ac if _ac in REFMOD_AUDIO_CONCEPT_OPTIONS else REFMOD_AUDIO_CONCEPT_OPTIONS[0])
+            self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_AUDIO_CONCEPT"],
+                    "What the sound is, in the pack's terms: voice, singing, music_style, sound_fx, ambience. "
+                    "Stored in the file as its concept type.")
+            tk.Label(self._refmod_frame3, text="Up to:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"] = ttk.Combobox(
+                self._refmod_frame3, values=list(REFMOD_AUDIO_SECONDS_OPTIONS), width=5)
+            self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_AUDIO_SECONDS", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO_SECONDS"])))
+            self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"].pack(side=tk.LEFT)
+            tk.Label(self._refmod_frame3, text="seconds", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(6, 0))
+            ToolTip(self.entries["MINIMAX_REFMOD_AUDIO_SECONDS"],
+                    "How much sound goes in, from the start of the folder's files. Every 1/40 s costs 2 "
+                    "tokens at generation: 30 s is 2,400 tokens, the pack's default length.")
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
@@ -4421,6 +4481,7 @@ class LoRATrainerGUI:
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
                 self._refmod_frame1b.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_frame2.pack(anchor=tk.W, pady=(6, 0))
+                self._refmod_frame3.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
 
         # === Presets card ===
@@ -8618,7 +8679,8 @@ class LoRATrainerGUI:
                 _note = getattr(self, "_minimax_sample_note", None)
                 _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
                 _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
-                for _frx in (getattr(self, "_refmod_frame1b", None), getattr(self, "_refmod_frame2", None)):
+                for _frx in (getattr(self, "_refmod_frame1b", None), getattr(self, "_refmod_frame2", None),
+                             getattr(self, "_refmod_frame3", None)):
                     if _frx is not None:
                         _frx.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
@@ -8626,7 +8688,8 @@ class LoRATrainerGUI:
                     _std.pack(anchor=tk.W, pady=(6, 0), **_kw)
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
-                for _frx in (getattr(self, "_refmod_frame1b", None), getattr(self, "_refmod_frame2", None)):
+                for _frx in (getattr(self, "_refmod_frame1b", None), getattr(self, "_refmod_frame2", None),
+                             getattr(self, "_refmod_frame3", None)):
                     if _frx is not None:
                         _frx.pack_forget()
                 _hint.pack_forget()
@@ -28328,7 +28391,12 @@ class LoRATrainerGUI:
                 row["mod_var"].set(ra.NONE_MOD)
             self._rms_row_refresh(row)
         if not quiet or found:
-            self.rms_status_var.set(f"{len(found)} RefMod{'s' if len(found) != 1 else ''} in {folder or '(no folder)'}.")
+            _n_audio = sum(1 for m in ra.scan_refmods(folder, self._rms_scan_cache, include_audio=True)
+                           if str(m.get("kind", "")) == "audio")
+            self.rms_status_var.set(
+                f"{len(found)} RefMod{'s' if len(found) != 1 else ''} in {folder or '(no folder)'}."
+                + (f"  {_n_audio} audio mod{'s' if _n_audio != 1 else ''} not listed: the Studio renders "
+                   f"visual mods only, audio mods play in ComfyUI." if _n_audio else ""))
         self._rms_refresh_tokens()
         self._rms_persist()
 
@@ -32340,6 +32408,14 @@ class LoRATrainerGUI:
         _cap = refmod_token_cap_value(self.settings.get("MINIMAX_REFMOD_TOKEN_CAP", _d["MINIMAX_REFMOD_TOKEN_CAP"]))
         if _cap != "0":
             cmd += ["--token_cap", _cap]
+        if refmod_audio_on(self.settings.get("MINIMAX_REFMOD_AUDIO", _d["MINIMAX_REFMOD_AUDIO"])):
+            _ac = str(self.settings.get("MINIMAX_REFMOD_AUDIO_CONCEPT", "") or "").strip()
+            cmd += ["--audio", "folder",
+                    "--audio_max_seconds", refmod_num(self.settings.get("MINIMAX_REFMOD_AUDIO_SECONDS"), "30", float),
+                    "--audio_concept", _ac if _ac in REFMOD_AUDIO_CONCEPT_OPTIONS else _d["MINIMAX_REFMOD_AUDIO_CONCEPT"]]
+            _avae = self._krea2_pref("minimax_audio_vae")
+            if _avae:
+                cmd += ["--audio_vae", _avae]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         # NF4 always (Peter, 16 Sep 2026): 10.5 GB resident, so the step fits without recompute

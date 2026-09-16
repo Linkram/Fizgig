@@ -279,9 +279,20 @@ def read_refmod_meta(path: str) -> Optional[dict]:
             shape = f.get_slice("latent").get_shape()
     except Exception:
         return None
-    if not isinstance(meta, dict) or len(shape) != 5:
+    if not isinstance(meta, dict) or len(shape) not in (4, 5):
         return None
     meta = dict(meta)
+    if len(shape) == 4:
+        # an audio mod: [1, 32, 2, T], 2 tokens a latent frame
+        if tuple(shape[:3]) != (1, 32, 2):
+            return None
+        meta["kind"] = "audio"
+        meta.setdefault("latent_t", int(shape[3]))
+        meta["latent_h"] = meta["latent_w"] = 0
+        meta.setdefault("name", os.path.splitext(os.path.basename(path))[0])
+        meta["tokens"] = 2 * int(meta["latent_t"])
+        meta["path"] = path
+        return meta
     meta.setdefault("latent_t", int(shape[2]))
     meta.setdefault("latent_h", int(shape[3]))
     meta.setdefault("latent_w", int(shape[4]))
@@ -292,9 +303,11 @@ def read_refmod_meta(path: str) -> Optional[dict]:
     return meta
 
 
-def scan_refmods(folder: str, cache: Optional[dict] = None) -> List[dict]:
+def scan_refmods(folder: str, cache: Optional[dict] = None, include_audio: bool = False) -> List[dict]:
     """Every RefMod in a folder (non-recursive), by name. `cache` keyed on
-    (path, size, mtime) skips re-reading unchanged headers."""
+    (path, size, mtime) skips re-reading unchanged headers. Audio mods (kind "audio", a
+    [1, 32, 2, T] latent) are left out unless asked for: the Studio's renderer takes visual
+    references only; they play in ComfyUI."""
     out = []
     if not folder or not os.path.isdir(folder):
         return out
@@ -314,6 +327,8 @@ def scan_refmods(folder: str, cache: Optional[dict] = None) -> List[dict]:
                 continue
             if cache is not None:
                 cache[key] = meta
+        if not include_audio and str(meta.get("kind", "")) == "audio":
+            continue
         out.append(meta)
     return out
 

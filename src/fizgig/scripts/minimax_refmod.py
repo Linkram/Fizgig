@@ -77,6 +77,16 @@ def setup_parser():
                         "thins a clip (near-duplicate frames dropped first, then an even resample); "
                         "photos are never touched. 0 = keep every frame (default). The pack's own "
                         "default is 5120")
+    p.add_argument("--audio", choices=["off", "folder"], default="off",
+                   help="also write <name>_audio.safetensors: the folder's sound (clip soundtracks "
+                        "and audio files, in file order) through the H3 audio VAE — the pack's audio "
+                        "RefMod, a plain encode. Needs --audio_vae")
+    p.add_argument("--audio_max_seconds", type=float, default=30.0,
+                   help="how much sound goes in (2 tokens per 1/40 s; 30 s = 2400 tokens)")
+    p.add_argument("--audio_concept", default="voice",
+                   choices=["voice", "singing", "music_style", "sound_fx", "ambience"],
+                   help="the audio mod's concept type, in the pack's terms")
+    p.add_argument("--audio_vae", default=None, help="H3 audio VAE (minimax_h3_audio_vae_fp32.safetensors)")
     p.add_argument("--holdout_refs", action="store_true",
                    help="hold the reference stills OUT of the optimiser's training set (default: it "
                         "trains on every still, references included)")
@@ -112,6 +122,8 @@ def main():
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, concept_type=a.concept_type, init_from=a.init_from,
                exclude_refs=a.holdout_refs, token_cap=a.token_cap,
+               audio=a.audio, audio_max_seconds=a.audio_max_seconds, audio_concept=a.audio_concept,
+               audio_vae_path=a.audio_vae,
                ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset, clips=a.clips,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 

@@ -382,6 +382,148 @@ def save_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, mode: str,
     return out
 
 
+# ─── audio mods (encode only) ────────────────────────────────────────────────────────────────
+# The pack's audio RefMod (v0.2.0+): the sound through the H3 audio VAE, one latent
+# [1, 32, 2, T] at 40 latent frames a second, 2 tokens a frame, kind "audio". A plain encode —
+# the pack offers no training for audio and Peter chose not to try the stepped recipe on it
+# (16 Sep 2026). Their own tests: music carries over, a speaker's voice did not.
+
+AUDIO_CONCEPT_TYPES = ("voice", "singing", "music_style", "sound_fx", "ambience")
+AUDIO_SAMPLE_RATE = 32000
+AUDIO_HOP = 800                      # samples per latent frame -> 40 a second
+AUDIO_CHUNK_SECONDS = 10.0           # the pack's bounded encode chunk
+
+
+def collect_audio(image_dirs, max_seconds: float):
+    """The folder's sound in file order: every clip's soundtrack (muted clips skipped) and every
+    audio file, joined until `max_seconds`. -> (waveform float32 [2, L] at 32 kHz, sources) or
+    (None, []) when there is nothing to hear."""
+    import numpy as np
+    from fizgig.minimax.audio import AudioRejected, is_audio, read_audio_file
+    from fizgig.minimax.clip import is_video, read_audio
+    want = int(round(float(max_seconds) * AUDIO_SAMPLE_RATE))
+    pieces, sources, total = [], [], 0
+    for d in image_dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d), key=str.lower):
+            if total >= want:
+                break
+            p = os.path.join(d, fn)
+            wav = None
+            try:
+                if is_video(p):
+                    wav = read_audio(p)
+                elif is_audio(p):
+                    wav = read_audio_file(p)
+            except AudioRejected as e:
+                logger.info(f"[refmod] audio: {e}")
+                continue
+            except Exception as e:  # a broken file is skipped, not fatal
+                logger.warning(f"[refmod] audio: {fn}: {e}")
+                continue
+            if wav is None or wav.size == 0:
+                continue
+            take = wav[:, :max(0, want - total)]
+            pieces.append(np.asarray(take, dtype=np.float32))
+            sources.append(fn)
+            total += take.shape[1]
+    if not pieces:
+        return None, []
+    return np.concatenate(pieces, axis=1), sources
+
+
+def encode_audio_mod(audio_vae, wav, chunk_seconds: float = AUDIO_CHUNK_SECONDS) -> torch.Tensor:
+    """[2, L] float32 at 32 kHz -> [1, 32, 2, T] fp32, encoded in bounded chunks of whole latent
+    frames the way the pack does (10 s = 400 frames = 320 000 samples a chunk)."""
+    chunk = max(AUDIO_HOP, int(round(float(chunk_seconds) * (AUDIO_SAMPLE_RATE // AUDIO_HOP))) * AUDIO_HOP)
+    x = torch.as_tensor(wav, dtype=torch.float32)
+    if x.dim() == 2:
+        x = x.unsqueeze(0)                                            # [1, 2, L]
+    dev = next(audio_vae.parameters()).device if hasattr(audio_vae, "parameters") else "cpu"
+    outs = []
+    with torch.no_grad():
+        for start in range(0, int(x.shape[-1]), chunk):
+            z = audio_vae.encode(x[..., start:start + chunk].to(dev)).detach().float().cpu()
+            if z.dim() != 4 or tuple(z.shape[:3]) != (1, 32, 2):
+                raise ValueError(f"the H3 audio VAE returned an unexpected latent: {tuple(z.shape)}")
+            outs.append(z)
+    return torch.cat(outs, dim=-1).contiguous()
+
+
+def audio_token_count(latent: torch.Tensor) -> int:
+    return 2 * int(latent.shape[-1])
+
+
+def save_audio_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, description: str = "",
+                      concept_type: str = "voice", tags=None, extra: Optional[dict] = None) -> str:
+    """Write `<path>.safetensors` as the pack's audio RefMod: tensor `latent` [1, 32, 2, T] and the
+    same header block, kind "audio", sample_rate 32000. Returns the path."""
+    from safetensors.torch import save_file
+    latent = latent.detach().to("cpu", torch.float32).contiguous()
+    assert latent.dim() == 4 and tuple(latent.shape[:3]) == (1, 32, 2), \
+        f"audio latent must be [1, 32, 2, T], got {tuple(latent.shape)}"
+    T = int(latent.shape[-1])
+    meta = {
+        "name": name,
+        "kind": "audio",
+        "latent_h": 0,
+        "latent_w": 0,
+        "latent_t": T,
+        "mode": "encode",
+        "source": "audio",
+        "source_shape": f"2x{T}",
+        "pool": "",
+        "optimize_steps": 0,
+        "tags": list(tags or []),
+        "description": description or "",
+        "concept_type": concept_type if concept_type in AUDIO_CONCEPT_TYPES else "voice",
+        "_format_version": NODE_FORMAT_VERSION,
+        "sample_rate": AUDIO_SAMPLE_RATE,
+    }
+    header = {NODE_META_KEY: json.dumps(meta)}
+    for k, v in (extra or {}).items():
+        header[str(k)] = str(v)
+    os.makedirs(os.path.dirname(path_no_ext) or ".", exist_ok=True)
+    out = path_no_ext + ".safetensors"
+    save_file({"latent": latent}, out, metadata=header)
+    return out
+
+
+def make_audio_refmod(image_dirs, out_path_no_ext: str, *, name: str, audio_vae_path: Optional[str],
+                      max_seconds: float = 30.0, concept_type: str = "voice", description: str = "",
+                      device=None) -> Optional[str]:
+    """The whole audio step: gather the folder's sound, encode it, write the file. Returns the
+    path, or None when the folder has no sound (logged, not an error)."""
+    wav, sources = collect_audio(image_dirs, max_seconds)
+    if wav is None:
+        logger.warning("[refmod] audio: no sound in the dataset folder (no clip with a soundtrack, "
+                       "no audio file) — no audio mod written")
+        return None
+    if not audio_vae_path or not os.path.isfile(audio_vae_path):
+        raise RuntimeError("an audio mod needs the H3 audio VAE — set the Audio VAE path in "
+                           "Preferences (Model Paths, MiniMax H3)")
+    from fizgig.minimax.audio_vae import load_minimax_h3_audio_vae
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"[refmod] audio: {wav.shape[1] / AUDIO_SAMPLE_RATE:.1f} s from {len(sources)} "
+                f"source(s) — {', '.join(sources)}")
+    vae = load_minimax_h3_audio_vae(audio_vae_path, device=device, dtype=torch.float32)
+    try:
+        latent = encode_audio_mod(vae, wav)
+    finally:
+        del vae
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    out = save_audio_refmod(out_path_no_ext, latent, name=name, description=description,
+                            concept_type=concept_type,
+                            tags=[f"{len(sources)} source(s), {wav.shape[1] / AUDIO_SAMPLE_RATE:.1f} s", "fizgig"],
+                            extra={"ss_refmod_audio_seconds": f"{max_seconds:g}"})
+    logger.info(f"[refmod] audio mod saved {out} ({audio_token_count(latent)} tokens, "
+                f"{int(latent.shape[-1])} latent frames) — a second file for the same loader slot "
+                f"(components: Audio) or its own; plays in ComfyUI, RefMod Studio renders visual mods only")
+    return out
+
+
 def load_refmod(path: str):
     """-> (latent [1, 24, T, H, W] fp32, meta dict) — the node's reader, in miniature."""
     from safetensors import safe_open
@@ -802,7 +944,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
                ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1,
-               clips: str = "still", concept_type: str = "identity", token_cap: int = 0) -> str:
+               clips: str = "still", concept_type: str = "identity", token_cap: int = 0,
+               audio: str = "off", audio_max_seconds: float = 30.0, audio_concept: str = "voice",
+               audio_vae_path: Optional[str] = None) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -984,6 +1128,12 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     mb = os.path.getsize(out) / 1024 / 1024
     logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
                 f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")
+    if str(audio or "off").lower() != "off":
+        # After the visual mod, with the DiT gone: the folder's sound as a second file.
+        make_audio_refmod([getattr(ds, "image_directory", "") for ds in group.datasets],
+                          os.path.join(output_dir, output_name + "_audio"), name=output_name + "_audio",
+                          audio_vae_path=audio_vae_path, max_seconds=float(audio_max_seconds),
+                          concept_type=audio_concept, description=description, device=device)
     return out
 
 
