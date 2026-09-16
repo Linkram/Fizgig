@@ -26913,13 +26913,14 @@ class LoRATrainerGUI:
         if P is None:
             return
         clips = self._repair_player_clips(P)
-        base = clips.get("baseline")
-        tweak = clips.get("tweaked")
-        if base is None or tweak is None:
+        # every side the window was opened with must have its clip (a caller may open with one
+        # side only — a RefMod Studio sweep chip with no No-mod clip to put beside it)
+        needed = {sd: clips.get(sd) for sd in P["sides"] if sd != "nolora"}
+        if not needed or any(c is None for c in needed.values()):
             return
         nol = clips.get("nolora") if P.get("nolora", True) else None
         shown = self._repair_nolora_shown() if P.get("nolora", True) else False
-        lens = [len(base["frames"]), len(tweak["frames"])] + ([len(nol["frames"])] if nol else [])
+        lens = [len(c["frames"]) for c in needed.values()] + ([len(nol["frames"])] if nol else [])
         P["n"] = max(1, min(lens))
         P["cache"] = {}
         P["scrub"].configure(to=max(P["n"] - 1, 1))
@@ -27682,6 +27683,7 @@ class LoRATrainerGUI:
     _RMS_SWEEPS = ("Retention 0 · 0.15 · 0.4 · 0.7 · 1", "Seeds ×4",
                    "Frame-curve directions ×5", "Step-curve directions ×5", "Copies 1 · 2 · 3 · 4")
     _RMS_HISTORY_MAX = 12
+    _RMS_SWEEP_FRAMES = 22   # sweeps render short clips, not stills — stills do not show what a RefMod does (Peter, 16 Sep 2026)
     _RMS_MODELS = ("Reference (ref2va)", "First / Last Frame (fl2va)")
 
     def create_refmod_studio_tab(self):
@@ -27980,7 +27982,7 @@ class LoRATrainerGUI:
         _fc.pack(side=tk.LEFT)
         _fc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
         _rms_tip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
-                     "sound and open in the player. Sweeps always render stills.")
+                     "sound and open in the player. Sweeps render 22-frame clips.")
         ttk.Label(_sr, text="W:").pack(side=tk.LEFT, padx=(14, 2))
         self.rms_width_var = tk.StringVar(value=str(saved.get("width", "640")))
         _wc = ttk.Combobox(_sr, textvariable=self.rms_width_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
@@ -28047,16 +28049,17 @@ class LoRATrainerGUI:
         self.rms_sweep_var = tk.StringVar(value=self._RMS_SWEEPS[0])
         self._rms_sweep_btn = ttk.Button(_srow, text="▶ Render sweep", width=14, command=self._rms_sweep)
         self._rms_sweep_btn.pack(side=tk.LEFT)
-        _rms_tip(self._rms_sweep_btn, "Render the current setup as a strip of stills with ONE dial "
+        _rms_tip(self._rms_sweep_btn, "Render the current setup as a row of 22-frame clips with ONE dial "
                                      "stepped through its useful values — the fastest way to see what a "
-                                     "control does to this mod. Click a chip for the full size.")
+                                     "control does to this mod. Each chip is a clip's middle frame; click it to play.")
         ttk.Label(_srow, text="of").pack(side=tk.LEFT, padx=(8, 4))
         _swc = ttk.Combobox(_srow, textvariable=self.rms_sweep_var, values=list(self._RMS_SWEEPS), state="readonly", width=32)
         _swc.pack(side=tk.LEFT)
         ttk.Button(_srow, text="💾 Save strip…", width=13, command=self._rms_save_strip).pack(side=tk.LEFT, padx=(6, 0))
         tk.Label(_sw, text="Or sweep instead of a single render: one dial steps through its useful values, everything "
-                           "else stays as set, and you get a strip of stills to compare — the quickest way to see "
-                           "what a control does to this mod. Click a still in the strip for the full size.",
+                           "else stays as set, and you get a row of 22-frame clips to compare — the quickest way to "
+                           "see what a control does to this mod. Each chip shows a clip's middle frame; click it to "
+                           "play the clip.",
                  font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                  wraplength=900, justify=tk.LEFT, anchor=tk.W).pack(anchor=tk.W, pady=(2, 0))
         # what is happening, right under the buttons that started it
@@ -29197,7 +29200,7 @@ class LoRATrainerGUI:
         kind = self.rms_sweep_var.get()
         items = self._rms_sweep_items_for(kind)
         try:
-            jobs = [self._rms_job(dict(ov, frames=1, label=lbl)) for lbl, ov in items]
+            jobs = [self._rms_job(dict(ov, frames=self._RMS_SWEEP_FRAMES, label=lbl)) for lbl, ov in items]
         except Exception as e:
             messagebox.showerror("RefMod Studio", f"Couldn't build the sweep:\n{e}")
             return
@@ -29208,19 +29211,20 @@ class LoRATrainerGUI:
             w.destroy()
         self._rms_sweep_items = []
         self._rms_sweep_kind = kind
-        self.rms_status_var.set(f"Sweep: {kind} — {len(jobs)} stills…")
+        self.rms_status_var.set(f"Sweep: {kind} — {len(jobs)} clips of {self._RMS_SWEEP_FRAMES} frames…")
 
         def _work():
             for i, job in enumerate(jobs):
                 clip = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"], height=job["height"],
-                                         frames=1, regime="custom", ref_latents=job["latents"], ref_schedule=job["schedule"],
-                                         with_audio=False, steps=job["steps"], turbo_strength=job["turbo"])
+                                         frames=self._RMS_SWEEP_FRAMES, regime="custom", ref_latents=job["latents"],
+                                         ref_schedule=job["schedule"], with_audio=False, steps=job["steps"],
+                                         turbo_strength=job["turbo"])
                 self.master.after(0, lambda c=clip, j=job, k=i: self._rms_sweep_chip(c, j, k, len(jobs)))
             return True
 
         def _done(_):
             self._rms_set_busy(False)
-            self.rms_status_var.set(f"Sweep done: {kind}. Click a chip for the full size; 💾 Save strip keeps it.")
+            self.rms_status_var.set(f"Sweep done: {kind}. Click a chip to play its clip; 💾 Save strip keeps the middle frames.")
 
         def _fail(e, tb):
             self._rms_set_busy(False)
@@ -29239,13 +29243,26 @@ class LoRATrainerGUI:
         cell.grid(row=0, column=i, padx=3, pady=2)
         lbl = tk.Label(cell, image=self._rms_thumb(clip["middle"], 160), bg=COLORS["bg_surface"], cursor="hand2")
         lbl.pack()
-        lbl.bind("<Button-1>", lambda e, c=clip, j=job: self._rms_popout(c["middle"], j["label"]))
+        lbl.bind("<Button-1>", lambda e, c=clip, j=job: self._rms_open_sweep_clip(c, j))
         tk.Label(cell, text=job["label"], font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack()
         _rms_tip(lbl, self._rms_describe_job(job))
         self.rms_status_var.set(f"Sweep: {i + 1} of {n} done…")
 
+    def _rms_open_sweep_clip(self, clip, job):
+        """A sweep chip: play its clip in the shared player, beside No mod when one is rendered."""
+        base = self._rms_clips.get("baseline")
+        clips = {"tweaked": clip}
+        sides = ["tweaked"]
+        if base is not None and int(base.get("frames_n", 1)) == int(clip.get("frames_n", 1)):
+            clips["baseline"] = base
+            sides.append("baseline")
+        self._repair_clip_player_open(clips=clips, sides=sides,
+                                      labels={"tweaked": job["label"], "baseline": "No mod (base, same seed)"},
+                                      title=f"RefMod Studio — sweep: {job['label']}",
+                                      metrics=False, nolora=False, stem="rms_sweep", status_var=self.rms_status_var)
+
     def _rms_save_strip(self):
-        """The sweep as one labelled contact sheet PNG."""
+        """The sweep as one labelled contact sheet PNG (each clip's middle frame)."""
         items = self._rms_sweep_items
         if not items:
             self.rms_status_var.set("No sweep to save — render one first.")
