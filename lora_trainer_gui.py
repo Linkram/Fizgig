@@ -1084,8 +1084,8 @@ MINIMAX_BUILT_IN_PRESETS = {
 # MiniMax H3 RefMod: the two controls, plus the clip still ON (each clip lends its sharpest
 # face as a reference). Spread from Fast so the hidden MiniMax fields hold sane values.
 
-REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32×32 (1024 tokens)",
-                       "16×16 (256 tokens, concept-level)", "8×8 (64 tokens, stackable)"]
+REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32×32 (256 tokens)",
+                       "16×16 (64 tokens, concept-level)", "8×8 (16 tokens, stackable)"]
 # Steps: the optimisation against the frozen H3 base — the thing no other RefMod maker does.
 # Measured 9-10 Sep 2026 (mbacc photos, ref2va, ArcFace vs the dataset): 200 steps at the
 # tested rate, pull and noise window took portraits 66 -> 70 and off-dataset scenes 53 -> 59,
