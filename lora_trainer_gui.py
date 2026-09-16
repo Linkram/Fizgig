@@ -30540,7 +30540,7 @@ class LoRATrainerGUI:
                 return True
             _low = line.lower()
             if "[refmod] audio mod saved" in _low:
-                self._set_training_progress_phase("Visual and audio mods saved", percent=100)
+                self._set_training_progress_phase("Visual and audio RefMod saved", percent=100)
                 return True
             if "[refmod] saved" in _low:
                 self._set_training_progress_phase("RefMod saved", percent=100)
