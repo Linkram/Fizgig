@@ -27766,13 +27766,11 @@ class LoRATrainerGUI:
             "files stay as made (to write one out with a setting baked in, see Actions at the "
             "bottom). Each row is one mod: Strength is how strongly it applies (0 off, 1 as stored), "
             "Copies is how many times it rides in the bundle (more copies pull harder, each costs its "
-            "tokens). Compare against is optional and is for putting two mods on one slider — the "
-            "same person made two ways, say, or two different people — to see which wins or where "
-            "between them you want to be. Pick the second mod and a Lean line appears with the "
-            "slider between the two names: at the centre neither mod is used; drag toward a name to "
-            "use that mod, and the further you drag the stronger it is, all the way meaning that mod "
-            "at full strength and the other not used at all. The note beside the slider says exactly "
-            "that in numbers. (It is the pack's Axis node.) Untick a row to leave it out.")
+            "tokens). The 'vs' picker on the second line is optional: pick a second mod there — the "
+            "same person made two ways, or two different people — and a Balance slider appears: left "
+            "is all the first mod, right is all the second, centre is neither, and Strength above sets "
+            "how strongly whichever side wins is used (the pack's Axis node). Untick a row to leave "
+            "it out.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
@@ -28249,9 +28247,8 @@ class LoRATrainerGUI:
         _ve.pack(side=tk.LEFT, padx=(4, 0))
         _ve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
         _ve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
-        _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored). With a mod picked under "
-                               "'Compare against', the same slider becomes a lean: left of centre leans to this mod, "
-                               "right of centre to the other, the distance from centre is the strength.")
+        _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored). With a second mod picked "
+                               "below, it is how strongly the side the Balance picks is used.")
         ttk.Label(fr, text="Copies:").grid(row=0, column=4, padx=(12, 2))
         row["copies_var"] = tk.StringVar(value=str(int(saved.get("copies", 1))))
         _cs = ttk.Spinbox(fr, from_=1, to=ra.MAX_COPIES, width=3, textvariable=row["copies_var"],
@@ -28263,45 +28260,32 @@ class LoRATrainerGUI:
         _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
         _x.grid(row=0, column=6, padx=(12, 0))
         row["sf"] = _sf
-        # Line 2: the optional second mod, directly under the first.
-        _bf = tk.Frame(fr, bg=bg)
-        _bf.grid(row=1, column=1, columnspan=7, sticky=tk.W, padx=(2, 0), pady=(4, 0))
-        ttk.Label(_bf, text="Compare against (optional):", foreground=COLORS["text_secondary"]).pack(side=tk.LEFT, padx=(0, 6))
+        # Line 2: the optional second mod — the same layout as line 1, its picker under the first.
+        tk.Label(fr, text="vs", font=(FONT_FAMILY, 10), fg=COLORS["text_secondary"], bg=bg).grid(row=1, column=0, pady=(4, 0))
         row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
-        row["b_combo"] = ttk.Combobox(_bf, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
-        row["b_combo"].pack(side=tk.LEFT)
+        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
+        row["b_combo"].grid(row=1, column=1, padx=(2, 6), sticky=tk.W, pady=(4, 0))
         self._rms_make_searchable(row["b_combo"], lambda: self._rms_row_changed(row))
-        _rms_tip(row["b_combo"], "Optional: two mods on one slider. Pick a second mod and a Lean line appears "
-                                "with the slider between the two names — centre uses neither, drag toward a "
-                                "name to use that mod, further = stronger, all the way = that mod at full "
-                                "strength and the other not used. Leave at (none) for a plain mod at a strength.")
-        # Line 3 (only with a second mod): the lean, drawn between the two names —
-        #   Lean:  first-mod ◀ [slider] ▶ second-mod   = toward …
-        # The slider frame (row["sf"]) is re-gridded here from line 1 by _rms_row_refresh.
-        # One frame spanning the row, so the lean line never widens line 1's columns. Its slider
-        # and number are bound to the SAME variables as line 1's (which is hidden meanwhile).
-        row["lean_row"] = tk.Frame(fr, bg=bg)
-        row["lean_left"] = tk.Frame(row["lean_row"], bg=bg)
-        row["lean_left"].pack(side=tk.LEFT)
-        tk.Label(row["lean_left"], text="Lean:", font=(FONT_FAMILY, 10, "bold"), fg=COLORS["text_primary"], bg=bg
-                 ).pack(side=tk.LEFT, padx=(0, 6))
-        row["lean_a"] = tk.Label(row["lean_left"], text="", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
-        row["lean_a"].pack(side=tk.LEFT)
-        tk.Label(row["lean_left"], text="◀", font=(FONT_FAMILY, 11), fg=COLORS["accent"], bg=bg).pack(side=tk.LEFT, padx=(6, 4))
-        row["lean_scale"] = ttk.Scale(row["lean_row"], from_=-1.0, to=1.0, orient=tk.HORIZONTAL, length=240,
-                                      variable=row["value_var"], command=lambda v, rw=row: self._rms_row_moved(rw))
-        row["lean_scale"].pack(side=tk.LEFT)
-        _lve = ttk.Entry(row["lean_row"], textvariable=row["value_str"], width=6)
-        _lve.pack(side=tk.LEFT, padx=(4, 0))
-        _lve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
-        _lve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
-        row["lean_right"] = tk.Frame(row["lean_row"], bg=bg)
-        row["lean_right"].pack(side=tk.LEFT)
-        tk.Label(row["lean_right"], text="▶", font=(FONT_FAMILY, 11), fg=COLORS["accent"], bg=bg).pack(side=tk.LEFT, padx=(4, 6))
-        row["lean_b"] = tk.Label(row["lean_right"], text="", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
-        row["lean_b"].pack(side=tk.LEFT)
-        row["axis_lbl"] = tk.Label(row["lean_right"], text="", font=(FONT_FAMILY, 10), fg=COLORS["accent"], bg=bg, anchor=tk.W)
-        row["axis_lbl"].pack(side=tk.LEFT, padx=(14, 0))
+        _rms_tip(row["b_combo"], "Optional second mod. Pick one and a Balance slider appears below: left is "
+                                "the first mod, right is the second, centre is neither. Strength above is "
+                                "how strongly whichever side wins is used. Leave at (none) for one mod.")
+        # Line 3 (only with a second mod): the balance, under Strength.
+        row["balance_var"] = tk.DoubleVar(value=float(saved.get("balance", -1.0)))
+        row["balance_lbl"] = tk.Label(fr, text="Balance:", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
+        row["bf"] = tk.Frame(fr, bg=bg)
+        tk.Label(row["bf"], text="first ◀", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg).pack(side=tk.LEFT, padx=(0, 4))
+        row["balance_scale"] = ttk.Scale(row["bf"], from_=-1.0, to=1.0, orient=tk.HORIZONTAL, length=150,
+                                         variable=row["balance_var"], command=lambda v, rw=row: self._rms_balance_moved(rw))
+        row["balance_scale"].pack(side=tk.LEFT)
+        tk.Label(row["bf"], text="▶ second", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg).pack(side=tk.LEFT, padx=(4, 4))
+        row["balance_str"] = tk.StringVar(value=f"{row['balance_var'].get():+.2f}")
+        _bve = ttk.Entry(row["bf"], textvariable=row["balance_str"], width=6)
+        _bve.pack(side=tk.LEFT)
+        _bve.bind("<Return>", lambda e, rw=row: self._rms_balance_typed(rw))
+        _bve.bind("<FocusOut>", lambda e, rw=row: self._rms_balance_typed(rw))
+        _rms_tip(row["balance_scale"], "Which of the two mods is used: -1 all the first, +1 all the second, 0 neither, "
+                                       "in between a weaker use of that side. Together with Strength this is the "
+                                       "pack's Axis node value (strength × balance).")
         # Line 4: what each picked mod is.
         row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
         row["info"].grid(row=3, column=1, columnspan=7, sticky=tk.W, pady=(2, 2))
@@ -28331,34 +28315,39 @@ class LoRATrainerGUI:
         self._rms_refresh_tokens()
         self._rms_persist()
 
-    def _rms_lean_text(self, row):
-        """What the slider means right now, in words: blank for a plain row; for a compare row,
-        which mod it leans to and how far."""
-        if not self._rms_row_is_axis(row):
-            return ""
-        v = float(row["value_var"].get())
-        side = "first" if v < 0 else "second"
-        if abs(v) < 0.005:
-            return "= centre: neither mod is used"
-        if abs(v) >= 0.995:
-            return f"= the {side} mod at full strength, the other not used"
-        return f"= the {side} mod at {abs(v):.2f}, the other not used"
+    def _rms_row_value(self, row):
+        """The value the pack sees for this row: the strength for a plain row; for a compare row
+        the Axis node's signed value, strength × balance (left negative = the first mod)."""
+        v = max(0.0, min(1.0, float(row["value_var"].get())))
+        if self._rms_row_is_axis(row):
+            return v * max(-1.0, min(1.0, float(row["balance_var"].get())))
+        return v
 
     def _rms_row_moved(self, row):
-        row["value_str"].set(f"{float(row['value_var'].get()):+.2f}" if self._rms_row_is_axis(row)
-                             else f"{float(row['value_var'].get()):.2f}")
-        row["axis_lbl"].configure(text=self._rms_lean_text(row))
+        row["value_str"].set(f"{float(row['value_var'].get()):.2f}")
         self._rms_refresh_tokens()
         self._rms_persist()
 
     def _rms_row_typed(self, row):
-        lo = -1.0 if self._rms_row_is_axis(row) else 0.0
         try:
-            v = max(lo, min(1.0, float(row["value_str"].get())))
+            v = max(0.0, min(1.0, float(row["value_str"].get())))
         except (TypeError, ValueError):
             v = float(row["value_var"].get())
         row["value_var"].set(v)
         self._rms_row_moved(row)
+
+    def _rms_balance_moved(self, row):
+        row["balance_str"].set(f"{float(row['balance_var'].get()):+.2f}")
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_balance_typed(self, row):
+        try:
+            v = max(-1.0, min(1.0, float(row["balance_str"].get())))
+        except (TypeError, ValueError):
+            v = float(row["balance_var"].get())
+        row["balance_var"].set(v)
+        self._rms_balance_moved(row)
 
     def _rms_row_is_axis(self, row):
         from fizgig.minimax import refmod_apply as ra
@@ -28482,29 +28471,14 @@ class LoRATrainerGUI:
         """Axis or plain: the scale's range and label; the info line for the picked mod(s)."""
         from fizgig.minimax import refmod_apply as ra
         axis = self._rms_row_is_axis(row)
-
-        def _short(name, n=34):
-            name = str(name)
-            return name if len(name) <= n else name[:n - 1] + "…"
-
         if axis:
-            # line 1's Strength goes away; the lean line, with its own slider on the same
-            # variable, sits between the two names
-            row["scale"].configure(from_=-1.0)
-            row["slider_lbl"].grid_remove()
-            row["sf"].grid_remove()
-            row["lean_a"].configure(text=_short(row["mod_var"].get()))
-            row["lean_b"].configure(text=_short(row["b_var"].get()))
-            row["lean_row"].grid(row=2, column=1, columnspan=7, sticky=tk.W, padx=(2, 0), pady=(6, 0))
+            row["balance_lbl"].grid(row=2, column=2, padx=(4, 2), pady=(4, 0))
+            row["bf"].grid(row=2, column=3, columnspan=4, sticky=tk.W, pady=(4, 0))
         else:
-            row["scale"].configure(from_=0.0)
-            if float(row["value_var"].get()) < 0:
-                row["value_var"].set(abs(float(row["value_var"].get())))
-            row["lean_row"].grid_remove()
-            row["slider_lbl"].grid(row=0, column=2, padx=(4, 2))
-            row["sf"].grid(row=0, column=3, sticky=tk.W)
-        row["axis_lbl"].configure(text=self._rms_lean_text(row))
-        row["value_str"].set(f"{float(row['value_var'].get()):+.2f}" if axis else f"{float(row['value_var'].get()):.2f}")
+            row["balance_lbl"].grid_remove()
+            row["bf"].grid_remove()
+        row["value_str"].set(f"{float(row['value_var'].get()):.2f}")
+        row["balance_str"].set(f"{float(row['balance_var'].get()):+.2f}")
         ma = self._rms_mod_meta.get(row["mod_var"].get())
         mb = self._rms_mod_meta.get(row["b_var"].get()) if axis else None
         bits = []
@@ -28519,6 +28493,7 @@ class LoRATrainerGUI:
     def _rms_row_state(self, row):
         return {"on": bool(row["on_var"].get()), "mod": row["mod_var"].get(),
                 "value": round(float(row["value_var"].get()), 3),
+                "balance": round(float(row["balance_var"].get()), 3),
                 "copies": self._rms_copies(row), "b": row["b_var"].get()}
 
     def _rms_copies(self, row):
@@ -28550,7 +28525,7 @@ class LoRATrainerGUI:
             mb = self._rms_mod_meta.get(row["b_var"].get()) if axis else None
             if ma is None and mb is None:
                 continue
-            out.append(ra.ModRow(self._rms_latent(ma), ma, value=float(row["value_var"].get()),
+            out.append(ra.ModRow(self._rms_latent(ma), ma, value=self._rms_row_value(row),
                                  copies=self._rms_copies(row), enabled=bool(row["on_var"].get()),
                                  b_latent=self._rms_latent(mb) if mb else None, b_meta=mb,
                                  name=ma["name"] if ma else "", b_name=mb["name"] if mb else ""))
@@ -28564,7 +28539,7 @@ class LoRATrainerGUI:
             if not row["on_var"].get():
                 continue
             axis = self._rms_row_is_axis(row)
-            v = float(row["value_var"].get())
+            v = self._rms_row_value(row)
             if axis:
                 if abs(v) < 1e-6:
                     continue
@@ -29394,7 +29369,7 @@ class LoRATrainerGUI:
             if not row["on_var"].get():
                 continue
             axis = self._rms_row_is_axis(row)
-            v = float(row["value_var"].get())
+            v = self._rms_row_value(row)
             if axis:
                 if abs(v) < 1e-6:
                     continue
