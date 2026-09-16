@@ -18,6 +18,9 @@ _TQDM_PROGRESS_RE = re.compile(
     r"(?:,\s*avr_loss=(?P<loss>[-+0-9.eE]+))?"
 )
 _EPOCH_RE = re.compile(r"\bepoch\s+(?P<epoch>\d+)\s*/\s*(?P<total>\d+)", re.I)
+# The RefMod maker (minimax_refmod.py) prints its own step line, not a tqdm bar:
+#   [refmod] step 50/200  loss 0.4312  drift 0.012
+_REFMOD_STEP_RE = re.compile(r"\[refmod\]\s+step\s+(?P<step>\d+)/(?P<total>\d+)(?:\s+loss\s+(?P<loss>[-+0-9.eE]+))?")
 _REFMOD_PROGRESS_RE = re.compile(
     r"\[refmod\]\s+step\s+(?P<step>\d+)/(?P<total>\d+)\s+"
     r"loss\s+(?P<loss>[-+0-9.eE]+).*?"
@@ -80,6 +83,18 @@ def parse_tqdm_progress_line(line: str):
     if result["total_steps"] <= 0:
         return None
     return result
+
+
+def parse_refmod_step_line(line: str):
+    """``{"step", "total_steps", "loss_text"}`` from a RefMod maker step line, else ``None``."""
+    clean = _ANSI_ESCAPE_RE.sub("", line).replace("\r", "")
+    match = _REFMOD_STEP_RE.search(clean)
+    if match is None:
+        return None
+    step, total = int(match.group("step")), int(match.group("total"))
+    if total <= 0:
+        return None
+    return {"step": step, "total_steps": total, "loss_text": match.group("loss")}
 
 
 def parse_epoch_line(line: str):

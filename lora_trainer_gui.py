@@ -30524,7 +30524,34 @@ class LoRATrainerGUI:
 
     def _consume_training_progress(self, line):
         """Update the card from the trainers' existing console output."""
-        from fizgig.training.progress import TrainingProgressTracker
+        from fizgig.training.progress import TrainingProgressTracker, parse_refmod_step_line
+
+        if self._is_refmod_arch():
+            # A RefMod make is not an epoch run: the maker prints its own step line, and the
+            # rest of its milestones are named here in its own terms.
+            _rs = parse_refmod_step_line(line)
+            if _rs is not None:
+                _loss = _rs.get("loss_text")
+                text = (f"Optimising the RefMod  •  Step {_rs['step']}/{_rs['total_steps']}"
+                        + (f"  •  Loss {_loss}" if _loss else ""))
+                self._draw_training_progress(100.0 * max(0, min(_rs["step"], _rs["total_steps"])) / _rs["total_steps"])
+                self.training_progress_text_var.set(text)
+                self._training_progress_last_text = text
+                return True
+            _low = line.lower()
+            if "[refmod] audio mod saved" in _low:
+                self._set_training_progress_phase("Audio mod saved", percent=100)
+                return True
+            if "[refmod] saved" in _low:
+                self._set_training_progress_phase("RefMod saved", percent=100)
+                return True
+            if "[refmod] plain encode" in _low or "[refmod] optimising" in _low:
+                self._set_training_progress_phase("Making the RefMod…", percent=0)
+                return True
+            if "[refmod] audio:" in _low and "source" in _low:
+                self._set_training_progress_phase("Encoding the folder's sound…")
+                return True
+            return False
 
         tracker = getattr(self, "_training_progress_tracker", None)
         if tracker is None:
@@ -30570,7 +30597,8 @@ class LoRATrainerGUI:
         elif "Starting text encoder caching" in line:
             self._set_training_progress_phase("Caching text embeddings…", percent=0)
         elif "Starting training" in line or "training without caching" in line:
-            self._set_training_progress_phase("Starting training…", percent=0)
+            self._set_training_progress_phase("Making the RefMod…" if self._is_refmod_arch() else "Starting training…",
+                                              percent=0)
         self._append_global_log(line)
         try:
             at_bottom = self.console_output.yview()[1] >= 0.999
@@ -33283,7 +33311,7 @@ class LoRATrainerGUI:
         else:
             self.training_state = "idle"
         if return_code == 0 and was_state == "running":
-            self._set_training_progress_phase("Training complete", percent=100)
+            self._set_training_progress_phase("RefMod made" if self._is_refmod_arch() else "Training complete", percent=100)
         elif self.training_state == "paused":
             _last = getattr(self, "_training_progress_last_text", "")
             self._set_training_progress_phase(f"Paused  •  {_last}" if _last else "Paused")
