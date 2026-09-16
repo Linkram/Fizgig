@@ -41,7 +41,8 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 NODE_META_KEY = "refmod_meta"
-NODE_FORMAT_VERSION = 2
+NODE_FORMAT_VERSION = 4          # what the pack writes as of v0.2.6; its reader takes 2 and 4 alike
+BUNDLE_FORMAT_VERSION = 5        # the pack's one-file container: members ref_0, ref_1, … (BUNDLE_FORMAT.md)
 NODE_TOKEN_CAP = 5120        # the node pack's Extract default `max_tokens`; its loader does not cap
 ARCH = "minimaxh3"
 MAX_REFS_DEFAULT = 16      # measured 10 Sep 2026: 16 references scored 70 on portraits vs 60 for 8
@@ -347,18 +348,20 @@ def build_mod(refs, grid: Optional[int], faces: Optional[dict] = None) -> Tuple[
 
 # ─── the file ────────────────────────────────────────────────────────────────────────────────
 
-def save_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, mode: str, pool: str,
-                optimize_steps: int, source_shape: str = "", tags=None, description: str = "",
-                concept_type: str = "identity", extra: Optional[dict] = None) -> str:
-    """Write `<path>.safetensors` in the node pack's layout (+ Fizgig's own `ss_*` keys, which
-    the node ignores). Returns the path."""
-    from safetensors.torch import save_file
+def visual_latent_for_file(latent: torch.Tensor) -> torch.Tensor:
+    """fp16 [1, 24, T, H, W] on the CPU — the file's tensor."""
     latent = latent.detach().to("cpu", torch.float16).contiguous()
     if latent.dim() == 4:
         latent = latent.unsqueeze(2)
     assert latent.dim() == 5 and latent.shape[0] == 1, f"latent must be [1, 24, T, H, W], got {tuple(latent.shape)}"
+    return latent
+
+
+def visual_meta(latent: torch.Tensor, *, name: str, mode: str, pool: str, optimize_steps: int,
+                source_shape: str = "", tags=None, description: str = "", concept_type: str = "identity") -> dict:
+    """The pack's header block for a visual mod (standalone file or bundle member)."""
     T = int(latent.shape[2])
-    meta = {
+    return {
         "name": name,
         "kind": "video" if T > 1 else "image",
         "latent_h": int(latent.shape[3]),
@@ -374,6 +377,46 @@ def save_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, mode: str,
         "concept_type": concept_type,
         "_format_version": NODE_FORMAT_VERSION,
     }
+
+
+def save_bundle(path_no_ext: str, name: str, members, extra: Optional[dict] = None) -> str:
+    """Write `<path>.safetensors` as the pack's one-file container: `members` is a list of
+    (meta, latent) in order — visual metas from visual_meta(), audio metas from audio_meta() —
+    stored as tensors ref_0, ref_1, … with the container block in the header. The pack's
+    loader lists a bundle's members and lets a slot take All, Visual or Audio. Returns the path."""
+    from safetensors.torch import save_file
+    assert 1 <= len(members) <= 256, "a bundle holds 1-256 members"
+    metas, tensors = [], {}
+    for i, (meta, latent) in enumerate(members):
+        kind = str(meta.get("kind", ""))
+        if kind == "audio":
+            latent = latent.detach().to("cpu", torch.float32).contiguous()
+            assert latent.dim() == 4 and tuple(latent.shape[:3]) == (1, 32, 2), f"audio member must be [1, 32, 2, T], got {tuple(latent.shape)}"
+        elif kind in ("image", "video"):
+            latent = visual_latent_for_file(latent)
+        else:
+            raise ValueError(f"bundle member {i}: kind must be image, video or audio, got {kind!r}")
+        metas.append(dict(meta))
+        tensors[f"ref_{i}"] = latent
+    container = {"_format_version": BUNDLE_FORMAT_VERSION, "kind": "bundle", "name": name, "members": metas}
+    header = {NODE_META_KEY: json.dumps(container)}
+    for k, v in (extra or {}).items():
+        header[str(k)] = str(v)
+    os.makedirs(os.path.dirname(path_no_ext) or ".", exist_ok=True)
+    out = path_no_ext + ".safetensors"
+    save_file(tensors, out, metadata=header)
+    return out
+
+
+def save_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, mode: str, pool: str,
+                optimize_steps: int, source_shape: str = "", tags=None, description: str = "",
+                concept_type: str = "identity", extra: Optional[dict] = None) -> str:
+    """Write `<path>.safetensors` in the node pack's layout (+ Fizgig's own `ss_*` keys, which
+    the node ignores). Returns the path."""
+    from safetensors.torch import save_file
+    latent = visual_latent_for_file(latent)
+    meta = visual_meta(latent, name=name, mode=mode, pool=pool, optimize_steps=optimize_steps,
+                       source_shape=source_shape, tags=tags, description=description, concept_type=concept_type)
     header = {NODE_META_KEY: json.dumps(meta)}
     for k, v in (extra or {}).items():
         header[str(k)] = str(v)
@@ -456,16 +499,11 @@ def audio_token_count(latent: torch.Tensor) -> int:
     return 2 * int(latent.shape[-1])
 
 
-def save_audio_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, description: str = "",
-                      concept_type: str = "voice", tags=None, extra: Optional[dict] = None) -> str:
-    """Write `<path>.safetensors` as the pack's audio RefMod: tensor `latent` [1, 32, 2, T] and the
-    same header block, kind "audio", sample_rate 32000. Returns the path."""
-    from safetensors.torch import save_file
-    latent = latent.detach().to("cpu", torch.float32).contiguous()
-    assert latent.dim() == 4 and tuple(latent.shape[:3]) == (1, 32, 2), \
-        f"audio latent must be [1, 32, 2, T], got {tuple(latent.shape)}"
+def audio_meta(latent: torch.Tensor, *, name: str, description: str = "", concept_type: str = "voice",
+               tags=None) -> dict:
+    """The pack's header block for an audio mod (standalone file or bundle member)."""
     T = int(latent.shape[-1])
-    meta = {
+    return {
         "name": name,
         "kind": "audio",
         "latent_h": 0,
@@ -482,27 +520,18 @@ def save_audio_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, desc
         "_format_version": NODE_FORMAT_VERSION,
         "sample_rate": AUDIO_SAMPLE_RATE,
     }
-    header = {NODE_META_KEY: json.dumps(meta)}
-    for k, v in (extra or {}).items():
-        header[str(k)] = str(v)
-    os.makedirs(os.path.dirname(path_no_ext) or ".", exist_ok=True)
-    out = path_no_ext + ".safetensors"
-    save_file({"latent": latent}, out, metadata=header)
-    return out
 
 
-def make_audio_refmod(image_dirs, out_path_no_ext: str, *, name: str, audio_vae_path: Optional[str],
-                      max_seconds: float = 30.0, concept_type: str = "voice", description: str = "",
-                      device=None) -> Optional[str]:
-    """The whole audio step: gather the folder's sound, encode it, write the file. Returns the
-    path, or None when the folder has no sound (logged, not an error)."""
+def encode_folder_audio(image_dirs, *, audio_vae_path: Optional[str], max_seconds: float = 30.0, device=None):
+    """The folder's sound through the H3 audio VAE -> (latent [1, 32, 2, T] fp32, sources), or
+    (None, []) when there is nothing to hear (logged, not an error)."""
     if not (float(max_seconds) > 0):
         raise ValueError(f"the audio mod's length must be above 0 seconds (got {max_seconds})")
     wav, sources = collect_audio(image_dirs, max_seconds)
     if wav is None:
         logger.warning("[refmod] audio: no sound in the dataset folder (no clip with a soundtrack, "
                        "no audio file) — no audio mod written")
-        return None
+        return None, []
     if not audio_vae_path or not os.path.isfile(audio_vae_path):
         raise RuntimeError("an audio mod needs the H3 audio VAE — set the Audio VAE path in "
                            "Preferences (Model Paths, MiniMax H3)")
@@ -517,9 +546,39 @@ def make_audio_refmod(image_dirs, out_path_no_ext: str, *, name: str, audio_vae_
         del vae
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    return latent, sources
+
+
+def save_audio_refmod(path_no_ext: str, latent: torch.Tensor, *, name: str, description: str = "",
+                      concept_type: str = "voice", tags=None, extra: Optional[dict] = None) -> str:
+    """Write `<path>.safetensors` as the pack's audio RefMod: tensor `latent` [1, 32, 2, T] and the
+    same header block, kind "audio", sample_rate 32000. Returns the path."""
+    from safetensors.torch import save_file
+    latent = latent.detach().to("cpu", torch.float32).contiguous()
+    assert latent.dim() == 4 and tuple(latent.shape[:3]) == (1, 32, 2), \
+        f"audio latent must be [1, 32, 2, T], got {tuple(latent.shape)}"
+    meta = audio_meta(latent, name=name, description=description, concept_type=concept_type, tags=tags)
+    header = {NODE_META_KEY: json.dumps(meta)}
+    for k, v in (extra or {}).items():
+        header[str(k)] = str(v)
+    os.makedirs(os.path.dirname(path_no_ext) or ".", exist_ok=True)
+    out = path_no_ext + ".safetensors"
+    save_file({"latent": latent}, out, metadata=header)
+    return out
+
+
+def make_audio_refmod(image_dirs, out_path_no_ext: str, *, name: str, audio_vae_path: Optional[str],
+                      max_seconds: float = 30.0, concept_type: str = "voice", description: str = "",
+                      device=None) -> Optional[str]:
+    """The whole audio step: gather the folder's sound, encode it, write the file. Returns the
+    path, or None when the folder has no sound (logged, not an error)."""
+    latent, sources = encode_folder_audio(image_dirs, audio_vae_path=audio_vae_path,
+                                          max_seconds=max_seconds, device=device)
+    if latent is None:
+        return None
     out = save_audio_refmod(out_path_no_ext, latent, name=name, description=description,
                             concept_type=concept_type,
-                            tags=[f"{len(sources)} source(s), {wav.shape[1] / AUDIO_SAMPLE_RATE:.1f} s", "fizgig"],
+                            tags=[f"{len(sources)} source(s), {latent.shape[-1] / 40:.1f} s", "fizgig"],
                             extra={"ss_refmod_audio_seconds": f"{max_seconds:g}"})
     logger.info(f"[refmod] audio mod saved {out} ({audio_token_count(latent)} tokens, "
                 f"{int(latent.shape[-1])} latent frames) — a second file for the same loader slot "
@@ -528,10 +587,20 @@ def make_audio_refmod(image_dirs, out_path_no_ext: str, *, name: str, audio_vae_
 
 
 def load_refmod(path: str):
-    """-> (latent [1, 24, T, H, W] fp32, meta dict) — the node's reader, in miniature."""
+    """-> (latent [1, 24, T, H, W] fp32, meta dict) — the node's reader, in miniature. A bundle
+    gives its first visual member (meta carries `bundle_index`); the audio members are not
+    what a maker or the Studio's renderer takes."""
     from safetensors import safe_open
     with safe_open(path, framework="pt", device="cpu") as f:
         meta = json.loads((f.metadata() or {}).get(NODE_META_KEY, "{}"))
+        if str(meta.get("kind", "")) == "bundle":
+            members = meta.get("members") or []
+            for i, m in enumerate(members):
+                if str(m.get("kind", "")) in ("image", "video"):
+                    latent = f.get_tensor(f"ref_{i}").float().clone()
+                    m = dict(m); m["bundle_index"] = i; m["bundle_name"] = meta.get("name", "")
+                    return latent, m
+            raise ValueError(f"{path}: a bundle with no visual member")
         latent = f.get_tensor("latent").float().clone()
     return latent, meta
 
@@ -1119,31 +1188,60 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                                       ref_pool=ref_pool)
         _preview(mod, int(math.ceil(steps / float(preview_every))) if preview_every else 1)
 
-    out = save_refmod(os.path.join(output_dir, output_name), mod, name=output_name, mode=mode,
-                      pool=pool_label, optimize_steps=steps, source_shape=source_shape,
-                      tags=tags + (["fizgig optimised"] if steps > 0 else []),
-                      description=description, concept_type=(concept_type or "identity"),
-                      extra={"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
-                             "ss_refmod_ref_subset": str(int(ref_subset or 0)),
-                             "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
-                             "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full"),
-                             "ss_refmod_token_cap": str(int(token_cap or 0))})
-    mb = os.path.getsize(out) / 1024 / 1024
-    logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
-                f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")
-    if str(audio or "off").lower() != "off":
-        # After the visual mod, and only once the DiT, Turbo LoRA and decoder are off the card:
-        # the audio VAE (345 MB fp32 plus its chunk activations) must not land beside them on a
-        # 16 GB card after an optimised run with previews.
-        del dit, turbo, decoder, _preview
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        make_audio_refmod([getattr(ds, "image_directory", "") for ds in group.datasets],
-                          os.path.join(output_dir, output_name + "_audio"), name=output_name + "_audio",
+    _audio = str(audio or "off").lower()
+    _save_kw = dict(name=output_name, mode=mode, pool=pool_label, optimize_steps=steps, source_shape=source_shape,
+                    tags=tags + (["fizgig optimised"] if steps > 0 else []),
+                    description=description, concept_type=(concept_type or "identity"))
+    _extra = {"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
+              "ss_refmod_ref_subset": str(int(ref_subset or 0)),
+              "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
+              "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full"),
+              "ss_refmod_token_cap": str(int(token_cap or 0))}
+    _out_base = os.path.join(output_dir, output_name)
+    if _audio == "off":
+        out = save_refmod(_out_base, mod, extra=_extra, **_save_kw)
+        mb = os.path.getsize(out) / 1024 / 1024
+        logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
+                    f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")
+        return out
+    if _audio == "folder":
+        # Two files: the visual mod now, the audio mod once the card is clear.
+        out = save_refmod(_out_base, mod, extra=_extra, **_save_kw)
+        mb = os.path.getsize(out) / 1024 / 1024
+        logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
+                    f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")
+    # The audio VAE (345 MB fp32 plus its chunk activations) must not land beside the DiT,
+    # Turbo LoRA and decoder on a 16 GB card after an optimised run with previews.
+    del dit, turbo, decoder, _preview
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    _dirs = [getattr(ds, "image_directory", "") for ds in group.datasets]
+    if _audio == "folder":
+        make_audio_refmod(_dirs, _out_base + "_audio", name=output_name + "_audio",
                           audio_vae_path=audio_vae_path, max_seconds=float(audio_max_seconds),
                           concept_type=audio_concept, description=description, device=device)
+        return out
+    # One file (the pack's bundle): the visual member and the audio member together. No sound
+    # in the folder -> the plain visual file, so the run still ends with a mod.
+    _lat_a, _sources = encode_folder_audio(_dirs, audio_vae_path=audio_vae_path,
+                                           max_seconds=float(audio_max_seconds), device=device)
+    if _lat_a is None:
+        out = save_refmod(_out_base, mod, extra=_extra, **_save_kw)
+        logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens) as a plain visual mod — "
+                    f"the folder had no sound to bundle")
+        return out
+    _vis = visual_latent_for_file(mod)
+    _members = [(visual_meta(_vis, **_save_kw), _vis),
+                (audio_meta(_lat_a, name=output_name + "_audio", description=description, concept_type=audio_concept,
+                            tags=[f"{len(_sources)} source(s), {_lat_a.shape[-1] / 40:.1f} s", "fizgig"]), _lat_a)]
+    _extra["ss_refmod_audio_seconds"] = f"{float(audio_max_seconds):g}"
+    out = save_bundle(_out_base, output_name, _members, extra=_extra)
+    mb = os.path.getsize(out) / 1024 / 1024
+    logger.info(f"[refmod] saved {out} as one file: the visual mod ({token_count(mod)} tokens) and the audio "
+                f"mod ({audio_token_count(_lat_a)} tokens, {int(_lat_a.shape[-1])} latent frames), {mb:.2f} MB — "
+                f"the pack's loader lists both; a slot takes All, Visual or Audio")
     return out
 
 

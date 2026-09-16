@@ -1113,7 +1113,9 @@ REFMOD_TOKEN_CAP_OPTIONS = ["off (every clip frame kept)", "5,120 (the pack's de
                             "16,384"]
 # Audio mod (16 Sep 2026): the pack's audio RefMod, a plain encode of the folder's sound through
 # the H3 audio VAE, written as a second file <name>_audio.safetensors. Off by default.
-REFMOD_AUDIO_OPTIONS = ["off: the visual mod only", "on: the visual mod plus an audio mod of the folder's sound"]
+REFMOD_AUDIO_OPTIONS = ["off: the visual mod only",
+                        "on: one file — the visual mod plus an audio mod of the folder's sound",
+                        "on: two files — the visual mod, and an audio mod of the folder's sound beside it"]
 REFMOD_AUDIO_CONCEPT_OPTIONS = ["voice", "singing", "music_style", "sound_fx", "ambience"]
 REFMOD_AUDIO_SECONDS_OPTIONS = ["10", "20", "30", "60"]
 REFMOD_DEFAULTS = {
@@ -1132,6 +1134,14 @@ REFMOD_DEFAULTS = {
 def refmod_audio_on(label) -> bool:
     """'on: …' -> True; 'off: …', blank or anything else -> False."""
     return str(label or "").strip().lower().startswith("on")
+
+
+def refmod_audio_value(label) -> str:
+    """The CLI's --audio: 'bundle' for the one-file choice, 'folder' for two files, else 'off'."""
+    t = str(label or "").strip().lower()
+    if not t.startswith("on"):
+        return "off"
+    return "folder" if "two files" in t else "bundle"
 
 
 def refmod_token_cap_value(label) -> str:
@@ -4420,13 +4430,15 @@ class LoRATrainerGUI:
             tk.Label(self._refmod_frame3, text="Audio support:", width=24, anchor=tk.W, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_AUDIO"] = ttk.Combobox(
-                self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=56)
+                self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=78)
             _au = str(self.settings.get("MINIMAX_REFMOD_AUDIO", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO"]))
             self.entries["MINIMAX_REFMOD_AUDIO"].set(_au if _au in REFMOD_AUDIO_OPTIONS else REFMOD_AUDIO_OPTIONS[0])
             self.entries["MINIMAX_REFMOD_AUDIO"].pack(side=tk.LEFT)
             ToolTip(self.entries["MINIMAX_REFMOD_AUDIO"],
-                    "Also write <name>_audio.safetensors: the folder's sound (each clip's soundtrack and "
-                    "any audio file, in file order) through the H3 audio VAE, the pack's audio RefMod. "
+                    "Also make an audio mod: the folder's sound (each clip's soundtrack and any audio file, "
+                    "in file order) through the H3 audio VAE, the pack's audio RefMod. One file puts it in "
+                    "<name>.safetensors beside the visual mod (the pack's bundle; needs the current pack). "
+                    "Two files writes it as <name>_audio.safetensors, which any version reads. "
                     "A clip Gizmo marked mute (_mute in its name) lends no sound, the same rule as H3 "
                     "training, so you choose which clips the mod hears. A plain encode, no training. "
                     "Load it in the same loader slot "
@@ -28449,8 +28461,8 @@ class LoRATrainerGUI:
                            if str(m.get("kind", "")) == "audio")
             self.rms_status_var.set(
                 f"{len(found)} RefMod{'s' if len(found) != 1 else ''} in {folder or '(no folder)'}."
-                + (f"  {_n_audio} audio mod{'s' if _n_audio != 1 else ''} not listed: the Studio renders "
-                   f"visual mods only, audio mods play in ComfyUI." if _n_audio else ""))
+                + (f"  {_n_audio} audio mod{'s' if _n_audio != 1 else ''} not listed (bundled or standalone): "
+                   f"the Studio renders visual mods only, audio mods play in ComfyUI." if _n_audio else ""))
         self._rms_refresh_tokens()
         self._rms_persist()
 
@@ -28679,11 +28691,13 @@ class LoRATrainerGUI:
         if not meta:
             return None
         p = meta["path"]
+        if "bundle_index" in meta:
+            p = f"{p}#{meta['bundle_index']}"       # one cache slot per member
         z = self._rms_latents.get(p)
         if z is None:
             from safetensors import safe_open
-            with safe_open(p, framework="pt", device="cpu") as f:
-                z = f.get_tensor("latent").clone()
+            with safe_open(meta["path"], framework="pt", device="cpu") as f:
+                z = f.get_tensor(str(meta.get("tensor_key", "latent"))).clone()
             self._rms_latents[p] = z
         return z
 
@@ -32580,7 +32594,7 @@ class LoRATrainerGUI:
             cmd += ["--token_cap", _cap]
         if refmod_audio_on(self.settings.get("MINIMAX_REFMOD_AUDIO", _d["MINIMAX_REFMOD_AUDIO"])):
             _ac = str(self.settings.get("MINIMAX_REFMOD_AUDIO_CONCEPT", "") or "").strip()
-            cmd += ["--audio", "folder",
+            cmd += ["--audio", refmod_audio_value(self.settings.get("MINIMAX_REFMOD_AUDIO", _d["MINIMAX_REFMOD_AUDIO"])),
                     "--audio_max_seconds", refmod_num(self.settings.get("MINIMAX_REFMOD_AUDIO_SECONDS"), "30", float),
                     "--audio_concept", _ac if _ac in REFMOD_AUDIO_CONCEPT_OPTIONS else _d["MINIMAX_REFMOD_AUDIO_CONCEPT"]]
             _avae = self._krea2_pref("minimax_audio_vae")

@@ -77,10 +77,12 @@ def setup_parser():
                         "thins a clip (near-duplicate frames dropped first, then an even resample); "
                         "photos are never touched. 0 = keep every frame (default). The pack's own "
                         "default is 5120")
-    p.add_argument("--audio", choices=["off", "folder"], default="off",
-                   help="also write <name>_audio.safetensors: the folder's sound (clip soundtracks "
-                        "and audio files, in file order) through the H3 audio VAE — the pack's audio "
-                        "RefMod, a plain encode. Needs --audio_vae")
+    p.add_argument("--audio", choices=["off", "folder", "bundle"], default="off",
+                   help="the folder's sound (clip soundtracks and audio files, in file order) through "
+                        "the H3 audio VAE — the pack's audio RefMod, a plain encode. 'bundle' = ONE "
+                        "file, <name>.safetensors holding the visual mod and the audio mod (the pack's "
+                        "version-5 container); 'folder' = two files, the audio one as "
+                        "<name>_audio.safetensors. Needs --audio_vae")
     p.add_argument("--audio_max_seconds", type=float, default=30.0,
                    help="how much sound goes in (2 tokens per 1/40 s; 30 s = 2400 tokens)")
     p.add_argument("--audio_concept", default="voice",

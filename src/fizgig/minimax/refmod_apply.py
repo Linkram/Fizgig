@@ -265,23 +265,59 @@ def step_schedule(spec: Optional[CurveSpec], latents: Sequence[torch.Tensor]
 
 # ─── files, folders, readouts ──────────────────────────────────────────────────────────────
 
-def read_refmod_meta(path: str) -> Optional[dict]:
-    """The header only (no tensor read) — None when the file is not a RefMod."""
+def read_refmod_metas(path: str) -> List[dict]:
+    """Every reference in a file (header only, no tensor read): one entry for a standalone
+    mod, one per member for a bundle (each with `bundle_index` and `tensor_key`). Empty when
+    the file is not a RefMod."""
     try:
         from safetensors import safe_open
         with safe_open(path, framework="pt", device="cpu") as f:
             raw = (f.metadata() or {}).get(NODE_META_KEY)
             if not raw:
-                return None
+                return []
             meta = json.loads(raw)
+            if not isinstance(meta, dict):
+                return []
+            if str(meta.get("kind", "")) == "bundle":
+                out = []
+                keys = set(f.keys())
+                for i, m in enumerate(meta.get("members") or []):
+                    key = f"ref_{i}"
+                    if not isinstance(m, dict) or key not in keys:
+                        continue
+                    entry = _meta_from_shape(dict(m), f.get_slice(key).get_shape(), path)
+                    if entry is None:
+                        continue
+                    entry["bundle_index"] = i
+                    entry["bundle_name"] = str(meta.get("name", ""))
+                    entry["tensor_key"] = key
+                    out.append(entry)
+                return out
             if "latent" not in f.keys():
-                return None
-            shape = f.get_slice("latent").get_shape()
+                return []
+            entry = _meta_from_shape(dict(meta), f.get_slice("latent").get_shape(), path)
+            if entry is None:
+                return []
+            entry["tensor_key"] = "latent"
+            return [entry]
     except Exception:
+        return []
+
+
+def read_refmod_meta(path: str) -> Optional[dict]:
+    """The header only (no tensor read) — None when the file is not a RefMod. A bundle gives
+    its first VISUAL member (the audio members are read_refmod_metas' business)."""
+    entries = read_refmod_metas(path)
+    for e in entries:
+        if e.get("kind") != "audio":
+            return e
+    return entries[0] if entries else None
+
+
+def _meta_from_shape(meta: dict, shape, path: str) -> Optional[dict]:
+    """Fill the fields the Studio reads (kind, dims, tokens, name, path) from a tensor shape."""
+    if len(shape) not in (4, 5):
         return None
-    if not isinstance(meta, dict) or len(shape) not in (4, 5):
-        return None
-    meta = dict(meta)
     if len(shape) == 4:
         # an audio mod: [1, 32, 2, T], 2 tokens a latent frame
         if tuple(shape[:3]) != (1, 32, 2):
@@ -322,14 +358,15 @@ def scan_refmods(folder: str, cache: Optional[dict] = None, include_audio: bool 
         key = (p, st.st_size, st.st_mtime)
         meta = cache.get(key) if cache is not None else None
         if meta is None:
-            meta = read_refmod_meta(p)
-            if meta is None:
+            meta = read_refmod_metas(p)          # a bundle's members, or the one mod
+            if not meta:
                 continue
             if cache is not None:
                 cache[key] = meta
-        if not include_audio and str(meta.get("kind", "")) == "audio":
-            continue
-        out.append(meta)
+        for m in (meta if isinstance(meta, list) else [meta]):
+            if not include_audio and str(m.get("kind", "")) == "audio":
+                continue
+            out.append(m)
     return out
 
 
