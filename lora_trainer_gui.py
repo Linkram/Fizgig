@@ -31433,7 +31433,8 @@ class LoRATrainerGUI:
         the ordinary MiniMax latents command with the resolution override and suffix."""
         return self.build_cache_latents_command(config) + [
             "--megapixels", str(self.dataset_megapixels_var.get()).strip(),
-            "--cache_suffix", "-refs"]
+            # '=' form: a bare "-refs" reads as a flag to argparse
+            "--cache_suffix=-refs"]
 
     def build_cache_text_command(self, config):
         """Build the cache text encoder command based on architecture"""
