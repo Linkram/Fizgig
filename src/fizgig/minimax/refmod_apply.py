@@ -219,21 +219,34 @@ def scramble(items: list, seed: int) -> list:
     return items
 
 
-def build_bundle(rows: Sequence[ModRow], *, retention: float = 1.0,
-                 curve: Optional[CurveSpec] = None, scramble_seed: int = -1):
-    """Everything the Apply node does before the DiT: -> (latents, describe) where latents
-    is the list of reference latents to ride as condition rows (in order) and describe is a
-    parallel list of (name, effective_strength) for the readout."""
+def build_bundle_entries(rows: Sequence[ModRow], *, retention: float = 1.0,
+                         curve: Optional[CurveSpec] = None, scramble_seed: int = -1):
+    """build_bundle plus, per latent, an entry dict for the numbered-reference presentation:
+    {"name", "kind" (image|video), "latent_t", "audio_members": [names]} in the same order."""
     factor = _clamp01(float(retention))
     loads = scramble(loads_from_rows(rows), scramble_seed)
-    latents, describe = [], []
-    for latent, _meta, strength, name in loads:
+    latents, describe, entries = [], [], []
+    for latent, meta, strength, name in loads:
         eff = _clamp01(strength * factor)
         z = ref_block(latent, eff, curve)
         if z is None:
             continue
         latents.append(z)
         describe.append((name, eff))
+        m = meta or {}
+        t = int(m.get("latent_t") or latent.shape[2])
+        entries.append({"name": name, "kind": "video" if t > 1 else "image", "latent_t": t,
+                        "audio_members": list(m.get("bundle_audio") or [])})
+    return latents, describe, entries
+
+
+def build_bundle(rows: Sequence[ModRow], *, retention: float = 1.0,
+                 curve: Optional[CurveSpec] = None, scramble_seed: int = -1):
+    """Everything the Apply node does before the DiT: -> (latents, describe) where latents
+    is the list of reference latents to ride as condition rows (in order) and describe is a
+    parallel list of (name, effective_strength) for the readout."""
+    latents, describe, _entries = build_bundle_entries(rows, retention=retention, curve=curve,
+                                                       scramble_seed=scramble_seed)
     return latents, describe
 
 
@@ -292,6 +305,10 @@ def read_refmod_metas(path: str) -> List[dict]:
                     entry["bundle_name"] = str(meta.get("name", ""))
                     entry["tensor_key"] = key
                     out.append(entry)
+                _audio_names = [str(e.get("name", "")) for e in out if e.get("kind") == "audio"]
+                for e in out:
+                    if e.get("kind") != "audio":
+                        e["bundle_audio"] = list(_audio_names)
                 return out
             if "latent" not in f.keys():
                 return []
@@ -395,28 +412,22 @@ def prompt_hint(metas: Sequence[dict]) -> str:
     return "; ".join(bits)
 
 
-def reference_map(rows: Sequence[ModRow]) -> List[str]:
-    """The pack's Text Encode / Inspect reference map, one line per reference in bundle order:
-    "<Picture n> = name". Copies get their own labels, as the pack gives them. Stage one
-    (16 Sep 2026): every visual mod is presented as a Picture; the pack labels a video-kind
-    mod <Video n> — stage two. Zero-strength rows are left out, as the pack leaves them."""
-    out, n = [], 0
-    for r in rows:
-        if not r.enabled or r.latent is None:
-            continue
-        if r.is_axis:
-            if abs(float(r.value)) < 1e-6:
-                continue
-            name = r.b_name if float(r.value) > 0 else r.name
-            for _ in range(int(r.copies)):
-                n += 1
-                out.append(f"<Picture {n}> = {name}")
-            continue
-        if float(r.value) <= 0:
-            continue
-        for _ in range(int(r.copies)):
-            n += 1
-            out.append(f"<Picture {n}> = {r.name}")
+def reference_map(entries) -> List[str]:
+    """The pack's Text Encode / Inspect reference map, one line per presented reference in
+    bundle order — "<Picture n> = name", "<Video n> = name", "<Audio n> = name" — each kind
+    counted on its own, copies with their own labels, bundled audio members after their
+    visual member. `entries` is build_bundle_entries' third result."""
+    out, counters = [], {"image": 0, "video": 0, "audio": 0}
+    labels = {"image": "Picture", "video": "Video", "audio": "Audio"}
+    for e in entries or []:
+        kind = str(e.get("kind", "image"))
+        if kind not in counters:
+            kind = "image"
+        counters[kind] += 1
+        out.append(f"<{labels[kind]} {counters[kind]}> = {e.get('name', '')}")
+        for a_name in e.get("audio_members") or []:
+            counters["audio"] += 1
+            out.append(f"<Audio {counters['audio']}> = {a_name}")
     return out
 
 

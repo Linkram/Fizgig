@@ -732,13 +732,54 @@ class H3RepairEngine:
                             + ("\x00ref:" + ref_fp if ref_fp else "")).encode("utf-8")).hexdigest()
         return os.path.join(self._te_cache_dir, f"{h}.safetensors")
 
-    def _encode_prompt(self, prompt: str, images=None):
+    @staticmethod
+    def _items_fingerprint(items) -> str:
+        """A short hash of numbered-reference items as the encoder will see them."""
+        if not items:
+            return ""
+        from fizgig.minimax.embedder import frame_tensor
+        h = hashlib.sha256()
+        for it in items:
+            kind = str(it.get("type", ""))
+            h.update(f"{kind}:".encode())
+            if kind == "image":
+                t = (frame_tensor(it["data"]) * 255).round().to(torch.uint8)
+                h.update(f"{tuple(t.shape)}:".encode()); h.update(t.numpy().tobytes())
+            elif kind == "video":
+                fr = it["data"]
+                fr = torch.stack([frame_tensor(f) for f in fr]) if not isinstance(fr, torch.Tensor) else frame_tensor(fr)
+                t = (fr * 255).round().to(torch.uint8)
+                h.update(f"{tuple(t.shape)}:{list(it.get('timestamps') or [])}:".encode()); h.update(t.numpy().tobytes())
+        return "items:" + h.hexdigest()[:24]
+
+    def reference_items(self, latents, entries, reference_fps: float = 24.0):
+        """The pack's Text Encode items for the Studio's bundle: per reference latent, a picture
+        (its decoded frame) or a video (decoded and sampled at 2 fps with timestamps), then an
+        audio label per bundled audio member. Decodes with the Studio's own decoder."""
+        from fizgig.minimax.embedder import frame_tensor, sample_video_frames
+        items = []
+        for z, e in zip(latents, entries or [{}] * len(latents)):
+            z5 = z.detach().to(torch.float32)
+            if z5.dim() == 4:
+                z5 = z5.unsqueeze(2)
+            kind = str((e or {}).get("kind") or ("video" if int(z5.shape[2]) > 1 else "image"))
+            if kind == "video" and int(z5.shape[2]) > 1:
+                frames = self.decode_clip_frames(z5)
+                data, times = sample_video_frames(frames, reference_fps)
+                items.append({"type": "video", "data": data, "timestamps": times})
+            else:
+                items.append({"type": "image", "data": frame_tensor(self.decode_clip_frames(z5[:, :, :1])[0])})
+            for _name in (e or {}).get("audio_members") or []:
+                items.append({"type": "audio"})
+        return items
+
+    def _encode_prompt(self, prompt: str, images=None, items=None):
         """[1, L, 5120] on CPU. In-memory hit -> free; disk hit -> milliseconds; miss -> the
         32B TE loads once (couple of minutes), encodes, frees, and the result persists so no
         future session pays again. With `images` (ref2va): the vision-capable encoder sees
         `<Picture i>:` blocks ahead of the prompt and the per-row modality tags come back
         alongside (self._prompt_cache_tags) — cached under prompt + image fingerprint."""
-        ref_fp = self._ref_fingerprint(images) if images else ""
+        ref_fp = self._items_fingerprint(items) if items else (self._ref_fingerprint(images) if images else "")
         key = (prompt, ref_fp)
         if self._prompt_cache_key == key and self._prompt_cache is not None:
             return self._prompt_cache
@@ -756,7 +797,7 @@ class H3RepairEngine:
                 return emb
         logger.info("[h3-workbench] encoding prompt with the 32B TE (one-off per prompt — "
                     "cached to disk after this)")
-        want_vision = bool(images)
+        want_vision = bool(images) or bool(items)
         _parked = None
         if self.dit is not None and not self._te_can_park():
             # Small-RAM machine: no parked encoder, so the planned build is coming — the
@@ -770,7 +811,7 @@ class H3RepairEngine:
         else:
             self._status("Encoding the prompt with the 32B text encoder — a couple of quiet "
                          "minutes, once" + (" (then it stays parked in RAM)" if keep else "")
-                         + ("; reference set" if images else "") + "…")
+                         + ("; reference set" if (images or items) else "") + "…")
         # The resident TE (~15.7 GB) and the resident base must never be co-resident (the
         # int8 base alone is ~21 GB): park the DiT + Turbo net for the encode and restore
         # after — a whole-model .to is safe because this engine never block-swaps. The
@@ -792,7 +833,9 @@ class H3RepairEngine:
             _parked = self._dit_offload()
         tags = None
         try:
-            if images:
+            if items:
+                emb, tags = te.encode_with_items(prompt, list(items))
+            elif images:
                 emb, tags = te.encode_with_reference(prompt, list(images))
             else:
                 emb = te.encode(prompt)
@@ -1152,7 +1195,8 @@ class H3RepairEngine:
                       height: Optional[int] = None, frames: Optional[int] = None,
                       steps: Optional[int] = None, turbo_strength: Optional[float] = None,
                       keyframes=None, on_denoised=None, no_lora: bool = False,
-                      references=None, ref_latents=None, ref_schedule=None, ref_images=None):
+                      references=None, ref_latents=None, ref_schedule=None, ref_images=None,
+                      ref_items=None):
         """Apply the slider state and sample ONE clip: returns (latent [1,24,T,H/16,W/16] on
         CPU fp32, audio_rows [2*A, 32] on CPU fp32 or None). No decode — the caller decides
         (decode_clip_frames / decode_audio, or store it in the render cache).
@@ -1210,7 +1254,10 @@ class H3RepairEngine:
             # RefMods: latents as condition rows. The prompt is encoded plain, or — numbered
             # references, the pack's Text Encode — with the mods' decoded frames shown to the
             # encoder as <Picture n> blocks, so "<Picture 1>" in the prompt means something.
-            if ref_images:
+            if ref_items:
+                emb = self._encode_prompt(prompt, items=list(ref_items))
+                text_tags = self._prompt_cache_tags
+            elif ref_images:
                 emb = self._encode_prompt(prompt, images=list(ref_images))
                 text_tags = self._prompt_cache_tags
             else:
@@ -1503,7 +1550,7 @@ class H3RepairEngine:
     def render_refmod(self, *, seed: int, prompt: str, width: int, height: int, frames: int = 1,
                       regime: str = "confirm", ref_latents=None, ref_schedule=None,
                       with_audio: bool = True, early_step: int = 0, on_early=None,
-                      steps=None, turbo_strength=None, ref_images=None) -> dict:
+                      steps=None, turbo_strength=None, ref_images=None, ref_items=None) -> dict:
         """The RefMod Studio's render: the base model (no LoRA state) with bare reference
         latents as condition rows, decoded to the same clip dict render_clip returns
         ({"latent", "audio_rows", "frames", "wav", "middle", "regime", "steps",
@@ -1526,7 +1573,7 @@ class H3RepairEngine:
                                       turbo_strength=strength,
                                       on_denoised=_on_denoised if early_step > 0 else None,
                                       ref_latents=ref_latents, ref_schedule=ref_schedule,
-                                      ref_images=ref_images)
+                                      ref_images=ref_images, ref_items=ref_items)
         imgs = self.decode_clip_frames(lat)
         wav = self.decode_audio(aud) if (with_audio and frames > 1) else None
         return {"latent": lat, "audio_rows": aud, "frames": imgs, "wav": wav,
