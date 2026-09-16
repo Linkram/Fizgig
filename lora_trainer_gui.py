@@ -1584,7 +1584,8 @@ SETTING_TO_PREF = {
     "DIT_MODEL": "base_dit",
     "VAE_MODEL": "vae",
     "TEXT_ENCODER": "text_encoder",
-    "LORA_OUTPUT_DIR": "lora_output_dir",
+    # LORA_OUTPUT_DIR is NOT pref-backed (16 Sep 2026): the Output Directory lives on the
+    # Training tab only and is remembered per model family (last_used["lora_output_dirs"]).
 }
 
 
@@ -1930,8 +1931,15 @@ class LoRATrainerGUI:
         # from the Training tab; Dataset-tab callbacks write here, training command builders read here.
         self._dataset_config_var = tk.StringVar(value=self.settings["DATASET_CONFIG"])
 
-        # Override with last-used LoRA output directory if available
-        if self.last_used.get("lora_output_dir"):
+        # The LoRA output folder is remembered PER MODEL FAMILY (16 Sep 2026): the family the
+        # app opens on gets its own folder back; a family never used before keeps whatever the
+        # field last held; the default is output_loras inside Fizgig.
+        _od = self.last_used.get("lora_output_dirs")
+        self._output_dir_memory = dict(_od) if isinstance(_od, dict) else {}
+        _start_arch = str(self.last_used.get("architecture") or "")
+        if self._output_dir_memory.get(_start_arch):
+            self.settings["LORA_OUTPUT_DIR"] = self._output_dir_memory[_start_arch]
+        elif self.last_used.get("lora_output_dir"):
             self.settings["LORA_OUTPUT_DIR"] = self.last_used["lora_output_dir"]
 
         # Training queue — loaded before any UI so the status-bar button can show its count.
@@ -2528,6 +2536,13 @@ class LoRATrainerGUI:
         # Save LoRA output directory if entry exists
         if "LORA_OUTPUT_DIR" in self.entries:
             data["lora_output_dir"] = self.entries["LORA_OUTPUT_DIR"].get()
+            try:
+                _fam = str(self.architecture_var.get()) if hasattr(self, "architecture_var") else ""
+                if _fam and data["lora_output_dir"].strip():
+                    self._output_dir_memory[_fam] = data["lora_output_dir"].strip()
+                data["lora_output_dirs"] = dict(self._output_dir_memory)
+            except Exception:
+                pass
         # Remember the last LoRA Royale checkpoint folder + render inputs
         if hasattr(self, 'royale_folder_var'):
             data["royale_folder"] = self.royale_folder_var.get()
@@ -4165,6 +4180,12 @@ class LoRATrainerGUI:
         # Save LoRA output directory when it changes
         self.entries["LORA_OUTPUT_DIR"].bind("<FocusOut>", lambda e: self._save_last_used_paths())
         self.entries["LORA_OUTPUT_DIR"].bind("<Return>", lambda e: self._save_last_used_paths())
+        self._output_dir_hint = ttk.Label(
+            output_content,
+            text="Remembered per model family — Klein, Krea 2 and MiniMax H3 each keep their own "
+                 "folder here. Default: output_loras inside Fizgig.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
+        self._output_dir_hint.grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0, 4))
 
         # === Training Parameters Section (Expanded by default) ===
         training_section = CollapsibleFrame(outer,"Training Parameters", default_expanded=True)
@@ -8970,6 +8991,33 @@ class LoRATrainerGUI:
             rel = rel[len("FizgigIndependent/"):]
         return os.path.join(FIZGIG_DIR, rel)
 
+    def _current_output_dir(self) -> str:
+        """The Training tab's Output Directory as it stands (entry first, settings second,
+        output_loras inside Fizgig last) — the one place every consumer reads it from."""
+        try:
+            if hasattr(self, "entries") and "LORA_OUTPUT_DIR" in self.entries:
+                v = str(self.entries["LORA_OUTPUT_DIR"].get()).strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+        return str(self.settings.get("LORA_OUTPUT_DIR", "") or "").strip() or OUTPUT_LORAS_DIR
+
+    def _restore_output_dir_for_family(self, arch: str) -> None:
+        """Put a family's remembered output folder into the field (and settings). A family with
+        no memory keeps whatever the field holds, so nothing moves until the user decides."""
+        d = str(self._output_dir_memory.get(str(arch), "") or "").strip()
+        e = self.entries.get("LORA_OUTPUT_DIR") if hasattr(self, "entries") else None
+        if not d or e is None:
+            return
+        try:
+            if e.get().strip() != d:
+                e.delete(0, tk.END)
+                e.insert(0, d)
+            self.settings["LORA_OUTPUT_DIR"] = d
+        except Exception:
+            pass
+
     def _get_path(self, key: str) -> str:
         """Resolve a model/path setting from the current source of truth.
 
@@ -8980,8 +9028,9 @@ class LoRATrainerGUI:
             "VAE_MODEL": "vae",
             "DIT_MODEL": "base_dit",
             "TEXT_ENCODER": "text_encoder",
-            "LORA_OUTPUT_DIR": "lora_output_dir",
         }
+        if key == "LORA_OUTPUT_DIR":
+            return self._current_output_dir()
         pref_key = pref_map.get(key)
         if pref_key and pref_key in self.prefs_vars:
             return self.prefs_vars[pref_key].get()
@@ -11942,6 +11991,12 @@ class LoRATrainerGUI:
         _arch_changed = _arch_new != _arch_old
         if _arch_changed and _arch_old:
             try:
+                _od_e = self.entries.get("LORA_OUTPUT_DIR") if hasattr(self, "entries") else None
+                if _od_e is not None and _od_e.get().strip():
+                    self._output_dir_memory[_arch_old] = _od_e.get().strip()
+            except Exception:
+                pass
+            try:
                 self._arch_settings_memory[_arch_old] = self._collect_preset_values()
                 # Capture the preset LABEL here too — refresh_preset_combobox() below
                 # rewrites it, so this is the last moment it still names the old family's.
@@ -11996,6 +12051,10 @@ class LoRATrainerGUI:
                     self.update_console(f"[preset] {_arch_new} selected — applied {_default_name}\n")
             elif _default_name and not self.custom_preset_var.get():
                 self.custom_preset_var.set(_default_name)
+            if _arch_changed:
+                # AFTER the settings restore above: the family's own output folder wins over
+                # whatever a session snapshot or preset carried.
+                self._restore_output_dir_for_family(_arch_new)
         except Exception:
             pass
         # Retag the LoRA name LAST — _apply_preset_values above rewrites every field including
@@ -17247,7 +17306,7 @@ class LoRATrainerGUI:
             blocks = ["custom"]
             custom_blocks = selected
 
-        output_dir = self.prefs_vars["lora_output_dir"].get()
+        output_dir = self._current_output_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, output_name)
         # Never silently overwrite: the name is built from source+preset+rank only, so two
@@ -17469,7 +17528,7 @@ class LoRATrainerGUI:
         if not output_name.endswith(".safetensors"):
             output_name += ".safetensors"
 
-        output_dir = self.prefs_vars["lora_output_dir"].get()
+        output_dir = self._current_output_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, output_name)
         # Never silently overwrite (same rule as the Klein path).
@@ -18313,11 +18372,13 @@ class LoRATrainerGUI:
         out_card = self._start_section_card(
             outer, "Output Directories",
             "Paths stored as relative-to-repo when they live inside FizgigIndependent/ (portable across clones/moves), "
-            "absolute otherwise. Dataset TOMLs always live in FizgigIndependent/dataset/ — not configurable.",
+            "absolute otherwise. Dataset TOMLs always live in FizgigIndependent/dataset/ — not configurable. "
+            "The LoRA output folder is set on the Training tab, per model family.",
         )
         out_card.columnconfigure(1, weight=1)
         next_row = 0
-        next_row = self._add_pref_row(out_card, next_row, "LoRA output:", "lora_output_dir", "Where trained LoRAs are saved", is_dir=True)
+        # The LoRA output folder is on the Training tab (Output section), remembered per model
+        # family — no pref row (16 Sep 2026). The pref key stays as a legacy default only.
         next_row = self._add_pref_row(out_card, next_row, "Profiles:", "profiles_dir", "Where profiler HTML reports are saved", is_dir=True)
         next_row = self._add_pref_row(out_card, next_row, "Cache:", "cache_dir", "Cached latents and text encodings", is_dir=True)
 
@@ -28041,7 +28102,7 @@ class LoRATrainerGUI:
     def browse_file(self, setting_name, input_type):
         # Resume Training points at a saved state dir, which lives under the LoRA
         # output folder — open the Browse there so users don't hunt for it.
-        initial = self._pref_initialdir("lora_output_dir") if setting_name == "RESUME_TRAINING" else ""
+        initial = self._current_output_dir() if setting_name == "RESUME_TRAINING" else ""
         if input_type == "directory":
             path = filedialog.askdirectory(initialdir=initial)
         else:
