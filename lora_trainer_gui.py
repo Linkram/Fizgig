@@ -820,7 +820,7 @@ KREA2_BUILT_IN_PRESETS = {
     "✨ Krea 2 Defaults (rank 32, full model)": {
         "NETWORK_DIM": 32, "NETWORK_ALPHA": 32, "NETWORK_TYPE": "LoRA (standard)",
         "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 30, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "MAX_TRAIN_EPOCHS": 64, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
         "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
         "OPTIMIZER_TYPE": "adamw8bit",
@@ -842,7 +842,7 @@ KREA2_BUILT_IN_PRESETS = {
     "✨ Krea 2 Ultra Fast (rank 8, adaptive LR)": {
         "NETWORK_DIM": 8, "NETWORK_ALPHA": 8, "NETWORK_TYPE": "LoRA (standard)",
         "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 20, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "MAX_TRAIN_EPOCHS": 30, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": True, "ADAPTIVE_LR_MIN": "2e-4", "ADAPTIVE_LR_MAX": "4e-4",
         "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
         "OPTIMIZER_TYPE": "adamw8bit",
@@ -873,7 +873,7 @@ KREA2_BUILT_IN_PRESETS = {
     "✨ Krea 2 Style (rank 16, gentle LR)": {
         "NETWORK_DIM": 16, "NETWORK_ALPHA": 16, "NETWORK_TYPE": "LoRA (standard)",
         "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 15, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "MAX_TRAIN_EPOCHS": 64, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": True, "ADAPTIVE_LR_MIN": "5e-5", "ADAPTIVE_LR_MAX": "2e-4",
         "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
         "OPTIMIZER_TYPE": "adamw8bit",
