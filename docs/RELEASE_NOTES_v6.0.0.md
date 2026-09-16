@@ -14,6 +14,7 @@ Pick **MiniMax H3 RefMod** in the Base Model selector on the Training tab, choos
 - **Either H3 model.** Training Base picks the model the mod is made for, Reference or First / Last Frame. A mod does best on the model it was made for, and holds the person about as well on either when it is. Make one per model if you use both.
 - **Clips as motion.** A clip in your folder can enter as its sharpest still (the face, the identity choice) or as motion, every latent frame, the pack's video reference for a dance or a camera move. Prepare clips with Gizmo first.
 - **Prompt hints.** A description and concept type on the card go into the file; RefMod Studio's **+ mod hints** and the pack's loader put "concept: description" into the prompt, which the pack's guide says a mod needs to anchor on.
+- **Small photos are scaled up.** A reference is never encoded below 768 on a side; a 512-pixel photo is scaled up to it, because H3 does poorly with a smaller reference.
 - **Crops keep the face.** References are placed on one canvas and any photo that must be cropped is cropped around its face, never tighter than the canvas needs.
 - The file is a standard RefMod: the pack's own layout, nothing special to its nodes.
 

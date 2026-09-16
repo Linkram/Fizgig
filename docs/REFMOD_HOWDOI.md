@@ -67,7 +67,7 @@ Measured: the same 16 stills optimised for ref2va and run on the first/last-fram
 - **Steps.** Above.
 - **Description / Concept.** The mod's hint: a few words saying what it is ("a ginger woman with messy hair", "a 1970s film look") and what kind, in the pack's terms (identity, style, pose_motion, clothing, background, generic). Both go into the file. RefMod Studio's **+ mod hints** button and the pack's loader put "concept: description" into the prompt, which the pack's own guide says a mod needs to anchor on.
 - **Clips.** How a clip in your folder enters the mod: **as its sharpest still** (one frame, the face, the identity choice) or **as motion** (every latent frame of the clip, the pack's video reference, for a dance or a camera move). Tokens are per frame, so a clip costs its length. Prepare clips with Gizmo first, cut to H3's frame grid at the right size.
-- **Target MP.** The resolution the references are encoded at. With Steps above 0 it sizes the references only; the optimiser's own stills are always cached at 0.25 MP in a second, lighter pass.
+- **Target MP.** The resolution the references are encoded at. With Steps above 0 it sizes the references only; the optimiser's own stills are always cached at 0.25 MP in a second, lighter pass. References are never encoded below 768 on a side: a smaller photo is scaled up to that, because H3 does poorly with a reference under 768 (a Target MP above that wins when set).
 
 Crops keep the face: the references are placed on one canvas (the majority aspect, sized by the middle reference), and any photo that has to be cropped to fit is cropped around its face rather than the frame centre, never tighter than the canvas needs.
 

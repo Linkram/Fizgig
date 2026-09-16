@@ -7751,16 +7751,24 @@ class LoRATrainerGUI:
         return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_refmod", False)
 
     REFMOD_TRAIN_MP = 0.25   # the optimiser's stills: the measured recipe, whatever Target MP says
+    # References are encoded at no less than this: 768 x 768 = 0.59 MP. H3 does poorly with a
+    # reference under 768 on a side (Peter, 16 Sep 2026), so a small photo is scaled UP to it
+    # (the reference pass runs with upscaling allowed); a bigger Target MP wins when set.
+    REFMOD_MIN_REF_MP = 0.59
+
+    def _refmod_ref_mp(self) -> float:
+        """The megapixels the references are encoded at: Target MP, floored at 768 on a side."""
+        try:
+            return max(float(self.dataset_megapixels_var.get()), self.REFMOD_MIN_REF_MP)
+        except (TypeError, ValueError, AttributeError):
+            return self.REFMOD_MIN_REF_MP
 
     def _refmod_ref_pass_needed(self) -> bool:
         """RefMod with Steps above 0 and Target MP other than 0.25: the references need their
         own cache pass at Target MP (the dataset's caches are the optimiser's, at 0.25)."""
         if not self._is_refmod_arch() or self._refmod_plain_encode():
             return False
-        try:
-            return abs(float(self.dataset_megapixels_var.get()) - self.REFMOD_TRAIN_MP) > 1e-6
-        except (TypeError, ValueError, AttributeError):
-            return False
+        return abs(self._refmod_ref_mp() - self.REFMOD_TRAIN_MP) > 1e-6   # always, with the 768 floor
 
     def _refmod_ref_cache_dirs(self):
         """The '-refs' sibling of each dataset folder's cache folder — the same rule the TOML
@@ -31724,7 +31732,8 @@ class LoRATrainerGUI:
                 cmd += ["--clip_still"]
             # A RefMod plain encode takes every image, captioned or not (nothing trains).
             if config.get("is_refmod") and self._refmod_plain_encode():
-                cmd += ["--captions_optional"]
+                # Steps 0: this pass IS the reference pass — the 768 floor and upscaling apply
+                cmd += ["--captions_optional", "--megapixels", f"{self._refmod_ref_mp():g}", "--allow_upscale"]
             return cmd
         arch = self.settings["ARCHITECTURE"]
         python_path = self._venv_python()
@@ -31751,7 +31760,7 @@ class LoRATrainerGUI:
         """The references' own latents pass at Target MP into the '-refs' sibling folder —
         the ordinary MiniMax latents command with the resolution override and suffix."""
         return self.build_cache_latents_command(config) + [
-            "--megapixels", str(self.dataset_megapixels_var.get()).strip(),
+            "--megapixels", f"{self._refmod_ref_mp():g}", "--allow_upscale",
             # '=' form: a bare "-refs" reads as a flag to argparse
             "--cache_suffix=-refs"]
 
