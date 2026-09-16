@@ -366,31 +366,38 @@ def token_count(latent: torch.Tensor) -> int:
 # ─── the base model, planned like a training run ────────────────────────────────────────────
 
 def plan_and_load_dit(dit_path: str, *, device, dtype, base_quant: str = "auto",
-                      blocks_to_swap="auto", mp: float = 0.25):
+                      blocks_to_swap="auto", mp: float = 0.25, stills_per_step: int = 1):
     """The H3 base on the tier a LoRA run would get (int8 no-swap / int8 streamed / NF4),
-    frozen, gradient-checkpointed. No adapter: the plan's adapter budget is zero."""
+    frozen. No adapter: the plan's adapter budget is zero. Gradient checkpointing follows the
+    planner: `stills_per_step` is the step's token load in stills of `mp` (the references in
+    the sequence plus the training still) — recompute is skipped only when that fits without
+    it, as the trainer does; an explicit swap count keeps it on."""
     from fizgig.minimax.loader import load_minimax_h3_dit
     from fizgig.minimax.trainer import (is_pruned_checkpoint, plan_base_quant, plan_vram,
                                         _INT8_TRANSIENT_GB)
     from fizgig.minimax import trainer as _tr
     pruned = is_pruned_checkpoint(dit_path)
     mode, n_swap = base_quant, 0
+    _ckpt = True
+    # the planner's activation term scales with tokens: the whole sequence, in stills of `mp`
+    mp_plan = float(mp) * max(1, int(stills_per_step))
     if str(blocks_to_swap).lower() == "auto":
         if torch.cuda.is_available():
             from fizgig.utils.device import plannable_free_vram
             free_gb = plannable_free_vram()
             if base_quant == "auto":
-                mode, n_swap, _ckpt, why = plan_base_quant(free_gb, pruned, mp=mp, adapter_gb=0.0)
+                mode, n_swap, _ckpt, why = plan_base_quant(free_gb, pruned, mp=mp_plan, adapter_gb=0.0)
             else:
                 mode = base_quant
                 resident = (_tr._RESIDENT_INT8_GB if mode == "int8"
                             else (_tr._RESIDENT_PRUNED_GB if pruned else _tr._RESIDENT_GB))
-                n_swap, _ckpt = plan_vram(free_gb, mp=mp, resident_gb=resident,
+                n_swap, _ckpt = plan_vram(free_gb, mp=mp_plan, resident_gb=resident,
                                           transient_gb=_INT8_TRANSIENT_GB if mode == "int8" else 0.0,
                                           adapter_gb=0.0)
                 why = f"base precision pinned to {mode}"
-            logger.info(f"[vram] refmod plan: free {free_gb:.1f} GB, largest bucket {mp:.2f} MP, "
-                        f"base {mode} -> blocks_to_swap={n_swap} ({why})")
+            logger.info(f"[vram] refmod plan: free {free_gb:.1f} GB, step load {mp_plan:.2f} MP "
+                        f"({stills_per_step} stills of {mp:.2f}), base {mode} -> "
+                        f"blocks_to_swap={n_swap}, checkpointing {'on' if _ckpt else 'off'} ({why})")
         else:
             mode = "nf4" if base_quant == "auto" else base_quant
     else:
@@ -404,7 +411,11 @@ def plan_and_load_dit(dit_path: str, *, device, dtype, base_quant: str = "auto",
     if n_swap > 0:
         h2d = mode == "int8" or (mode in ("nf4", "hqq") and os.environ.get("FIZGIG_NO_NF4_H2D") != "1")
         n_swap = dit.enable_block_swap(n_swap, h2d_only=h2d, ring_size=2)
-    dit.enable_gradient_checkpointing()
+        _ckpt = True   # swapped blocks need recompute (autograd would pin their weights)
+    if _ckpt:
+        dit.enable_gradient_checkpointing()
+    else:
+        logger.info("[vram] gradient checkpointing off — the step fits without recompute")
     dit.eval()
     return dit, mode, n_swap
 
@@ -448,8 +459,14 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
                     uncond_text: Optional[torch.Tensor] = None, uncond_frac: float = 0.1,
                     warmup: int = 20, log_every: int = 10, on_step=None,
                     target: Optional[torch.Tensor] = None, shared_epoch=None,
-                    sigma_range=DEFAULT_SIGMA_RANGE) -> torch.Tensor:
+                    sigma_range=DEFAULT_SIGMA_RANGE, ref_subset: int = 0) -> torch.Tensor:
     """Optimise the mod latent against the frozen H3 loss over the dataset's stills.
+
+    ref_subset > 0: each step rides a random `ref_subset` of the mod's reference frames (in
+    their saved order) instead of all of them. The references are ~90% of the step's tokens
+    and attention is quadratic in the sequence, so 3 of 16 is several times faster per step;
+    every frame still gets gradient every few steps, and the pull term always sees the whole
+    mod. 0 = every reference every step (the 10 Sep 2026 measurement).
 
     Defaults are the measured recipe (mbacc photos, 10 Sep 2026, ref2va, Full canvas, 4 seeds,
     ArcFace vs the dataset): lr 1e-3, pull 2.0, noise window 0.2-0.8 put every seed at or
@@ -479,6 +496,10 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
     target = (target if target is not None else mod0).detach().to(device, torch.float32)
     param = torch.nn.Parameter(mod0.detach().to(device, torch.float32).clone())
     opt = torch.optim.AdamW([param], lr=lr, betas=(0.9, 0.99), weight_decay=0.0, eps=1e-8)
+    n_frames = int(param.shape[2])
+    k_sub = int(ref_subset) if ref_subset and 0 < int(ref_subset) < n_frames else 0
+    if k_sub:
+        logger.info(f"[refmod] each step rides {k_sub} of the {n_frames} references (random, saved order)")
     step = 0
     t0 = time.time()
     run_loss, run_n = 0.0, 0
@@ -500,8 +521,13 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
             # is the one thing that reliably breaks it
             for g in opt.param_groups:
                 g["lr"] = lr * min(1.0, (step + 1) / float(max(1, warmup)))
+            if k_sub:
+                _idx = torch.tensor(sorted(random.sample(range(n_frames), k_sub)), device=device)
+                ride = param.index_select(2, _idx)      # grads flow back to the picked frames
+            else:
+                ride = param
             with torch.autocast("cuda", enabled=False):
-                loss, sig = refmod_step_loss(dit, param, latents, text, device=device, dtype=dtype,
+                loss, sig = refmod_step_loss(dit, ride, latents, text, device=device, dtype=dtype,
                                              generator=gen, seed=seed, sigma_range=sigma_range)
                 total = loss + pull * F.mse_loss(param, target) if pull > 0 else loss
             opt.zero_grad(set_to_none=True)
@@ -614,7 +640,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
-               ref_cache_dirs: Optional[List[str]] = None) -> str:
+               ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 3) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -721,8 +747,11 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     tags = [f"{n_img} img, {n_st} clip stills", "fizgig"]
 
     if trains or encoded:
+        _n_ride = (min(int(ref_subset), int(mod0.shape[2])) if ref_subset and int(ref_subset) > 0
+                   else int(mod0.shape[2]))
         dit, base_mode, n_swap = plan_and_load_dit(dit_path, device=device, dtype=dtype,
-                                                   base_quant=base_quant, blocks_to_swap=blocks_to_swap, mp=mp)
+                                                   base_quant=base_quant, blocks_to_swap=blocks_to_swap, mp=mp,
+                                                   stills_per_step=_n_ride + 1 if trains else 1)
     else:
         # plain encode, no previews: the model is never touched
         dit, base_mode, n_swap = None, "none", 0
@@ -756,7 +785,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         mod = _optimize_with_previews(dit, group, mod0, steps=steps, lr=lr, pull=pull, device=device,
                                       dtype=dtype, seed=seed, uncond_text=uncond_text,
                                       preview_every=preview_every, preview_fn=_preview,
-                                      sigma_range=sigma_range)
+                                      sigma_range=sigma_range, ref_subset=ref_subset)
         _preview(mod, int(math.ceil(steps / float(preview_every))) if preview_every else 1)
 
     out = save_refmod(os.path.join(output_dir, output_name), mod, name=output_name, mode=mode,
@@ -764,6 +793,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                       tags=tags + (["fizgig optimised"] if steps > 0 else []),
                       description=description,
                       extra={"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
+                             "ss_refmod_ref_subset": str(int(ref_subset or 0)),
                              "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
                              "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full")})
     mb = os.path.getsize(out) / 1024 / 1024
@@ -773,11 +803,12 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
 
 
 def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype, seed, uncond_text,
-                            preview_every, preview_fn, sigma_range=None):
+                            preview_every, preview_fn, sigma_range=None, ref_subset: int = 0):
     """optimize_refmod in chunks so interim previews render from the live latent."""
     if not preview_every or preview_every >= steps:
         return optimize_refmod(dit, group, mod0, steps=steps, lr=lr, pull=pull, device=device,
-                               dtype=dtype, seed=seed, uncond_text=uncond_text, sigma_range=sigma_range)
+                               dtype=dtype, seed=seed, uncond_text=uncond_text, sigma_range=sigma_range,
+                               ref_subset=ref_subset)
     # chunked: each chunk restarts the optimizer state but keeps the latent — a small price,
     # and it keeps optimize_refmod itself simple. Warm-up only on the first chunk.
     mod = mod0
@@ -787,7 +818,7 @@ def _optimize_with_previews(dit, group, mod0, *, steps, lr, pull, device, dtype,
         n = min(preview_every, steps - done)
         mod = optimize_refmod(dit, group, mod, steps=n, lr=lr, pull=pull, device=device, dtype=dtype,
                               seed=seed + k, uncond_text=uncond_text, warmup=(20 if k == 0 else 1),
-                              target=mod0, sigma_range=sigma_range)
+                              target=mod0, sigma_range=sigma_range, ref_subset=ref_subset)
         done += n
         k += 1
         if done < steps:

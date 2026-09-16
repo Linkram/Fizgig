@@ -36,6 +36,9 @@ def setup_parser():
     p.add_argument("--steps", type=int, default=200,
                    help="optimisation steps against the frozen base (0 = encode only, the "
                         "node extractor's own result)")
+    p.add_argument("--ref_subset", type=int, default=3,
+                   help="references each optimisation step rides, picked at random in saved order "
+                        "(default 3 — several times faster than all of them, which is 0)")
     p.add_argument("--lr", type=float, default=1e-3, help="latent-space AdamW rate (default 1e-3, measured)")
     p.add_argument("--pull", type=float, default=2.0,
                    help="weight of the L2 pull toward the initial encode (default 2.0, measured)")
@@ -89,7 +92,7 @@ def main():
                sample_seed=a.sample_seed, preview_every=a.preview_every,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, init_from=a.init_from, exclude_refs=a.holdout_refs,
-               ref_cache_dirs=a.ref_cache_dir or None,
+               ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 
 
