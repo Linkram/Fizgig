@@ -27953,10 +27953,13 @@ class LoRATrainerGUI:
         _pf = tk.Frame(rset, bg=COLORS["bg_surface"])
         _pf.grid(row=rr, column=1, sticky=tk.EW, pady=2)
         _pf.columnconfigure(0, weight=1)
+        # A visible input: darker field on the card, a border, a focus ring in the accent colour
+        # (flat on the surface colour read as static text — Peter, 16 Sep 2026).
         self.rms_prompt_text = tk.Text(_pf, height=3, wrap=tk.WORD, font=(FONT_FAMILY, 10),
-                                       bg=COLORS["bg_input"] if "bg_input" in COLORS else COLORS["bg_surface"],
-                                       fg=COLORS["text_primary"], insertbackground=COLORS["text_primary"],
-                                       relief="flat", bd=1)
+                                       bg=COLORS["bg_deep"], fg=COLORS["text_primary"],
+                                       insertbackground=COLORS["text_primary"], relief="solid", bd=1,
+                                       highlightthickness=1, highlightbackground=COLORS["border"],
+                                       highlightcolor=COLORS["accent"], padx=6, pady=4)
         self.rms_prompt_text.grid(row=0, column=0, sticky=tk.EW)
         self.rms_prompt_text.insert("1.0", str(saved.get("prompt", "a woman smiles at the camera, soft window light")))
         self.rms_prompt_text.bind("<KeyRelease>", lambda e: self._rms_persist())
