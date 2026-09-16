@@ -67,7 +67,11 @@ def setup_parser():
                    help="also preview every N steps (0 = raw mod + finished mod only)")
     p.add_argument("--turbo_lora_path", default=None, help="Turbo LoRA for few-step previews")
     p.add_argument("--turbo_lora_strength", type=float, default=1.0)
-    p.add_argument("--description", default="", help="stored in the mod (the loaders can emit it)")
+    p.add_argument("--description", default="", help="stored in the mod as its hint (the loaders can emit it "
+                                                        "into the prompt: 'concept_type: description')")
+    p.add_argument("--concept_type", default="identity",
+                   choices=["identity", "style", "pose_motion", "clothing", "background", "generic"],
+                   help="what the mod is (the pack's concept types; default identity)")
     p.add_argument("--holdout_refs", action="store_true",
                    help="hold the reference stills OUT of the optimiser's training set (default: it "
                         "trains on every still, references included)")
@@ -101,7 +105,8 @@ def main():
                sample_width=a.sample_width, sample_height=a.sample_height, sample_steps=a.sample_steps,
                sample_seed=a.sample_seed, preview_every=a.preview_every, sample_frames=a.sample_frames,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
-               description=a.description, init_from=a.init_from, exclude_refs=a.holdout_refs,
+               description=a.description, concept_type=a.concept_type, init_from=a.init_from,
+               exclude_refs=a.holdout_refs,
                ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset, clips=a.clips,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 

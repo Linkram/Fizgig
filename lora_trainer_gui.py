@@ -1102,10 +1102,16 @@ REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
 # How a clip in the dataset enters the mod (16 Sep 2026): its sharpest-face still (one frame,
 # the identity choice) or every latent frame as motion (the node pack's video reference).
 REFMOD_CLIPS_OPTIONS = ["as their sharpest still", "as motion (all their frames)"]
+# The pack's concept types (its Extract node's list). Written into the file with the description:
+# together they are the mod's HINT — what RefMod Studio's '+ mod hints' and the pack's Loader
+# emit into the prompt ("identity: a ginger woman with messy hair").
+REFMOD_CONCEPT_OPTIONS = ["identity", "style", "pose_motion", "clothing", "background", "generic"]
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "16",
     "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
     "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+    "MINIMAX_REFMOD_DESC": "",
+    "MINIMAX_REFMOD_CONCEPT": REFMOD_CONCEPT_OPTIONS[0],
 }
 
 
@@ -1122,6 +1128,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "8",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_CONCEPT": "identity",
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
     },
@@ -1158,6 +1165,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "all",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_CONCEPT": "style",
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
     },
@@ -1167,6 +1175,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "all",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_CONCEPT": "style",
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
     },
@@ -4327,6 +4336,27 @@ class LoRATrainerGUI:
                     "the identity choice. Motion: every latent frame of the clip, the node pack's video "
                     "reference (a dance, a camera move); tokens are per frame, so a clip costs its length. "
                     "Prepare clips with Gizmo first — cut to H3's frame grid at the right size, they work best.")
+            # Second row: the mod's hint — a description and what it is. Both go into the file.
+            self._refmod_frame2 = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_frame2, text="Description (mod hint):", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_DESC"] = ttk.Entry(self._refmod_frame2, width=64)
+            self.entries["MINIMAX_REFMOD_DESC"].insert(0, str(self.settings.get("MINIMAX_REFMOD_DESC", "") or ""))
+            self.entries["MINIMAX_REFMOD_DESC"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_DESC"],
+                    "A few words saying what the mod is — 'a ginger woman with messy hair', 'a 1970s film "
+                    "look'. Stored in the file; RefMod Studio's '+ mod hints' and the pack's loader put "
+                    "'concept: description' into the prompt so the model knows what it is looking at.")
+            tk.Label(self._refmod_frame2, text="Concept:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_CONCEPT"] = ttk.Combobox(
+                self._refmod_frame2, values=list(REFMOD_CONCEPT_OPTIONS), state="readonly", width=12)
+            self.entries["MINIMAX_REFMOD_CONCEPT"].set(
+                str(self.settings.get("MINIMAX_REFMOD_CONCEPT", REFMOD_DEFAULTS["MINIMAX_REFMOD_CONCEPT"])))
+            self.entries["MINIMAX_REFMOD_CONCEPT"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_CONCEPT"],
+                    "What the mod is, in the pack's terms: identity (a person), style (a look), "
+                    "pose_motion (a dance, a camera move), clothing, background, generic.")
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
@@ -4353,6 +4383,7 @@ class LoRATrainerGUI:
             self._refmod_std_hint = None
             if self._is_refmod_arch():
                 self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
+                self._refmod_frame2.pack(anchor=tk.W, pady=(6, 0))
                 self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
 
         # === Presets card ===
@@ -8548,11 +8579,17 @@ class LoRATrainerGUI:
                 _note = getattr(self, "_minimax_sample_note", None)
                 _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
                 _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
+                _fr2 = getattr(self, "_refmod_frame2", None)
+                if _fr2 is not None:
+                    _fr2.pack(anchor=tk.W, pady=(6, 0), **_kw)
                 _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
                 if _std is not None:
                     _std.pack(anchor=tk.W, pady=(6, 0), **_kw)
             elif not is_refmod and _fr.winfo_manager():
                 _fr.pack_forget()
+                _fr2 = getattr(self, "_refmod_frame2", None)
+                if _fr2 is not None:
+                    _fr2.pack_forget()
                 _hint.pack_forget()
                 if _std is not None:
                     _std.pack_forget()
@@ -28038,7 +28075,7 @@ class LoRATrainerGUI:
         _sw.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
         _rrow = tk.Frame(_sw, bg=COLORS["bg_surface"])
         _rrow.pack(anchor=tk.W, fill=tk.X)
-        self._rms_render_btn = ttk.Button(_rrow, text="▶ Render", width=14, command=self._rms_render)
+        self._rms_render_btn = ttk.Button(_rrow, text="▶ Render", width=17, command=self._rms_render)
         self._rms_render_btn.pack(side=tk.LEFT)
         _rms_tip(self._rms_render_btn, "Render No mod (once per setup, cached) and With mods at the "
                                       "current rows / strength / curves. Loads the base first if needed.")
@@ -28050,7 +28087,7 @@ class LoRATrainerGUI:
         _srow = tk.Frame(_sw, bg=COLORS["bg_surface"])
         _srow.pack(anchor=tk.W, fill=tk.X, pady=(8, 0))
         self.rms_sweep_var = tk.StringVar(value=self._RMS_SWEEPS[0])
-        self._rms_sweep_btn = ttk.Button(_srow, text="▶ Render sweep", width=14, command=self._rms_sweep)
+        self._rms_sweep_btn = ttk.Button(_srow, text="▶ Render sweep", width=17, command=self._rms_sweep)
         self._rms_sweep_btn.pack(side=tk.LEFT)
         _rms_tip(self._rms_sweep_btn, "Render the current setup as a row of 22-frame clips with ONE dial "
                                      "stepped through its useful values — the fastest way to see what a "
@@ -32239,8 +32276,14 @@ class LoRATrainerGUI:
             "--output_name", self.settings["LORA_NAME"],
             "--grid", _grid, "--steps", _steps, "--max_refs", _refs_arg,
             "--clips", refmod_clips_value(self.settings.get("MINIMAX_REFMOD_CLIPS", _d["MINIMAX_REFMOD_CLIPS"])),
+            "--concept_type", (str(self.settings.get("MINIMAX_REFMOD_CONCEPT", "") or "").strip()
+                               if str(self.settings.get("MINIMAX_REFMOD_CONCEPT", "") or "").strip() in REFMOD_CONCEPT_OPTIONS
+                               else _d["MINIMAX_REFMOD_CONCEPT"]),
             "--seed", str(self.settings.get("SEED", 42) or 42),
         ]
+        _desc = str(self.settings.get("MINIMAX_REFMOD_DESC", "") or "").strip()
+        if _desc:
+            cmd += ["--description", _desc]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         # NF4 always (Peter, 16 Sep 2026): 10.5 GB resident, so the step fits without recompute

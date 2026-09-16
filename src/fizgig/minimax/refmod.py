@@ -714,7 +714,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
                ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1,
-               clips: str = "still") -> str:
+               clips: str = "still", concept_type: str = "identity") -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -883,7 +883,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     out = save_refmod(os.path.join(output_dir, output_name), mod, name=output_name, mode=mode,
                       pool=pool_label, optimize_steps=steps, source_shape=source_shape,
                       tags=tags + (["fizgig optimised"] if steps > 0 else []),
-                      description=description,
+                      description=description, concept_type=(concept_type or "identity"),
                       extra={"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
                              "ss_refmod_ref_subset": str(int(ref_subset or 0)),
                              "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
