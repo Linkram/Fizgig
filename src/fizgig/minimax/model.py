@@ -225,7 +225,10 @@ def image_position_ids(text_len, latent_h, latent_w, num_audio_latents: int = 0,
     Reference rows (r2v): each reference image contributes its OWN area-normalized frame grid at
     t = cursor, and advances the cursor by 1.0. Ordered right after the text, matching the
     reference's segment order [text | cond | refs | target audio | target video]
-    (comfy/ldm/minimax/model.py::PackedLayout).
+    (comfy/ldm/minimax/model.py::PackedLayout). A reference entry may also be (h, w, t) with
+    t > 1: a VIDEO-kind reference block (what ComfyUI packs for a multi-frame RefMod) — its t
+    frames sit on the video clock from the cursor, _video_t_grid(t, cursor), and advance the
+    cursor by sum(_video_t_spans(t)), exactly PackedLayout's "video" branch.
     Audio rows: t = cursor + 0..A-1 repeated per channel, h = 0, w pinned to the frame grid's
     first column for channel 0 and its last for channel 1 (the reference's stereo convention).
     Video rows: latent_t frames, t-major (matching patchify_video's row order), each frame's
@@ -248,8 +251,19 @@ def image_position_ids(text_len, latent_h, latent_w, num_audio_latents: int = 0,
     rows = [text]
     cursor = float(text_len)
     ref_rows = []
-    for rh, rw in (refs or ()):
+    for _ref in (refs or ()):
+        rh, rw = int(_ref[0]), int(_ref[1])
+        rt = int(_ref[2]) if len(_ref) > 2 else 1
         r_frame = _frame_grid(rh, rw)
+        if rt > 1:
+            # video-kind reference: t-major rows on the video clock, like the target's
+            _tg = _video_t_grid(rt, cursor)
+            g = torch.empty(rt * r_frame.shape[0], 3, dtype=torch.float64)
+            g[:, 0] = _tg.repeat_interleave(r_frame.shape[0])
+            g[:, 1:] = r_frame.repeat(rt, 1)
+            ref_rows.append(g)
+            cursor += float(sum(_video_t_spans(rt)))
+            continue
         g = torch.empty(r_frame.shape[0], 3, dtype=torch.float64)
         g[:, 0] = cursor
         g[:, 1:] = r_frame
@@ -778,7 +792,9 @@ class MiniMaxH3DiT(nn.Module):
         ref_latents  : optional list of [1, C, 1, h, w] NORMALIZED reference latents (r2v). Each
                        is packed as condition rows right after the text: noise-augmented, tagged
                        video, pinned near clean, and never denoised. Their presence shifts the
-                       target's temporal origin (see image_position_ids).
+                       target's temporal origin (see image_position_ids). A [1, C, T, h, w]
+                       entry (T > 1) is a VIDEO-kind reference — a multi-frame RefMod — and
+                       rides on the video clock like ComfyUI's PackedLayout packs it.
         text_token_tags : optional [L] per-row modality tags for the text rows. Required when the
                        conditioning carries `<Picture i>` vision blocks, whose rows are VIDEO —
                        without it every text row is tagged TEXT and the vision rows are modulated
@@ -821,7 +837,7 @@ class MiniMaxH3DiT(nn.Module):
                     noise = torch.randn(r.shape, generator=gen, dtype=torch.float32).to(device)
                     r = visual_cond_noise_aug * r + (1.0 - visual_cond_noise_aug) * noise
                 _rows.append(r)
-                ref_shapes.append((z.shape[-2], z.shape[-1]))
+                ref_shapes.append((z.shape[-2], z.shape[-1], z.shape[2]))
             ref_embed = self.video_patch_proj(
                 torch.cat(_rows, dim=0).to(self.video_patch_proj.weight.dtype)).to(dtype)
 

@@ -1049,7 +1049,7 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
                  sigma: torch.Tensor = None, shift: float = None, generator=None,
                  noise: torch.Tensor = None, audio_latent: torch.Tensor = None,
                  audio_weight: float = 1.0, video_weight: float = 1.0,
-                 parts_out: dict = None):
+                 parts_out: dict = None, ref_latents=None):
     """One training step's loss.
 
     latent      : [1, 24, T, H, W] clean VAE latent (x0). T=1 is a still.
@@ -1099,8 +1099,11 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
     noised = (1.0 - s) * x0 + s * noise
     t = (1.0 - sigma).to(device)
 
+    # ref_latents: RefMod mode — the mod rides as the reference block on every step (the LoRA
+    # learns what the reference can't carry). None = the ordinary step.
+    _ref_kw = {"ref_latents": ref_latents} if ref_latents else {}
     if audio_latent is None:
-        pred = model(noised.to(latent.dtype), t, text_embeds)
+        pred = model(noised.to(latent.dtype), t, text_embeds, **_ref_kw)
         loss = F.mse_loss(pred.float(), (x0 - noise).to(pred.dtype).float())
         if parts_out is not None:
             parts_out.update(video=float(loss.detach()), audio=None)
@@ -1121,7 +1124,7 @@ def compute_loss(model, latent: torch.Tensor, text_embeds: torch.Tensor, *,
     a_noised = (1.0 - sigma_a) * a0 + sigma_a * a_noise
 
     pred, pred_a = model(noised.to(latent.dtype), t, text_embeds,
-                         audio_rows=a_noised, return_audio=True)
+                         audio_rows=a_noised, return_audio=True, **_ref_kw)
     v_loss = F.mse_loss(pred.float(), (x0 - noise).to(pred.dtype).float())
     if pred_a is None:                      # pack_audio_rows off — nothing to train against
         if parts_out is not None:
@@ -2744,6 +2747,7 @@ def train_minimax(
         raise RuntimeError("No training items — run minimax_cache_latents then minimax_cache_text first.")
     logger.info(f"MiniMax H3 training: {group.num_train_items} items, {max_train_epochs} epochs")
 
+
     # FIZGIG_SAVED_TENSOR_AUDIT=1: account every tensor autograd saves for backward, with the
     # stack that saved it. Holders unregister on free, so whatever remains at a failed park is
     # the live graph — named by file:line. Diagnostic for the 16 GB weight-retention hunt.
@@ -4130,7 +4134,23 @@ def train_minimax(
                         f"of a mature adapter; this keeps the RATIO steady instead of the rate.")
 
     ema = None
-    if ema_decay and float(ema_decay) > 0:
+    _ema_short = isinstance(ema_decay, str) and ema_decay.strip().lower().startswith("short")
+    if _ema_short:
+        # Short-run EMA (Peter, 10 Sep 2026): the normal ramp (1+n)/(10+n) never reaches 0.98 on a
+        # 40-step run — the saved weights are close to the raw walk, so a higher LR passes
+        # straight through. Size the window to the run instead: decay = 1 - 4/steps (the average
+        # spans roughly the last quarter of the run), with a fast ramp, so a 3-5x LR does the
+        # learning and the average removes the wobble. Batch size is 1 here, so steps = items x
+        # epochs.
+        _total = max(1, int(group.num_train_items) * max(1, int(max_train_epochs)))
+        _d = min(0.995, max(0.5, 1.0 - 4.0 / _total))
+        ema_decay = _d
+        ema = EMAWeights(network, _d, ramp=2)
+        logger.info(f"[ema] SHORT-RUN mode: {_total} steps -> decay {_d:.3f} (window ~ a quarter of "
+                    f"the run), fast ramp — checkpoints and previews use the average, training "
+                    f"runs on the raw weights")
+    elif ema_decay and float(ema_decay) > 0:
+        ema_decay = float(ema_decay)
         ema = EMAWeights(network, float(ema_decay))
         logger.info(f"[ema] ON at decay {float(ema_decay):g} — checkpoints and previews use the "
                     f"smoothed average of the training path; training itself runs on the raw "
@@ -4428,7 +4448,8 @@ def train_minimax(
             "ss_gradient_accumulation": str(_accum_n),
             "ss_adapter_ramp": f"{adapter_ramp:g}" if ramp is not None else "0",
             "ss_lr_warmup_epochs": f"{lr_warmup_epochs:g}",
-            "ss_ema_decay": f"{ema_decay:g}" if ema is not None else "0",
+            "ss_ema_decay": (f"{float(ema_decay):g}" if ema is not None else "0"),
+            "ss_ema_mode": ("short" if _ema_short else ("fixed" if ema is not None else "off")),
             "ss_slow_block_lr_scale": (f"{slow_block_lr_scale:g}" if _slow_used else "1"),
             "ss_caption_dropout": f"{caption_dropout:g}" if uncond_text is not None else "0",
             # One [[datasets]] block per subject is how Multi Concept keeps two people apart, so

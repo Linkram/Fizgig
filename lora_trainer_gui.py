@@ -135,9 +135,10 @@ class _GUIWriter:
 
 class ToolTip:
     """Simple tooltip class for tkinter widgets"""
-    def __init__(self, widget, text):
+    def __init__(self, widget, text, size=9):
         self.widget = widget
         self.text = text
+        self.size = size
         self.tooltip_window = None
         widget.bind("<Enter>", self.show_tooltip)
         widget.bind("<Leave>", self.hide_tooltip)
@@ -154,10 +155,10 @@ class ToolTip:
         tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
 
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT, wraplength=520,   # long tips wrap, never run off the screen
                         background=COLORS["bg_surface"], foreground=COLORS["text_primary"],
                         relief=tk.SOLID, borderwidth=1,
-                        font=(FONT_FAMILY, 9), padx=8, pady=6)
+                        font=(FONT_FAMILY, self.size), padx=8, pady=6)
         label.pack()
 
     def hide_tooltip(self, event=None):
@@ -422,6 +423,23 @@ ARCHITECTURES = {
     },
 }
 
+# MiniMax H3 RefMod (9 Sep 2026): the same family (caches, paths, Training Base, previews) with
+# a different job — no LoRA; the dataset's references become a RefMod file (the community
+# ComfyUI-MiniMaxH3Mod format) whose latent is OPTIMISED against the frozen H3 base rather than
+# just VAE-encoded. Two controls (Grid, Steps); every other Training-tab section hides. The
+# entry keeps is_minimax so every MiniMax code path (cache commands, validation, sample
+# defaults) applies unchanged; is_refmod routes the launch to minimax_refmod.py.
+ARCHITECTURES["MiniMax H3 RefMod"] = {
+    **ARCHITECTURES["MiniMax H3"],
+    "is_refmod": True,
+    "train_script": "src/fizgig/scripts/minimax_refmod.py",
+    "lora_name_suffix": "refmod",
+    # No previews, ever (Peter, 16 Sep 2026): the node pack's extractor has none, they were the
+    # only thing putting a 14 GB model on the card during a plain encode, and a mod is judged
+    # in RefMod Studio. The Samples pane is ignored and its settings left alone.
+    "supports_samples": False,
+}
+
 # Saved configs written before 3.6.1 carry the old label. Every lookup here is a .get() that
 # falls back to Klein, so without an alias a MiniMax preset would silently come back as a Klein
 # one - wrong family, no error. The alias points at the same config; _canon_arch maps it forward
@@ -433,6 +451,11 @@ for _old, _new in _ARCH_ALIASES.items():
 
 # Aliases are readable, not offerable: the dropdown lists current names only.
 ARCHITECTURE_LIST = [k for k in ARCHITECTURES if k not in _ARCH_ALIASES]
+
+
+def _rms_tip(widget, text):
+    """RefMod Studio tooltips one point larger (Peter, 16 Sep 2026)."""
+    return ToolTip(widget, text, size=10)
 
 
 def _canon_arch(name):
@@ -1064,6 +1087,127 @@ MINIMAX_BUILT_IN_PRESETS = {
     **MINIMAX_BUILT_IN_PRESETS,
 }
 
+# MiniMax H3 RefMod: the two controls, plus the clip still ON (each clip lends its sharpest
+# face as a reference). Spread from Fast so the hidden MiniMax fields hold sane values.
+
+REFMOD_GRID_OPTIONS = ["Full reference (recommended — carries the face)", "32×32 (256 tokens)",
+                       "16×16 (64 tokens, concept-level)", "8×8 (16 tokens, stackable)"]
+# Steps: the optimisation against the frozen H3 base — the thing no other RefMod maker does.
+# Measured 9-10 Sep 2026 (mbacc photos, ref2va, ArcFace vs the dataset): 200 steps at the
+# tested rate, pull and noise window took portraits 66 -> 70 and off-dataset scenes 53 -> 59,
+# ahead on every prompt. 0 writes the plain encode, the same file the node pack's extractor makes.
+REFMOD_STEP_OPTIONS = ["0 (plain encode — what the node pack makes)", "200 (optimised against H3 — recommended)",
+                       "500", "1000"]
+REFMOD_REFS_OPTIONS = ["4", "8", "16", "all"]
+# How a clip in the dataset enters the mod (16 Sep 2026): its sharpest-face still (one frame,
+# the identity choice) or every latent frame as motion (the node pack's video reference).
+REFMOD_CLIPS_OPTIONS = ["as their sharpest still", "as motion (all their frames)"]
+# The pack's concept types (its Extract node's list). Written into the file with the description:
+# together they are the mod's HINT — what RefMod Studio's '+ mod hints' and the pack's Loader
+# emit into the prompt ("identity: a ginger woman with messy hair").
+REFMOD_CONCEPT_OPTIONS = ["identity", "style", "pose_motion", "clothing", "background", "generic"]
+REFMOD_DEFAULTS = {
+    "MINIMAX_REFMOD_REFS": "16",
+    "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
+    "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+    "MINIMAX_REFMOD_DESC": "",
+    "MINIMAX_REFMOD_CONCEPT": REFMOD_CONCEPT_OPTIONS[0],
+}
+
+
+def refmod_clips_value(label) -> str:
+    """'as motion (all their frames)' -> 'motion'; anything else -> 'still'."""
+    return "motion" if str(label or "").strip().lower().startswith("as motion") else "still"
+REFMOD_BUILT_IN_PRESETS = {
+    # The community recipe (16 Sep 2026): the node pack's own extractor path — encode mode (no
+    # optimisation), full-resolution references, under its 8 192-token cap (8 references at
+    # 1 MP ~ 8 000 tokens). Same photos as the Fizgig recipe, for a fair comparison.
+    "✨ RefMod — community recipe (plain encode, 8 refs at 1 MP)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        "MINIMAX_REFMOD_REFS": "8",
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_CONCEPT": "identity",
+        "DATASET_MEGAPIXELS": "1.0",
+        "MINIMAX_CLIP_STILL": True,
+    },
+    # Measured 10 Sep 2026: the Full-canvas mod with 16 references is the strongest file
+    # (portraits 70 vs 60 for 8), and 200 optimisation steps add ~5 on top. A companion LoRA
+    # in the same file was tried in eleven configurations and never lifted likeness beyond
+    # noise while dropping portraits ~10 (pose drift) — removed 14 Sep 2026.
+    "✨ RefMod — Fizgig recipe (Full reference, 16 refs at 1 MP, optimised)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        **REFMOD_DEFAULTS,
+        # 1 MP references (the file's pixels); the optimiser's stills are cached at 0.25 MP
+        # regardless (Peter, 16 Sep 2026)
+        "DATASET_MEGAPIXELS": "1.0",
+        "MINIMAX_CLIP_STILL": True,
+    },
+    # The same recipe at 0.5 MP references: half the tokens per reference at generation
+    # (~8,000 for 16, the library's budget) for a lighter file (Peter, 16 Sep 2026).
+    "✨ RefMod — Fizgig recipe lite (Full reference, 16 refs at 0.5 MP, optimised)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        **REFMOD_DEFAULTS,
+        "DATASET_MEGAPIXELS": "0.5",
+        "MINIMAX_CLIP_STILL": True,
+    },
+    # Style (16 Sep 2026): a look, not a person — plain encode of EVERY still (the optimiser's
+    # loss rewards reproducing the stills themselves, which on a style set means their subjects
+    # and framing; untested there, so Steps stays 0 and anyone can type a number). Community =
+    # the pack's concept recipe, the pooled 16x16 grid (stacks under the cap, carries palette
+    # and feel); high fidelity = Full at 0.25 MP (keeps texture, grain, brushwork).
+    "✨ RefMod — style, community (16×16 grid, all refs, plain encode)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[2],
+        "MINIMAX_REFMOD_REFS": "all",
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_CONCEPT": "style",
+        "DATASET_MEGAPIXELS": "0.25",
+        "MINIMAX_CLIP_STILL": True,
+    },
+    # High fidelity means it (Peter, 16 Sep 2026): 1 MP references, ~1 000 tokens a still, so 8 of
+    # them — the library's budget; the token readout warns anyone who takes it further.
+    "✨ RefMod — style, high fidelity (Full at 1 MP, 8 refs, plain encode)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        "MINIMAX_REFMOD_REFS": "8",
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_CONCEPT": "style",
+        "DATASET_MEGAPIXELS": "1.0",
+        "MINIMAX_CLIP_STILL": True,
+    },
+}
+
+
+def refmod_num(raw, default: str, kind=float) -> str:
+    """A free-text number field -> the string the CLI gets; the measured default when blank or
+    unparsable (a typo must not silently become 0)."""
+    s = str(raw if raw is not None else "").strip()
+    try:
+        v = kind(s)
+        return str(int(v)) if kind is int else s
+    except (TypeError, ValueError):
+        return default
+
+
+def refmod_grid_value(label) -> str:
+    """'16×16 (256 tokens, recommended)' -> '16'; 'Full reference ...' -> 'full'."""
+    s = str(label or "").strip()
+    if not s or s.lower().startswith("full"):
+        return "full"
+    return s.split("×")[0].split("x")[0].strip() or "16"
+
+
+def refmod_steps_value(label) -> str:
+    """'200 (recommended)' -> '200'; a typed '75' -> '75'; junk -> the measured 200."""
+    s = str(label or "").strip().split(" ")[0]
+    return s if s.isdigit() else "200"
+
 # Directory for dataset configurations
 DATASET_DIR = os.path.join(os.path.dirname(__file__), "dataset")
 
@@ -1629,8 +1773,8 @@ class LoRATrainerGUI:
     def __init__(self, master):
         self.master = master
         master.title("Fizgig — Klein 9B & Krea 2 LoRA Studio")
-        master.geometry("1450x1124")  # wide enough that the IDLE/BUSY light clears the last tab ("Preferences") with the Metadata tab in the strip; +100 height for the bottom status bar
-        master.minsize(1180, 900)  # keeps the tab row clear of the status light + tab content not cut off
+        master.geometry("1580x1124")  # wide enough that the IDLE/BUSY light clears the last tab ("Preferences") with the Metadata tab in the strip; +130 for the RefMod Studio tab (16 Sep 2026: 105 px of bold 11pt text + 12 px padding each side); +100 height for the bottom status bar
+        master.minsize(1310, 900)  # keeps the tab row clear of the status light + tab content not cut off
         master.configure(bg=BG_COLOR)
         # Closing the window must not orphan a training subprocess: Tk's default destroy
         # exits the interpreter but the trainer runs in its own process (no job object on
@@ -1932,8 +2076,8 @@ class LoRATrainerGUI:
         self._dataset_config_var = tk.StringVar(value=self.settings["DATASET_CONFIG"])
 
         # The LoRA output folder is remembered PER MODEL FAMILY (16 Sep 2026): the family the
-        # app opens on gets its own folder back; a family never used before keeps whatever the
-        # field last held; the default is output_loras inside Fizgig.
+        # app opens on gets its own folder back; a family never used before gets the default,
+        # output_loras inside Fizgig (never another family's folder).
         _od = self.last_used.get("lora_output_dirs")
         self._output_dir_memory = dict(_od) if isinstance(_od, dict) else {}
         _start_arch = str(self.last_used.get("architecture") or "")
@@ -2010,6 +2154,10 @@ class LoRATrainerGUI:
         self.repair_studio_tab.bind("<Button-1>", self.remove_focus)
         self.notebook.add(self.repair_studio_tab, text="Repair Studio")
 
+        self.refmod_studio_tab = ttk.Frame(self.notebook)
+        self.refmod_studio_tab.bind("<Button-1>", self.remove_focus)
+        self.notebook.add(self.refmod_studio_tab, text="RefMod Studio")
+
         self.explorer_tab = ttk.Frame(self.notebook)
         self.explorer_tab.bind("<Button-1>", self.remove_focus)
         self.notebook.add(self.explorer_tab, text="LoRA the Explorer")
@@ -2051,6 +2199,8 @@ class LoRATrainerGUI:
         self.create_profiler_tab()
         self._splash_status("Building the Repair Studio…")
         self.create_repair_studio_tab()
+        self._splash_status("Building the RefMod Studio…")
+        self.create_refmod_studio_tab()
         self._splash_status("Building LoRA the Explorer…")
         self.create_explorer_tab()
         self._splash_status("Building LoRA Royale…")
@@ -2230,6 +2380,7 @@ class LoRATrainerGUI:
         (separate process; switching during a run is fine)."""
         return (getattr(self, '_repair_preview_in_flight', False)
                 or getattr(self, '_explorer_generating', False)
+                or getattr(self, '_rms_busy', False)          # RefMod Studio load / render / sweep
                 or self._royale_is_busy())
 
     def _is_any_busy(self):
@@ -2249,6 +2400,8 @@ class LoRATrainerGUI:
         if getattr(self, '_repair_preview_in_flight', False):
             return True
         if getattr(self, '_explorer_generating', False):
+            return True
+        if getattr(self, '_rms_busy', False):          # RefMod Studio load / render / sweep
             return True
         if self._royale_is_busy():
             return True
@@ -2385,12 +2538,15 @@ class LoRATrainerGUI:
             self._unload_explorer_models()
         if tab_text != "LoRA Royale" and not self._royale_is_busy():
             self._royale_unload()
+        if tab_text != "RefMod Studio" and hasattr(self, "rms_engine") and (
+                self._rms_engine_ready() or getattr(self, "_rms_busy", False)):
+            self._rms_unload()
 
         # Entering a heavy-engine tab releases the warm caption worker (~8 GB Qwen): those
         # engines are 10-20 GB each and plan against free VRAM at load. Guarded on a job in
         # flight, like every other unload here. Elsewhere the worker deliberately stays warm
         # (fast Regenerate) until Unload / Start Training / app close.
-        if (tab_text in ("Repair Studio", "LoRA the Explorer", "LoRA Royale")
+        if (tab_text in ("Repair Studio", "RefMod Studio", "LoRA the Explorer", "LoRA Royale")
                 and self._caption_worker_alive()
                 and not getattr(self, "_captioning_running", False)):
             self.update_caption_log("Caption model released (freeing VRAM for "
@@ -3542,7 +3698,7 @@ class LoRATrainerGUI:
         desc_label = None
         if description:
             desc_label = tk.Label(card, text=description,
-                                  font=(FONT_FAMILY, 10),
+                                  font=(FONT_FAMILY, getattr(self, "_card_desc_size", None) or 10),
                                   fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                                   wraplength=760, justify=tk.LEFT)
             desc_label.pack(anchor=tk.W, padx=20, pady=(0, 10))
@@ -4129,8 +4285,108 @@ class LoRATrainerGUI:
                 wraplength=760, justify=tk.LEFT,
             )
             self._minimax_sample_note.pack(anchor=tk.W, pady=(10, 0))
-            if not self._is_minimax_arch():
-                self._minimax_sample_note.pack_forget()
+            if not self._is_minimax_arch() or self._is_refmod_arch():
+                self._minimax_sample_note.pack_forget()   # RefMod has no previews
+
+            # MiniMax H3 RefMod: the whole job is two dropdowns, shown here in place of the
+            # Training-tab sections (which _apply_refmod_visibility hides). Registered in
+            # self.entries so presets, last-train and the queue carry them like any field.
+            self._refmod_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_frame, text="Grid:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_GRID"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_GRID_OPTIONS), state="readonly", width=30)
+            self.entries["MINIMAX_REFMOD_GRID"].set(
+                str(self.settings.get("MINIMAX_REFMOD_GRID", REFMOD_GRID_OPTIONS[0])))
+            self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT, padx=(0, 18))
+            tk.Label(self._refmod_frame, text="References:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_REFS"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_REFS_OPTIONS), width=5)
+            self.entries["MINIMAX_REFMOD_REFS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_REFS", REFMOD_DEFAULTS["MINIMAX_REFMOD_REFS"])))
+            self.entries["MINIMAX_REFMOD_REFS"].pack(side=tk.LEFT)
+            tk.Label(self._refmod_frame, text="Steps:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_STEP_OPTIONS), width=40)
+            self.entries["MINIMAX_REFMOD_STEPS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_DEFAULTS["MINIMAX_REFMOD_STEPS"])))
+            self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT)
+            # Live token estimate against the node pack's default extractor cap (5,120).
+            self._refmod_tokens_lbl = tk.Label(self._refmod_frame, text="", font=(FONT_FAMILY, 9),
+                                               fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
+            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 18))
+            # Target Megapixels: the SAME variable as the Dataset section's control (hidden under
+            # RefMod) — the one MiniMax default Peter wants in view here (10 Sep 2026); the
+            # references are encoded at this resolution.
+            tk.Label(self._refmod_frame, text="Target MP:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self._refmod_mp_combo = ttk.Combobox(
+                self._refmod_frame, textvariable=self.dataset_megapixels_var,
+                values=["0.25", "0.37", "0.5", "0.75", "1.0"], width=6, state="readonly")
+            self._refmod_mp_combo.pack(side=tk.LEFT)
+            tk.Label(self._refmod_frame, text="Clips:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_CLIPS"] = ttk.Combobox(
+                self._refmod_frame, values=list(REFMOD_CLIPS_OPTIONS), state="readonly", width=26)
+            self.entries["MINIMAX_REFMOD_CLIPS"].set(
+                str(self.settings.get("MINIMAX_REFMOD_CLIPS", REFMOD_DEFAULTS["MINIMAX_REFMOD_CLIPS"])))
+            self.entries["MINIMAX_REFMOD_CLIPS"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_CLIPS"],
+                    "How a clip in the dataset enters the mod. Sharpest still: one frame, the face — "
+                    "the identity choice. Motion: every latent frame of the clip, the node pack's video "
+                    "reference (a dance, a camera move); tokens are per frame, so a clip costs its length. "
+                    "Prepare clips with Gizmo first — cut to H3's frame grid at the right size, they work best.")
+            # Second row: the mod's hint — a description and what it is. Both go into the file.
+            self._refmod_frame2 = tk.Frame(model_card, bg=COLORS["bg_surface"])
+            tk.Label(self._refmod_frame2, text="Description (mod hint):", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_DESC"] = ttk.Entry(self._refmod_frame2, width=64)
+            self.entries["MINIMAX_REFMOD_DESC"].insert(0, str(self.settings.get("MINIMAX_REFMOD_DESC", "") or ""))
+            self.entries["MINIMAX_REFMOD_DESC"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_DESC"],
+                    "A few words saying what the mod is — 'a ginger woman with messy hair', 'a 1970s film "
+                    "look'. Stored in the file; RefMod Studio's '+ mod hints' and the pack's loader put "
+                    "'concept: description' into the prompt so the model knows what it is looking at.")
+            tk.Label(self._refmod_frame2, text="Concept:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_CONCEPT"] = ttk.Combobox(
+                self._refmod_frame2, values=list(REFMOD_CONCEPT_OPTIONS), state="readonly", width=12)
+            self.entries["MINIMAX_REFMOD_CONCEPT"].set(
+                str(self.settings.get("MINIMAX_REFMOD_CONCEPT", REFMOD_DEFAULTS["MINIMAX_REFMOD_CONCEPT"])))
+            self.entries["MINIMAX_REFMOD_CONCEPT"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_CONCEPT"],
+                    "What the mod is, in the pack's terms: identity (a person), style (a look), "
+                    "pose_motion (a dance, a camera move), clothing, background, generic.")
+            for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
+                self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
+                self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
+            # Steps decides the training resolution in the TOML (0.25 MP whenever the
+            # optimiser runs), so an edit here rewrites it like a Dataset-section edit does.
+            for _ev in ("<<ComboboxSelected>>", "<KeyRelease>"):
+                self.entries["MINIMAX_REFMOD_STEPS"].bind(
+                    _ev, lambda e: getattr(self, "_auto_save_ds", lambda *a: None)())
+            try:
+                self.dataset_megapixels_var.trace_add("write", lambda *a: self._refresh_refmod_tokens())
+            except Exception:
+                pass
+            self._refresh_refmod_tokens()
+
+            # One line (Peter, 16 Sep 2026: no walls of text here — the README has the detail).
+            self._refmod_hint = tk.Label(
+                model_card,
+                text=("Steps 0 writes the plain encode (no captions needed). Steps above 0 optimise the "
+                      "mod against H3: level on shots like your photos, well ahead on looks they never "
+                      "showed, cleaner skin in both. Output: <name>.safetensors in this family's Output "
+                      "folder above — point it at ComfyUI/models/refmods and the mod is ready to load."),
+                font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
+                bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
+            self._refmod_std_hint = None
+            if self._is_refmod_arch():
+                self._refmod_frame.pack(anchor=tk.W, pady=(10, 0))
+                self._refmod_frame2.pack(anchor=tk.W, pady=(6, 0))
+                self._refmod_hint.pack(anchor=tk.W, pady=(2, 0))
 
         # === Presets card ===
         preset_card = self._start_section_card(
@@ -5344,7 +5600,8 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_LR_WARMUP"].set("Off")
         self.entries["MINIMAX_EMA"] = ttk.Combobox(
             self._minimax_smooth_frame, values=["Off", "0.98 (recommended)", "0.99 (stronger)",
-                                                "0.995 (long runs only)"],
+                                                "0.995 (long runs only)",
+                                                "Short run (window = ¼ of the run)"],
             width=18, state="readonly")
         self.entries["MINIMAX_EMA"].set(str(self.settings.get("MINIMAX_EMA", "0.98 (recommended)")))
         self.entries["MINIMAX_EMA"].pack(side=tk.LEFT)
@@ -5759,6 +6016,8 @@ class LoRATrainerGUI:
         defaults entry (Klein's block/timestep/adaptive presets don't apply); everything
         else gets the full Klein built-in set."""
         cfg = ARCHITECTURES.get(arch, {})
+        if cfg.get("is_refmod"):
+            return REFMOD_BUILT_IN_PRESETS
         if cfg.get("is_minimax"):
             return MINIMAX_BUILT_IN_PRESETS
         return KREA2_BUILT_IN_PRESETS if cfg.get("is_krea2") else BUILT_IN_PRESETS
@@ -7488,6 +7747,90 @@ class LoRATrainerGUI:
     def _is_minimax_arch(self) -> bool:
         return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_minimax", False)
 
+    def _is_refmod_arch(self) -> bool:
+        return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_refmod", False)
+
+    REFMOD_TRAIN_MP = 0.25   # the optimiser's stills: the measured recipe, whatever Target MP says
+
+    def _refmod_ref_pass_needed(self) -> bool:
+        """RefMod with Steps above 0 and Target MP other than 0.25: the references need their
+        own cache pass at Target MP (the dataset's caches are the optimiser's, at 0.25)."""
+        if not self._is_refmod_arch() or self._refmod_plain_encode():
+            return False
+        try:
+            return abs(float(self.dataset_megapixels_var.get()) - self.REFMOD_TRAIN_MP) > 1e-6
+        except (TypeError, ValueError, AttributeError):
+            return False
+
+    def _refmod_ref_cache_dirs(self):
+        """The '-refs' sibling of each dataset folder's cache folder — the same rule the TOML
+        builder uses (<cache root>/<folder>-<hash>, or the image folder itself when no root is
+        set), for every [[datasets]] block (Multi Concept adds folders; the reference pass
+        suffixes them all)."""
+        try:
+            folders = [f for f in self._dataset_folders() if f]
+        except Exception:
+            folders = []
+        if not folders:
+            img = self.image_folder_var.get().strip()
+            folders = [img] if img else []
+        root = self.prefs_vars["cache_dir"].get().strip() if "cache_dir" in self.prefs_vars else ""
+        out = []
+        for img in folders:
+            base = self._cache_dir_for(root, img) if root else img
+            out.append(base.rstrip("/\\") + "-refs")
+        return out
+
+    def _refmod_plain_encode(self) -> bool:
+        """RefMod at Steps 0: a plain encode of the references. Nothing trains, so the run
+        needs no captions and no text-encoder caches — the launch path reads this to skip
+        both the caption check and the text-encoder stage (Peter, 16 Sep 2026)."""
+        if not self._is_refmod_arch():
+            return False
+        _e = self.entries.get("MINIMAX_REFMOD_STEPS")
+        _raw = _e.get() if _e is not None else self.settings.get("MINIMAX_REFMOD_STEPS", "")
+        return refmod_steps_value(_raw) == "0"
+
+    REFMOD_TOKEN_CAP = 5120      # the node pack's Extract default max_tokens
+
+    def refmod_token_estimate(self, grid_label, refs_label, megapixels):
+        """(tokens per reference, total or None when 'all') for the card's live readout.
+        Full: a reference at the dataset's Target Megapixels is (W/16/2)*(H/16/2) tokens — MP*1e6/1024;
+        a pooled grid g is about (g/2)^2 (aspect-corrected grids are a little smaller)."""
+        g = refmod_grid_value(grid_label)
+        try:
+            mp = float(str(megapixels or "0.25").split(" ")[0])
+        except ValueError:
+            mp = 0.25
+        per = int(round(mp * 1e6 / 1024.0)) if g == "full" else max(1, (int(g) // 2) ** 2)
+        r = str(refs_label or "8").strip().lower()
+        if r.startswith("all"):
+            return per, None
+        try:
+            return per, per * max(1, int(float(r)))
+        except ValueError:
+            return per, per * 8
+
+    def _refresh_refmod_tokens(self):
+        lbl = getattr(self, "_refmod_tokens_lbl", None)
+        if lbl is None:
+            return
+        try:
+            per, total = self.refmod_token_estimate(
+                self.entries["MINIMAX_REFMOD_GRID"].get(), self.entries["MINIMAX_REFMOD_REFS"].get(),
+                getattr(self, "dataset_megapixels_var", None) and self.dataset_megapixels_var.get())
+            cap = self.REFMOD_TOKEN_CAP
+            if total is None:
+                lbl.config(text=f"≈ {per:,} tokens per reference (standard cap {cap:,} ≈ {max(1, cap // per)} refs)",
+                           fg=COLORS["text_secondary"])
+            else:
+                over = total > cap
+                lbl.config(text=f"≈ {total:,} tokens ({per:,} per ref; standard cap {cap:,}"
+                                + (" — OVER" if over else "") + ")",
+                           fg=COLORS["warning"] if over else COLORS["text_secondary"])
+        except Exception:
+            pass
+
     def _set_widget_visible(self, w, show: bool):
         """Show/hide a single widget, working for both grid- and pack-managed widgets.
         grid widgets use grid_remove()/grid() (position preserved); pack widgets stash their
@@ -7992,7 +8335,7 @@ class LoRATrainerGUI:
         # selector when that family is picked, hide it otherwise.
         _note = getattr(self, "_minimax_sample_note", None)
         if _note is not None:
-            if is_minimax:
+            if is_minimax and not self._is_refmod_arch():   # RefMod has no previews
                 if not _note.winfo_manager():
                     _note.pack(anchor=tk.W, pady=(10, 0))
             elif _note.winfo_manager():
@@ -8204,6 +8547,92 @@ class LoRATrainerGUI:
         # are wired); its unwired fields are hidden individually above.
         self._set_training_section_visible("optimizer", "scheduler", True)
         self._set_training_section_visible("timestep", "optimizer", not native)
+        self._apply_refmod_visibility()
+
+    def _apply_refmod_visibility(self):
+        """MiniMax H3 RefMod: the Training tab is Output + the RefMod card. Every other
+        collapsible section hides; leaving the entry re-packs them in canonical order
+        (training, memory, timestep/optimizer/scheduler as the family rules above left them)."""
+        is_refmod = self._is_refmod_arch()
+        try:
+            getattr(self, "_auto_save_ds", lambda *a: None)()   # the 0.25 MP training rule
+        except Exception:
+            pass
+        _fr = getattr(self, "_refmod_frame", None)
+        _hint = getattr(self, "_refmod_hint", None)
+        _std = getattr(self, "_refmod_std_hint", None)
+        if is_refmod:
+            # A mod rides the model's native ref2va path at generation (the node pack appends
+            # it as a reference block), and only the Reference fine-tune was trained to read
+            # reference blocks — so the mod is optimised against ref2va. Switch the Training
+            # Base there when the path is set; fl2va stays selectable for an experiment.
+            try:
+                _bv = getattr(self, "minimax_train_base_var", None)
+                if (_bv is not None and minimax_train_base(_bv.get()) != "ref2va"
+                        and self._krea2_pref("minimax_ref_dit")):
+                    _bv.set(MINIMAX_TRAIN_BASE_OPTIONS[1])
+                    self.update_console("[refmod] Training Base -> Reference (ref2va): a RefMod "
+                                        "rides the ref2va path at generation, so it is optimised "
+                                        "against that model\n")
+            except Exception:
+                pass
+        if _fr is not None:
+            if is_refmod and not _fr.winfo_manager():
+                _note = getattr(self, "_minimax_sample_note", None)
+                _kw = {"before": _note} if (_note is not None and _note.winfo_manager()) else {}
+                _fr.pack(anchor=tk.W, pady=(10, 0), **_kw)
+                _fr2 = getattr(self, "_refmod_frame2", None)
+                if _fr2 is not None:
+                    _fr2.pack(anchor=tk.W, pady=(6, 0), **_kw)
+                _hint.pack(anchor=tk.W, pady=(2, 0), **_kw)
+                if _std is not None:
+                    _std.pack(anchor=tk.W, pady=(6, 0), **_kw)
+            elif not is_refmod and _fr.winfo_manager():
+                _fr.pack_forget()
+                _fr2 = getattr(self, "_refmod_frame2", None)
+                if _fr2 is not None:
+                    _fr2.pack_forget()
+                _hint.pack_forget()
+                if _std is not None:
+                    _std.pack_forget()
+        secs = getattr(self, "collapsible_sections", None)
+        if not secs or "output" not in secs:
+            return
+        if is_refmod:
+            for k in ("training", "memory", "timestep", "optimizer", "scheduler"):
+                self._set_training_section_visible(k, "", False)
+            return
+        # Re-pack every section in canonical order, each in front of the first NON-section
+        # widget that follows Output (the button rows / console below the sections). A bare
+        # pack() lands at the bottom of the tab — under those rows — which is exactly the
+        # scrambled layout leaving RefMod produced (Peter, 9 Sep 2026).
+        try:
+            parent = secs["output"].master
+            sec_ids = {id(s) for s in secs.values()}
+            anchor, past_output = None, False
+            for w in parent.pack_slaves():
+                if w is secs["output"]:
+                    past_output = True
+                    continue
+                if past_output and id(w) not in sec_ids:
+                    anchor = w
+                    break
+            native = self._is_krea2_arch() or self._is_minimax_arch()
+            for key in ("training", "memory", "timestep", "optimizer", "scheduler"):
+                sec = secs.get(key)
+                if sec is None:
+                    continue
+                if key == "timestep" and native:
+                    if sec.winfo_manager():
+                        sec.pack_forget()
+                    continue
+                sec.pack_forget()
+                if anchor is not None:
+                    sec.pack(fill=tk.X, padx=36, pady=(0, 16), before=anchor)
+                else:
+                    sec.pack(fill=tk.X, padx=36, pady=(0, 16))
+        except Exception:
+            pass
 
     # ── Problem Images window (per-image loss watch) ────────────────────
 
@@ -9006,10 +9435,12 @@ class LoRATrainerGUI:
 
     def _restore_output_dir_for_family(self, arch: str) -> None:
         """Put a family's remembered output folder into the field (and settings). A family with
-        no memory keeps whatever the field holds, so nothing moves until the user decides."""
-        d = str(self._output_dir_memory.get(str(arch), "") or "").strip()
+        no memory gets the default, output_loras inside Fizgig — never the folder the previous
+        family was using (Peter, 16 Sep 2026: RefMod's ComfyUI refmods folder followed him to
+        Krea 2)."""
+        d = str(self._output_dir_memory.get(str(arch), "") or "").strip() or OUTPUT_LORAS_DIR
         e = self.entries.get("LORA_OUTPUT_DIR") if hasattr(self, "entries") else None
-        if not d or e is None:
+        if e is None:
             return
         try:
             if e.get().strip() != d:
@@ -11507,16 +11938,16 @@ class LoRATrainerGUI:
         # --- Video model warning (hidden by default; grid_remove'd at the end) ---
         self.video_model_warning_frame = ttk.Frame(grid_holder)
         self.video_model_warning_frame.grid(row=0, column=0, sticky=tk.EW, padx=36, pady=(0, 16))
-        ttk.Label(
+        self._no_samples_label_1 = ttk.Label(
             self.video_model_warning_frame,
             text="Sample generation is not available for video models (t2v, i2v).",
-            font=("Arial", 10, "italic")
-        ).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(
+            font=("Arial", 10, "italic"))
+        self._no_samples_label_1.pack(anchor=tk.W, pady=(0, 5))
+        self._no_samples_label_2 = ttk.Label(
             self.video_model_warning_frame,
             text="Video sampling during training is too slow and memory-intensive.",
-            font=("Arial", 10, "italic")
-        ).pack(anchor=tk.W, pady=(0, 15))
+            font=("Arial", 10, "italic"))
+        self._no_samples_label_2.pack(anchor=tk.W, pady=(0, 15))
         video_viewer_frame = ttk.Frame(self.video_model_warning_frame)
         video_viewer_frame.pack(anchor=tk.W, pady=10)
         ttk.Button(video_viewer_frame, text="View Samples Gallery", command=self.open_samples_gallery).pack(side=tk.LEFT, padx=5)
@@ -12084,7 +12515,16 @@ class LoRATrainerGUI:
         supports_samples = config.get("supports_samples", False)
 
         if not supports_samples:
-            # Show warning, hide settings
+            # Show warning, hide settings — worded for the family that has none
+            try:
+                if config.get("is_refmod"):
+                    self._no_samples_label_1.configure(text="RefMods have no previews — this pane is not used.")
+                    self._no_samples_label_2.configure(text="Judge a mod in RefMod Studio once it is made.")
+                else:
+                    self._no_samples_label_1.configure(text="Sample generation is not available for video models (t2v, i2v).")
+                    self._no_samples_label_2.configure(text="Video sampling during training is too slow and memory-intensive.")
+            except Exception:
+                pass
             self.video_model_warning_frame.grid()
             self.sample_enabled_check.grid_remove()
             self.sample_settings_frame.grid_remove()
@@ -26249,9 +26689,10 @@ class LoRATrainerGUI:
             import re
             self._repair_save_clip(clip, "repair_" + re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_"))
 
-    def _repair_save_clip(self, clip, stem):
+    def _repair_save_clip(self, clip, stem, status_var=None):
         """Save a clip dict: MP4 with sound via ffmpeg, else PNG frames + WAV."""
         from tkinter import filedialog
+        status_var = status_var or self.repair_status_var
         path = filedialog.asksaveasfilename(
             title="Save clip", defaultextension=".mp4", initialfile=stem + ".mp4",
             filetypes=[("MP4 clip", "*.mp4"), ("PNG frames + WAV (folder name)", "*")])
@@ -26272,7 +26713,7 @@ class LoRATrainerGUI:
                 else:
                     write_wav(wav_path, _t.zeros(2, int(32000 * len(frames) / self._REPAIR_H3_FPS)))
                 write_preview_mp4(path, ten, wav_path, fps=self._REPAIR_H3_FPS)
-                self.repair_status_var.set(f"Saved {os.path.basename(path)}.")
+                status_var.set(f"Saved {os.path.basename(path)}.")
                 return
             folder = path[:-4] if path.lower().endswith(".mp4") else path
             os.makedirs(folder, exist_ok=True)
@@ -26280,8 +26721,8 @@ class LoRATrainerGUI:
                 f.save(os.path.join(folder, f"frame_{i:03d}.png"))
             if clip.get("wav") is not None:
                 write_wav(os.path.join(folder, "sound.wav"), clip["wav"])
-            self.repair_status_var.set(f"Saved {len(frames)} frames to {folder} "
-                                       "(no ffmpeg on the path — PNGs instead of an MP4).")
+            status_var.set(f"Saved {len(frames)} frames to {folder} "
+                           "(no ffmpeg on the path — PNGs instead of an MP4).")
         except Exception as e:
             messagebox.showerror("Save clip", f"Couldn't save the clip:\n{e}")
 
@@ -26317,21 +26758,30 @@ class LoRATrainerGUI:
         except Exception:
             pass
 
-    def _repair_clip_player_open(self):
-        """Open (or raise) the H3 clip player — baseline | tweaked looping side by side."""
+    def _repair_clip_player_open(self, clips=None, labels=None, title=None, metrics=True,
+                                 nolora=True, stem="repair", status_var=None, sides=None):
+        """Open (or raise) the H3 clip player — baseline | tweaked looping side by side.
+
+        Repair Studio calls it bare. Another tab (RefMod Studio) passes its own `clips` dict
+        (keys "baseline" / "tweaked", the render_clip dict shape), pane `labels`, a window
+        `title`, metrics=False (no LoRA metrics strip), nolora=False (no third pane / tick),
+        a save-file `stem` and its own `status_var` — the transport, keys, sound and save all
+        work the same."""
         P = getattr(self, "_repair_player", None)
         if P is not None:
             try:
                 if P["win"].winfo_exists():
-                    P["win"].lift()
-                    self._repair_clip_player_reload()
-                    return
+                    if P.get("clips") is clips:
+                        P["win"].lift()
+                        self._repair_clip_player_reload()
+                        return
+                    self._repair_clip_player_close()      # the other tab's player: replace it
             except Exception:
                 pass
             self._repair_player = None
         # The still pop-out and the player share the metrics strip + window slot: close the
         # still one if it is open (a family switch mid-session can leave it up).
-        if self._repair_popout_window is not None:
+        if metrics and self._repair_popout_window is not None:
             try:
                 self._repair_popout_window.destroy()
             except Exception:
@@ -26340,19 +26790,21 @@ class LoRATrainerGUI:
             self._repair_popout_label = None
             self._repair_popout_tk_img = None
 
+        _clips = clips if clips is not None else self._repair_clips
         win = tk.Toplevel(self.master)
-        win.title("Repair Studio — Clip player (Baseline vs Tweaked)")
+        win.title(title or "Repair Studio — Clip player (Baseline vs Tweaked)")
         win.configure(bg="#000000")
         sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-        base = self._repair_clips.get("baseline") or self._repair_clips.get("tweaked")
+        base = _clips.get("baseline") or _clips.get("tweaked")
         fw, fh = base["frames"][0].size if base else (768, 768)
-        npanes = 3 if self._repair_nolora_shown() else 2
+        npanes = 3 if (nolora and self._repair_nolora_shown()) else 2
         _w = min(fw * npanes + 8 * (npanes - 1) + 16, int(sw * 0.9))
         _h = min(fh + 120, int(sh * 0.85))
         win.geometry(f"{_w}x{_h}")
         win.minsize(480, 320)
 
-        self._repair_build_metrics_bar(win)            # bottom strip (shared with the still)
+        if metrics:
+            self._repair_build_metrics_bar(win)        # bottom strip (shared with the still)
 
         # Transport bar above the metrics.
         bar = tk.Frame(win, bg=COLORS["bg_deep"])
@@ -26373,7 +26825,7 @@ class LoRATrainerGUI:
         _btn("⏭", lambda: self._repair_clip_player_step(+1), "Right arrow — one frame on")
         _btn("⇄ Swap", self._repair_clip_player_swap,
              "S / Tab — trade sides. Sound follows the LEFT pane.")
-        if getattr(self, "repair_h3_nolora_var", None) is not None:
+        if nolora and getattr(self, "repair_h3_nolora_var", None) is not None:
             _nol = ttk.Checkbutton(bar, text="No LoRA", variable=self.repair_h3_nolora_var,
                                    command=self._on_repair_h3_nolora_toggled)
             _nol.pack(side=tk.LEFT, padx=(10, 0), pady=4)
@@ -26399,6 +26851,8 @@ class LoRATrainerGUI:
                           command=self._repair_clip_player_scrubbed)
         scrub.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 6))
         _btn("💾 Save left clip…", self._repair_clip_player_save,
+             ("Write the left pane's clip as an MP4 with its sound — or PNG frames + WAV "
+              "when ffmpeg isn't on the path.") if not nolora else
              "Write the left LoRA pane's clip (Baseline or Tweaked, whichever is left; never "
              "the No-LoRA pane) as an MP4 with its sound — or PNG frames + WAV "
              "when ffmpeg isn't on the path.")
@@ -26422,15 +26876,25 @@ class LoRATrainerGUI:
 
         self._repair_player = {
             "win": win, "panes": panes, "titles": titles, "top": top,
-            "sides": ["nolora", "baseline", "tweaked"],   # No-LoRA on the LEFT (Peter)
+            "sides": list(sides) if sides else ["nolora", "baseline", "tweaked"],   # No-LoRA on the LEFT (Peter); a caller may order its own panes
             "idx": 0, "playing": False, "t0": None, "offset": 0.0, "speed": 1.0, "gen": 0,
             "job": None, "cache": {}, "n": 1, "photo": [None, None, None], "play_btn": play_btn,
             "speed_var": speed_var, "sound_var": sound_var, "scrub": scrub, "pos_lbl": pos_lbl,
             "scrubbing": False, "last_wrap": -1, "resize_job": None,
+            "clips": clips, "labels": labels, "metrics": bool(metrics), "nolora": bool(nolora),
+            "stem": stem, "status_var": status_var,
         }
-        # The metrics worker paints into whichever window is current.
-        self._repair_popout_window = win
-        self._repair_popout_label = None
+        if not nolora:
+            P_sides = self._repair_player["sides"]
+            P_sides[:] = [sd for sd in P_sides if sd != "nolora"]
+            for col in (0, 1, 2):
+                if col >= len(P_sides):
+                    panes[col].grid_remove()
+                    titles[col].grid_remove()
+        if metrics:
+            # The metrics worker paints into whichever window is current.
+            self._repair_popout_window = win
+            self._repair_popout_label = None
 
         _on_close = self._repair_clip_player_close
         win.protocol("WM_DELETE_WINDOW", _on_close)
@@ -26458,9 +26922,15 @@ class LoRATrainerGUI:
         win.bind("<Configure>", _on_resize)
         win.update_idletasks()
         self._repair_clip_player_reload()
-        self._repair_metrics_refresh()
+        if metrics:
+            self._repair_metrics_refresh()
         win.focus_set()
         self._repair_clip_player_play(0.0)
+
+    def _repair_player_clips(self, P):
+        """The clip dict a player instance shows: its own (another tab's) or Repair Studio's."""
+        c = P.get("clips") if P is not None else None
+        return c if c is not None else self._repair_clips
 
     def _repair_clip_player_close(self):
         """Tear the player down (window close, Escape, session reset, tab-switch unload)."""
@@ -26483,18 +26953,21 @@ class LoRATrainerGUI:
         P = getattr(self, "_repair_player", None)
         if P is None:
             return
-        base = self._repair_clips.get("baseline")
-        tweak = self._repair_clips.get("tweaked")
-        if base is None or tweak is None:
+        clips = self._repair_player_clips(P)
+        # every side the window was opened with must have its clip (a caller may open with one
+        # side only — a RefMod Studio sweep chip with no No-mod clip to put beside it)
+        needed = {sd: clips.get(sd) for sd in P["sides"] if sd != "nolora"}
+        if not needed or any(c is None for c in needed.values()):
             return
-        nol = self._repair_clips.get("nolora")
-        shown = self._repair_nolora_shown()
-        lens = [len(base["frames"]), len(tweak["frames"])] + ([len(nol["frames"])] if nol else [])
+        nol = clips.get("nolora") if P.get("nolora", True) else None
+        shown = self._repair_nolora_shown() if P.get("nolora", True) else False
+        lens = [len(c["frames"]) for c in needed.values()] + ([len(nol["frames"])] if nol else [])
         P["n"] = max(1, min(lens))
         P["cache"] = {}
         P["scrub"].configure(to=max(P["n"] - 1, 1))
         names = {"baseline": "Baseline (LoRA at 1.0)", "tweaked": "Tweaked (current sliders)",
                  "nolora": "No LoRA (base model, same seed)"}
+        names.update(P.get("labels") or {})
         for i, side in enumerate(P["sides"]):
             col = P["panes"][i].grid_info().get("column", i)
             if side == "nolora" and not shown:
@@ -26505,7 +26978,7 @@ class LoRATrainerGUI:
             P["panes"][i].grid()
             P["titles"][i].grid()
             P["top"].columnconfigure(col, weight=1, uniform="pane")
-            clip = self._repair_clips.get(side)
+            clip = clips.get(side)
             if clip is None:                                   # no-LoRA still rendering
                 P["panes"][i].configure(image="")
                 P["photo"][i] = None
@@ -26567,6 +27040,8 @@ class LoRATrainerGUI:
         # Only a queued or running render is "pending". The dirty flag alone is not: a
         # settings change with no primary loaded sets it with nothing scheduled, and it
         # left the line on "Pending refresh…" for good (Peter, 4 Sep).
+        if not P.get("metrics", True):
+            return                       # another tab's player: no slider freshness to report
         pending = (self._repair_preview_after_id is not None or self._repair_preview_in_flight)
         for i, side in enumerate(P["sides"]):
             if side != "tweaked":
@@ -26596,7 +27071,7 @@ class LoRATrainerGUI:
         """PhotoImage for pane `pane_i` at frame `idx`, scaled to the pane and cached."""
         P = self._repair_player
         side = P["sides"][pane_i]
-        clip = self._repair_clips.get(side)
+        clip = self._repair_player_clips(P).get(side)
         if clip is None or not clip["frames"]:
             return None
         pane = P["panes"][pane_i]
@@ -26620,7 +27095,7 @@ class LoRATrainerGUI:
             return
         idx = max(0, min(int(idx), P["n"] - 1))
         P["idx"] = idx
-        for i in range(len(P["panes"])):
+        for i in range(min(len(P["panes"]), len(P["sides"]))):
             ph = self._repair_clip_player_photo(i, idx)
             if ph is not None:
                 P["photo"][i] = ph                   # keep a ref or Tk blanks the label
@@ -26676,7 +27151,7 @@ class LoRATrainerGUI:
         self._repair_stop_wav()
         if not P["sound_var"].get() or abs(P["speed"] - 1.0) > 1e-6:
             return
-        clip = self._repair_clips.get(self._repair_player_main_side(P))
+        clip = self._repair_player_clips(P).get(self._repair_player_main_side(P))
         if clip is None or not clip.get("wav_path"):
             return
         if restart and P["offset"] > 0.05:
@@ -26789,10 +27264,11 @@ class LoRATrainerGUI:
         if P is None:
             return
         side = self._repair_player_main_side(P)
-        clip = self._repair_clips.get(side)
+        clip = self._repair_player_clips(P).get(side)
         if clip is None:
             return
-        self._repair_save_clip(clip, f"repair_{side}_{clip.get('regime', 'clip')}")
+        self._repair_save_clip(clip, f"{P.get('stem') or 'repair'}_{side}_{clip.get('regime', 'clip')}",
+                               status_var=P.get("status_var"))
 
     def _repair_popout_compose(self):
         """Baseline and tweaked side by side on one canvas \u2014 same left/right order as the
@@ -27234,6 +27710,1757 @@ class LoRATrainerGUI:
                       + traceback.format_exc(), flush=True)
             self.repair_engine = None
             self.repair_status_var.set("Models unloaded (tab switch). Load a LoRA to resume.")
+
+    # ------------------------------------------------------------------
+    # RefMod Studio — test a MiniMax H3 RefMod the way ComfyUI runs it
+    # ------------------------------------------------------------------
+    # The community node pack's Load H3 RefMods / Axis / Apply / Step Curve as one tab:
+    # rows of mods (strength, copies, an A/B axis), retention, the frame curve and the step
+    # curve, rendered against the ref2va base on the Turbo regime with sound. The maths is
+    # the pack's (fizgig.minimax.refmod_apply, bit-identical, see the parity test); the
+    # render path is Repair Studio's H3 engine with bare reference latents.
+    _RMS_LENGTHS = {"Still (1 frame)": 1, "22 frames (~1s)": 22, "39 frames (~1.6s)": 39,
+                    "56 frames (~2.3s)": 56, "73 frames (~3s)": 73}
+    _RMS_SWEEPS = ("Retention 0 · 0.15 · 0.4 · 0.7 · 1", "Seeds ×4",
+                   "Frame-curve directions ×5", "Step-curve directions ×5", "Copies 1 · 2 · 3 · 4")
+    _RMS_HISTORY_MAX = 12
+    _RMS_SWEEP_FRAMES = 22   # sweeps render short clips, not stills — stills do not show what a RefMod does (Peter, 16 Sep 2026)
+    _RMS_MODELS = ("Reference (ref2va)", "First / Last Frame (fl2va)")
+
+    def create_refmod_studio_tab(self):
+        """RefMod Studio: mods → apply → preview → actions (Start-tab styled)."""
+        self._card_desc_size = 11   # this tab's help text one point larger (Peter, 16 Sep 2026)
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+        from fizgig.minimax import refmod_apply as ra
+
+        frame, _canvas = self.create_scrollable_frame(self.refmod_studio_tab)
+        outer = tk.Frame(frame, bg=COLORS["bg_deep"])
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        # state
+        self.rms_engine = None
+        self._rms_busy = False
+        self._rms_loading = False
+        self._rms_thread = None
+        self._rms_unload_tries = 0
+        self._rms_clips = {}                 # "baseline" / "tweaked" -> clip dict
+        self._rms_baseline_key = None
+        self._rms_rows = []
+        self._rms_mod_meta = {}              # name -> meta dict (path, kind, tokens, …)
+        self._rms_scan_cache = {}
+        self._rms_latents = {}               # path -> latent in the file's dtype
+        self._rms_history = []               # [{"thumb", "clip", "label", "still"}]
+        self._rms_sweep_items = []
+        self._rms_thumbs = []                # PhotoImage refs
+        self._rms_pil = {"baseline": None, "tweaked": None}
+        self._rms_redraw_after = {"baseline": None, "tweaked": None}
+        self._rms_persist_after = None
+        self._rms_restoring = True
+        saved = self.last_used.get("refmod_studio") if isinstance(self.last_used, dict) else None
+        saved = saved if isinstance(saved, dict) else {}
+
+        self._add_tab_banner(
+            outer, "RefMod Studio",
+            "Try your RefMods before ComfyUI. Point it at the folder your mods live in, pick one "
+            "or a few, set how strongly they apply, and render a still or a short clip with and "
+            "without them, side by side on the same seed. Every dial here is a setting on the "
+            "ComfyUI-MiniMaxH3Mod nodes, so what works here is what to type there.")
+
+        # ── Card 1: Setup ──────────────────────────────────────────────────────────────
+        setup = self._start_section_card(
+            outer, "Setup",
+            "Where your mods are and what runs them. ComfyUI reads models/refmods, and Fizgig writes "
+            "new mods to the RefMod family's Output folder on the Training tab, so point that at the "
+            "same place. The model, its VAE, text encoder and Turbo LoRA come from Preferences; Load "
+            "once per session (Render loads it for you if you skip this).")
+        setup.columnconfigure(1, weight=1)
+        # The mods folder first — it is the one thing every row below depends on.
+        _fr = tk.Frame(setup, bg=COLORS["bg_surface"])
+        _fr.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 6))
+        _fr.columnconfigure(1, weight=1)
+        ttk.Label(_fr, text="RefMod folder:").grid(row=0, column=0, sticky=tk.W)
+        _default_dir = str(saved.get("folder") or self.settings.get("LORA_OUTPUT_DIR", "") or "")
+        self.rms_folder_var = tk.StringVar(value=_default_dir)
+        _fe = ttk.Entry(_fr, textvariable=self.rms_folder_var)
+        _fe.grid(row=0, column=1, sticky=tk.EW, padx=(6, 6))
+        _fe.bind("<Return>", lambda e: self._rms_rescan())
+        ttk.Button(_fr, text="Browse…", width=9, command=self._rms_browse_folder).grid(row=0, column=2)
+        _rb = ttk.Button(_fr, text="↻", width=3, command=self._rms_rescan)
+        _rb.grid(row=0, column=3, padx=(4, 0))
+        _rms_tip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
+                     "(new mods land in the RefMod family's Output folder; ComfyUI reads models/refmods).")
+        r = 1
+        ttk.Label(setup, text="Model:").grid(row=r, column=0, sticky=tk.W, pady=2)
+        self.rms_model_var = tk.StringVar(value=str(saved.get("model", self._RMS_MODELS[0])))
+        if self.rms_model_var.get() not in self._RMS_MODELS:
+            self.rms_model_var.set(self._RMS_MODELS[0])
+        _mc = ttk.Combobox(setup, textvariable=self.rms_model_var, values=list(self._RMS_MODELS),
+                           state="readonly", width=44)
+        _mc.grid(row=r, column=1, sticky=tk.W, pady=2)
+        _mc.bind("<<ComboboxSelected>>", lambda e: self._rms_model_changed())
+        _rms_tip(_mc, "Which H3 the mods run on. Both work; a mod does best on the model it was made "
+                     "for (Training Base on the Training tab). Pick the one you use in ComfyUI — "
+                     "the next Render reloads if it changed.")
+        r += 1
+        ttk.Label(setup, text="Base:").grid(row=r, column=0, sticky=tk.W, pady=2)
+        self.rms_base_var = tk.StringVar(value=str(saved.get("base", REPAIR_H3_BASE_OPTIONS[0])))
+        _bc = ttk.Combobox(setup, textvariable=self.rms_base_var, values=list(REPAIR_H3_BASE_OPTIONS),
+                           state="readonly", width=44)
+        _bc.grid(row=r, column=1, sticky=tk.W, pady=2)
+        _bc.bind("<<ComboboxSelected>>", lambda e: self._rms_persist())
+        _rms_tip(_bc, "Same tiers as Repair Studio: int8 on big cards, streamed blocks for "
+                     "long clips, NF4 for the smallest footprint. Applies at the next Load.")
+        r += 1
+        _br = tk.Frame(setup, bg=COLORS["bg_surface"])
+        _br.grid(row=r, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
+        self._rms_load_btn = ttk.Button(_br, text="Load base", width=12, command=self._rms_load)
+        self._rms_load_btn.pack(side=tk.LEFT)
+        _rms_tip(self._rms_load_btn, "Load the model into VRAM once; Render does this for you if you skip it.")
+        _ub = ttk.Button(_br, text="Unload", width=8, command=self._rms_unload)
+        _ub.pack(side=tk.LEFT, padx=(6, 0))
+        _rms_tip(_ub, "Free the base from VRAM (it also unloads when you leave the tab).")
+        self.rms_status_var = tk.StringVar(value="Ready — check the folder above, set up your mods, then Render in the Preview card.")
+        # Status in the warning orange, bold: "loading the base" has to be seen (Peter, 16 Sep 2026).
+        tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10, "bold"),
+                 fg=COLORS["warning"], bg=COLORS["bg_surface"], anchor=tk.W
+                 ).pack(side=tk.LEFT, padx=(14, 0), fill=tk.X, expand=True)
+
+        # ── Card 2: Mods ───────────────────────────────────────────────────────────────
+        mods = self._start_section_card(
+            outer, "Mods",
+            "Which mods go into the render. One mod is one row; untick a row to leave it out.\n"
+            "\u2022  Strength \u2014 how strongly the mod applies: 0 off, 1 as stored.\n"
+            "\u2022  Copies \u2014 how many times it rides in the bundle; more copies pull harder, each costs its tokens.\n"
+            "\u2022  A second row \u2014 the button below adds one, to see what two mods look like together "
+            "(a character and a style, say), each at its own strength, the way two loader slots run them in ComfyUI.\n"
+            "Nothing here edits a mod file: these are the settings you would put on the ComfyUI nodes, and the files "
+            "stay as made. Bake, in Actions at the bottom, is the one thing that writes a file \u2014 one mod per file.")
+        mods.columnconfigure(0, weight=1)
+        self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
+        self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
+        self._rms_rows_frame.columnconfigure(0, weight=1)
+        _ft = tk.Frame(mods, bg=COLORS["bg_surface"])
+        _ft.grid(row=2, column=0, sticky=tk.EW, pady=(6, 0))
+        self._rms_add_btn = ttk.Button(_ft, text="+ Add a second mod, to see two together (e.g. a style with a character)",
+                                       command=lambda: self._rms_add_row())
+        _rms_tip(self._rms_add_btn, "For experimenting: a second row renders alongside the first so you can see the "
+                                    "two together, each at its own strength — the pack's loader with two slots "
+                                    "filled. Bake still writes one mod per file.")
+        self._rms_add_btn.pack(side=tk.LEFT)
+        # A mod made a moment ago on the Training tab: refresh the pickers without a relaunch.
+        _rf = ttk.Button(_ft, text="↻ Refresh list (find a mod you just made)", command=self._rms_rescan)
+        _rf.pack(side=tk.LEFT, padx=(8, 0))
+        _rms_tip(_rf, "Re-scans the mods folder set in Setup and updates every picker — the way to see a "
+                      "mod you have just made without restarting the app.")
+        self.rms_tokens_var = tk.StringVar(value="Tokens: 0 / 5 120")
+        self._rms_tokens_lbl = tk.Label(_ft, textvariable=self.rms_tokens_var, font=(FONT_FAMILY, 10, "bold"),
+                                        fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
+        self._rms_tokens_lbl.pack(side=tk.LEFT, padx=(16, 0))
+        _rms_tip(self._rms_tokens_lbl, "Reference tokens the DiT attends to on every step: each mod's "
+                                      "T × (H/2) × (W/2), times its copies. The pack caps a mod at 5 120; "
+                                      "a bundle well over that slows every step and starves the prompt.")
+
+        # ── Card 3: Apply ──────────────────────────────────────────────────────────────
+        apply_card = self._start_section_card(
+            outer, "Apply",
+            "How the mods are applied while the picture renders. None of this changes the mod files: "
+            "each control is a setting on the pack's Apply and Step Curve nodes (the node name is in "
+            "the heading), so what you find here is what you type into ComfyUI. Bake as new RefMod, "
+            "in Actions, is the one thing that writes a setting into a file.")
+        apply_card.columnconfigure(0, weight=1)
+        r = 0
+
+        def _block(title, text):
+            """A heading, a plain-English line under it, then a frame for the control."""
+            nonlocal r
+            tk.Label(apply_card, text=title, font=(FONT_FAMILY, 11, "bold"), fg=COLORS["text_primary"],
+                     bg=COLORS["bg_surface"], anchor=tk.W).grid(row=r, column=0, sticky=tk.W, pady=(10, 0))
+            r += 1
+            tk.Label(apply_card, text=text, font=(FONT_FAMILY, 10), fg=COLORS["text_explain"],
+                     bg=COLORS["bg_surface"], wraplength=900, justify=tk.LEFT, anchor=tk.W
+                     ).grid(row=r, column=0, sticky=tk.W, pady=(0, 4))
+            r += 1
+            fr_ = tk.Frame(apply_card, bg=COLORS["bg_surface"])
+            fr_.grid(row=r, column=0, sticky=tk.W, pady=(0, 2))
+            r += 1
+            return fr_
+
+        # 1. strength
+        _rr = _block("Strength  (the Apply node's Retention)",
+                     "How much of the references reaches the picture. 1.0 uses them exactly as stored. "
+                     "0.7 keeps most of it. 0.4 keeps the look and frees the scene (the pack calls this "
+                     "'attribute transfer'). 0 switches them off. It multiplies every row's own slider.")
+        self.rms_retention_var = tk.DoubleVar(value=float(saved.get("retention", 1.0)))
+        self.rms_retention_str = tk.StringVar(value=f"{self.rms_retention_var.get():.2f}")
+        _rs = ttk.Scale(_rr, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=220,
+                        variable=self.rms_retention_var, command=lambda v: self._rms_retention_moved())
+        _rs.pack(side=tk.LEFT)
+        _re = ttk.Entry(_rr, textvariable=self.rms_retention_str, width=5)
+        _re.pack(side=tk.LEFT, padx=(6, 10))
+        _re.bind("<Return>", lambda e: self._rms_retention_typed())
+        _re.bind("<FocusOut>", lambda e: self._rms_retention_typed())
+        for name, val in ra.RETENTION_PRESETS:
+            _b = ttk.Button(_rr, text=f"{name} {val:g}", width=12,
+                            command=lambda v=val: self._rms_set_retention(v))
+            _b.pack(side=tk.LEFT, padx=(0, 4))
+        _rms_tip(_rs, "A master multiplier on every row's strength: 1.0 keeps the references as "
+                     "stored; 0.4 ('attribute transfer') keeps the look and frees the scene; "
+                     "0 injects nothing.")
+
+        # 2. shuffle
+        _scr = _block("Shuffle  (the Apply node's Scramble seed)",
+                      "Which reference leads. Off keeps your row order. Any seed shuffles the bundle and "
+                      "keeps a random half or more of it, so a different seed puts a different reference "
+                      "first and a different detail comes through. Only matters with more than one entry.")
+        self.rms_scramble_var = tk.StringVar(value=str(saved.get("scramble", "-1")))
+        ttk.Label(_scr, text="Seed:").pack(side=tk.LEFT, padx=(0, 4))
+        _sce = ttk.Entry(_scr, textvariable=self.rms_scramble_var, width=12)
+        _sce.pack(side=tk.LEFT)
+        _sce.bind("<FocusOut>", lambda e: self._rms_persist())
+        ttk.Button(_scr, text="🎲 Random", width=10, command=self._rms_random_scramble).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(_scr, text="Off", width=5, command=lambda: (self.rms_scramble_var.set("-1"), self._rms_persist())
+                   ).pack(side=tk.LEFT, padx=(4, 0))
+        _rms_tip(_sce, "-1 = off. A seed ≥ 0 shuffles the bundle and keeps a random 50–100% of it — "
+                      "which reference sits first changes what 'pops'. Needs more than one entry.")
+
+        # 3. frame curve
+        _fcr = _block("Fade across the clip  (the Apply node's Frame curve — video mods only)",
+                      "How strongly a video mod's own frames apply along its length. A still mod has one "
+                      "frame and ignores this. 'Where' is which part of the mod carries the strength, "
+                      "'shape' is how it moves between them, 'amount' is how far it fades — 1.0 all the "
+                      "way, 0 flat.")
+        fc = saved.get("frame_curve") or list(ra.DEFAULT_FRAME_CURVE)
+        self.rms_fc_dir_var = tk.StringVar(value=str(fc[0]) if fc[0] in ra.CURVE_DIRECTIONS else ra.DEFAULT_FRAME_CURVE[0])
+        self.rms_fc_shape_var = tk.StringVar(value=str(fc[1]) if fc[1] in ra.CURVE_SHAPES else ra.DEFAULT_FRAME_CURVE[1])
+        self.rms_fc_value_var = tk.DoubleVar(value=float(fc[2]))
+        self._rms_curve_combos(_fcr, self.rms_fc_dir_var, self.rms_fc_shape_var, self.rms_fc_value_var)
+
+        # 4. step curve
+        _scr2 = _block("Change during the render  (the Step Curve node)",
+                       "Off: the same strength at every step of the render. On: concept_at_end keeps the "
+                       "references strong while the picture's structure forms, then eases them off for "
+                       "the final texture steps — cleaner skin, no reference grain. concept_at_start is "
+                       "the reverse: it refines the identity at the very end. 'Amount' is how far it moves.")
+        sc = saved.get("step_curve") or list(ra.DEFAULT_STEP_CURVE)
+        self.rms_sc_on_var = tk.BooleanVar(value=bool(saved.get("step_on", False)))
+        _son = ttk.Checkbutton(_scr2, text="On", variable=self.rms_sc_on_var, command=self._rms_curve_changed)
+        _son.pack(side=tk.LEFT, padx=(0, 10))
+        _rms_tip(_son, "The Step Curve node: off = not connected. concept_at_end = full references "
+                      "in the early (structure) steps, released toward the last (texture) steps.")
+        self.rms_sc_dir_var = tk.StringVar(value=str(sc[0]) if sc[0] in ra.CURVE_DIRECTIONS else ra.DEFAULT_STEP_CURVE[0])
+        self.rms_sc_shape_var = tk.StringVar(value=str(sc[1]) if sc[1] in ra.CURVE_SHAPES else ra.DEFAULT_STEP_CURVE[1])
+        self.rms_sc_value_var = tk.DoubleVar(value=float(sc[2]))
+        self._rms_curve_combos(_scr2, self.rms_sc_dir_var, self.rms_sc_shape_var, self.rms_sc_value_var)
+
+        # 5. the graph
+        tk.Label(apply_card, text="Both curves as set — left to right is the mod's frames (top) and the "
+                                  "render's steps (bottom); height is reference strength.",
+                 font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 wraplength=900, justify=tk.LEFT, anchor=tk.W).grid(row=r, column=0, sticky=tk.W, pady=(12, 2))
+        r += 1
+        self._rms_curve_canvas = tk.Canvas(apply_card, width=560, height=150, bg=COLORS["bg_deep"],
+                                           highlightthickness=0)
+        self._rms_curve_canvas.grid(row=r, column=0, sticky=tk.W, pady=(0, 2))
+        r += 1
+
+        # 6. presets
+        _pr = _block("Curve presets",
+                     "Save the two curves under a name to use again, or load one. Import reads a curve "
+                     "from one of the pack's graph preset images.")
+        self.rms_curve_preset_var = tk.StringVar(value="")
+        self._rms_curve_preset_combo = ttk.Combobox(_pr, textvariable=self.rms_curve_preset_var,
+                                                    values=self._rms_curve_presets(), state="readonly", width=22)
+        self._rms_curve_preset_combo.pack(side=tk.LEFT, padx=(0, 4))
+        self._rms_curve_preset_combo.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_preset_load())
+        ttk.Button(_pr, text="Save…", width=7, command=self._rms_curve_preset_save).pack(side=tk.LEFT)
+        ttk.Button(_pr, text="Delete", width=7, command=self._rms_curve_preset_delete).pack(side=tk.LEFT, padx=(4, 0))
+        _ib = ttk.Button(_pr, text="Import ComfyUI graph preset…", command=self._rms_import_graph_preset)
+        _ib.pack(side=tk.LEFT, padx=(12, 0))
+        _rms_tip(_ib, "Read one of the pack's models/refmods/graph_presets/*.png files "
+                     "(direction / shape / value in its text chunk) into the frame curve.")
+
+        # ── Card 4: Preview ────────────────────────────────────────────────────────────
+        prev = self._start_section_card(
+            outer, "Render",
+            "What to render and the result. Set the prompt, seed, length, size and steps, press "
+            "Render, and the picture appears below: No mod is the base model alone at the same seed "
+            "and prompt (rendered once and kept), With mods is your rows applied — the difference "
+            "between the two is the mods. Click a still to pop it out; a clip opens the player.")
+        prev.columnconfigure(0, weight=1)
+        prev.columnconfigure(1, weight=1)
+        # the per-render settings, first (moved down from Setup so the journey runs top to bottom)
+        rset = tk.Frame(prev, bg=COLORS["bg_surface"])
+        rset.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
+        rset.columnconfigure(1, weight=1)
+        rr = 0
+        ttk.Label(rset, text="Prompt:").grid(row=rr, column=0, sticky=tk.NW, pady=2)
+        _pf = tk.Frame(rset, bg=COLORS["bg_surface"])
+        _pf.grid(row=rr, column=1, sticky=tk.EW, pady=2)
+        _pf.columnconfigure(0, weight=1)
+        # A visible input: darker field on the card, a border, a focus ring in the accent colour
+        # (flat on the surface colour read as static text — Peter, 16 Sep 2026).
+        self.rms_prompt_text = tk.Text(_pf, height=3, wrap=tk.WORD, font=(FONT_FAMILY, 10),
+                                       bg=COLORS["bg_deep"], fg=COLORS["text_primary"],
+                                       insertbackground=COLORS["text_primary"], relief="solid", bd=1,
+                                       highlightthickness=1, highlightbackground=COLORS["border"],
+                                       highlightcolor=COLORS["accent"], padx=6, pady=4)
+        self.rms_prompt_text.grid(row=0, column=0, sticky=tk.EW)
+        self.rms_prompt_text.insert("1.0", str(saved.get("prompt", "a woman smiles at the camera, soft window light")))
+        self.rms_prompt_text.bind("<KeyRelease>", lambda e: self._rms_persist())
+        _hb = ttk.Button(_pf, text="+ mod hints", width=12, command=self._rms_add_hints)
+        _hb.grid(row=0, column=1, sticky=tk.N, padx=(6, 0))
+        _rms_tip(_hb, "Append every active mod's 'concept_type: description' to the prompt — "
+                     "the Loader node's prompt_hint output, meant to be pasted into the CLIP prompt.")
+        rr += 1
+        _sr = tk.Frame(rset, bg=COLORS["bg_surface"])
+        _sr.grid(row=rr, column=0, columnspan=2, sticky=tk.W, pady=2)
+        ttk.Label(_sr, text="Seed:").pack(side=tk.LEFT)
+        self.rms_seed_var = tk.StringVar(value=str(saved.get("seed", "300")))
+        _se = ttk.Entry(_sr, textvariable=self.rms_seed_var, width=10)
+        _se.pack(side=tk.LEFT, padx=(4, 2))
+        _se.bind("<FocusOut>", lambda e: self._rms_persist())
+        ttk.Button(_sr, text="🎲", width=3, command=self._rms_random_seed).pack(side=tk.LEFT)
+        ttk.Label(_sr, text="Length:").pack(side=tk.LEFT, padx=(14, 2))
+        self.rms_frames_var = tk.StringVar(value=str(saved.get("frames", "22 frames (~1s)")))
+        if self.rms_frames_var.get() not in self._RMS_LENGTHS:
+            self.rms_frames_var.set("Still (1 frame)")
+        _fc = ttk.Combobox(_sr, textvariable=self.rms_frames_var, values=list(self._RMS_LENGTHS),
+                           state="readonly", width=17)
+        _fc.pack(side=tk.LEFT)
+        _fc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
+        _rms_tip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
+                     "sound and open in the player. Sweeps render 22-frame clips.")
+        ttk.Label(_sr, text="W:").pack(side=tk.LEFT, padx=(14, 2))
+        self.rms_width_var = tk.StringVar(value=str(saved.get("width", "640")))
+        _wc = ttk.Combobox(_sr, textvariable=self.rms_width_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
+                           state="readonly", width=6)
+        _wc.pack(side=tk.LEFT)
+        _wc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
+        ttk.Label(_sr, text="H:").pack(side=tk.LEFT, padx=(8, 2))
+        self.rms_height_var = tk.StringVar(value=str(saved.get("height", "768")))
+        _hc = ttk.Combobox(_sr, textvariable=self.rms_height_var, values=[str(d) for d in self._REPAIR_H3_DIMS],
+                           state="readonly", width=6)
+        _hc.pack(side=tk.LEFT)
+        _hc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
+        ttk.Label(_sr, text="Steps:").pack(side=tk.LEFT, padx=(14, 2))
+        self.rms_steps_var = tk.StringVar(value=str(saved.get("steps", "4")))
+        _ste = ttk.Entry(_sr, textvariable=self.rms_steps_var, width=4)
+        _ste.pack(side=tk.LEFT)
+        _ste.bind("<FocusOut>", lambda e: self._rms_settings_changed())
+        ttk.Label(_sr, text="Turbo:").pack(side=tk.LEFT, padx=(8, 2))
+        self.rms_turbo_var = tk.StringVar(value=str(saved.get("turbo", "1.0")))
+        _tue = ttk.Entry(_sr, textvariable=self.rms_turbo_var, width=5)
+        _tue.pack(side=tk.LEFT)
+        _tue.bind("<FocusOut>", lambda e: self._rms_settings_changed())
+        _rms_tip(_tue, "Turbo LoRA strength for the render: 6 steps at 0.75 is the training-preview "
+                      "regime; 4 at 1.0 is the fast dial. 0 = Turbo off (20-step quality, slow).")
+        self.rms_sound_var = tk.BooleanVar(value=bool(saved.get("sound", True)))
+        self._rms_sound_chk = ttk.Checkbutton(_sr, text="Sound", variable=self.rms_sound_var,
+                                              command=self._rms_persist)
+        self._rms_sound_chk.pack(side=tk.LEFT, padx=(14, 0))
+        _rms_tip(self._rms_sound_chk, "Decode the clip's soundtrack (needs the audio VAE in Preferences).")
+        self.rms_early_var = tk.BooleanVar(value=bool(saved.get("early", True)))
+        _ec = ttk.Checkbutton(_sr, text="Show early", variable=self.rms_early_var, command=self._rms_persist)
+        _ec.pack(side=tk.LEFT, padx=(8, 0))
+        _rms_tip(_ec, "Put up the pass-2 estimate while the remaining passes run.")
+        self._rms_tweaked_title = ttk.Label(prev, text="With mods", font=(FONT_FAMILY, 10, "bold"))
+        self._rms_tweaked_title.grid(row=2, column=0, pady=(10, 0))
+        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=2, column=1, pady=(10, 0))
+        self._rms_holders, self._rms_labels = {}, {}
+        for col, side in ((0, "tweaked"), (1, "baseline")):
+            h = tk.Frame(prev, width=448, height=448, bg="#1c1c1c", highlightthickness=0)
+            h.grid(row=3, column=col, padx=4, pady=4, sticky="nsew")
+            h.pack_propagate(False)
+            lbl = ttk.Label(h, text="(no render yet)", anchor=tk.CENTER, background="#1c1c1c", cursor="hand2")
+            lbl.pack(fill=tk.BOTH, expand=True)
+            lbl.bind("<Button-1>", lambda e, s=side: self._rms_open_preview(s))
+            h.bind("<Configure>", lambda e, s=side: self._rms_schedule_redraw(s))
+            self._rms_holders[side], self._rms_labels[side] = h, lbl
+        # Two ways to render, each on its own line with a sentence saying which is which
+        # (Peter, 16 Sep 2026: two render buttons with no explanation read as a mistake).
+        _sw = tk.Frame(prev, bg=COLORS["bg_surface"])
+        _sw.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
+        _rrow = tk.Frame(_sw, bg=COLORS["bg_surface"])
+        _rrow.pack(anchor=tk.W, fill=tk.X)
+        self._rms_render_btn = ttk.Button(_rrow, text="▶ Render", width=17, command=self._rms_render)
+        self._rms_render_btn.pack(side=tk.LEFT)
+        _rms_tip(self._rms_render_btn, "Render No mod (once per setup, cached) and With mods at the "
+                                      "current rows / strength / curves. Loads the base first if needed.")
+        self._rms_cancel_btn = ttk.Button(_rrow, text="Cancel", width=8, command=self._rms_cancel, state="disabled")
+        self._rms_cancel_btn.pack(side=tk.LEFT, padx=(6, 0))
+        tk.Label(_rrow, text="Render this setup: No mod beside With mods, same seed, everything as set above.",
+                 font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 anchor=tk.W).pack(side=tk.LEFT, padx=(12, 0))
+        _srow = tk.Frame(_sw, bg=COLORS["bg_surface"])
+        _srow.pack(anchor=tk.W, fill=tk.X, pady=(8, 0))
+        self.rms_sweep_var = tk.StringVar(value=self._RMS_SWEEPS[0])
+        self._rms_sweep_btn = ttk.Button(_srow, text="▶ Render sweep", width=17, command=self._rms_sweep)
+        self._rms_sweep_btn.pack(side=tk.LEFT)
+        _rms_tip(self._rms_sweep_btn, "Render the current setup as a row of 22-frame clips with ONE dial "
+                                     "stepped through its useful values — the fastest way to see what a "
+                                     "control does to this mod. Each chip is a clip's middle frame; click it to play.")
+        ttk.Label(_srow, text="of").pack(side=tk.LEFT, padx=(8, 4))
+        _swc = ttk.Combobox(_srow, textvariable=self.rms_sweep_var, values=list(self._RMS_SWEEPS), state="readonly", width=32)
+        _swc.pack(side=tk.LEFT)
+        ttk.Button(_srow, text="💾 Save strip…", width=13, command=self._rms_save_strip).pack(side=tk.LEFT, padx=(6, 0))
+        tk.Label(_sw, text="Or sweep instead of a single render: one dial steps through its useful values, everything "
+                           "else stays as set, and you get a row of 22-frame clips to compare — the quickest way to "
+                           "see what a control does to this mod. Each chip shows a clip's middle frame; click it to "
+                           "play the clip.",
+                 font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
+                 wraplength=900, justify=tk.LEFT, anchor=tk.W).pack(anchor=tk.W, pady=(2, 0))
+        # what is happening, right under the buttons that started it
+        _stat = tk.Frame(_sw, bg=COLORS["bg_surface"])
+        _stat.pack(anchor=tk.W, fill=tk.X, pady=(6, 0))
+        tk.Label(_stat, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10, "bold"),
+                 fg=COLORS["warning"], bg=COLORS["bg_surface"], anchor=tk.W
+                 ).pack(side=tk.LEFT)
+        # the bar sits right after the words and is long enough to read as "in progress"
+        self._rms_progress = ttk.Progressbar(_stat, mode="indeterminate", length=480)
+        self._rms_progress_det = False
+        self._rms_sweep_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
+        self._rms_sweep_frame.grid(row=4, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(prev, text="History (last 12 renders — hover for the settings, click to view):",
+                  font=(FONT_FAMILY, 10), foreground=COLORS["text_secondary"]).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+        self._rms_history_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
+        self._rms_history_frame.grid(row=6, column=0, columnspan=2, sticky=tk.W)
+
+        # ── Card 5: Actions ────────────────────────────────────────────────────────────
+        act = self._start_section_card(
+            outer, "Actions",
+            "Take the result to ComfyUI.\n"
+            "\u2022  ComfyUI settings \u2014 copies the exact values to type into the pack's nodes, so the same "
+            "render comes out there with the mod files as they are. Two mods here are two loader slots there.\n"
+            "\u2022  Bake as new RefMod \u2014 the only thing here that writes a file. One row's mod with its Strength, "
+            "the master Strength, its Copies and the Fade-across-the-clip curve folded in, so it loads plainly "
+            "at 1.0 with no curve. One mod per file: a file is a single reference block and the model reads "
+            "it as one subject. Shuffle and Change-during-the-render act at render time and cannot be baked.\n"
+            "\u2022  Save preview \u2014 keeps the picture.\n"
+            "\u2022  Save / Load setup \u2014 keeps this whole tab.")
+        _ar = tk.Frame(act, bg=COLORS["bg_surface"])
+        _ar.pack(fill=tk.X)
+        ttk.Button(_ar, text="💾 Save preview…", command=self._rms_save_preview).pack(side=tk.LEFT)
+        ttk.Button(_ar, text="💾 Save setup…", command=self._rms_setup_save).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(_ar, text="📂 Load setup…", command=self._rms_setup_load).pack(side=tk.LEFT, padx=(6, 0))
+        _rb2 = ttk.Button(_ar, text="📋 ComfyUI settings", command=self._rms_show_readout)
+        _rb2.pack(side=tk.LEFT, padx=(14, 0))
+        _rms_tip(_rb2, "The Load H3 RefMods / Axis / Apply / Step Curve widget values that reproduce "
+                      "this render in the node pack, ready to copy.")
+        _bk = ttk.Button(_ar, text="🧪 Bake as new RefMod…", command=self._rms_bake)
+        _bk.pack(side=tk.LEFT, padx=(6, 0))
+        _rms_tip(_bk, "Writes a NEW mod file from one row. Carried into the file: that row's Strength "
+                     "multiplied by the master Strength (Retention), its Copies (as repeated frames), and the "
+                     "Fade-across-the-clip curve, applied to the latent itself. Load the new file in ComfyUI at "
+                     "1.0 with no frame curve and you get this look with nothing to set. One mod per file: two "
+                     "mods together are two loader slots in ComfyUI (the ComfyUI settings button gives the "
+                     "values). Not carried, because they act at render time: Shuffle and Change-during-the-render.")
+        self._add_youtube_help_button(outer, "refmod_studio")
+
+        # rows (restored or one empty), first scan, curve plot
+        for rd in (saved.get("rows") or [{}]):
+            self._rms_add_row(rd if isinstance(rd, dict) else {})
+        self._rms_restoring = False
+        self._rms_rescan(quiet=True)
+        self._rms_draw_curves()
+        self._rms_refresh_tokens()
+        self._card_desc_size = None
+
+    # ----- small helpers ----------------------------------------------------------------------
+
+    def _rms_curve_combos(self, parent, dvar, svar, vvar):
+        from fizgig.minimax import refmod_apply as ra
+        ttk.Label(parent, text="where:").pack(side=tk.LEFT, padx=(0, 2))
+        _d = ttk.Combobox(parent, textvariable=dvar, values=list(ra.CURVE_DIRECTIONS), state="readonly", width=18)
+        _d.pack(side=tk.LEFT)
+        _d.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_changed())
+        _rms_tip(_d, "Where the concept shows in the OUTPUT (the mirror of the strength envelope over "
+                    "the reference's timeline): concept_at_end locks the reference early and releases "
+                    "it late; concept_at_start the reverse; middle / ends peak and trough.")
+        ttk.Label(parent, text="shape:").pack(side=tk.LEFT, padx=(10, 2))
+        _s = ttk.Combobox(parent, textvariable=svar, values=list(ra.CURVE_SHAPES), state="readonly", width=12)
+        _s.pack(side=tk.LEFT)
+        _s.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_changed())
+        ttk.Label(parent, text="amount:").pack(side=tk.LEFT, padx=(10, 2))
+        _v = ttk.Scale(parent, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=110, variable=vvar,
+                       command=lambda v: self._rms_curve_changed())
+        _v.pack(side=tk.LEFT)
+        lbl = tk.Label(parent, text=f"{vvar.get():.2f}", width=5, font=(FONT_FAMILY, 10),
+                       fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
+        lbl.pack(side=tk.LEFT)
+        vvar.trace_add("write", lambda *a: lbl.configure(text=f"{vvar.get():.2f}"))
+
+    def _rms_frame_curve(self):
+        return (self.rms_fc_dir_var.get(), self.rms_fc_shape_var.get(), round(float(self.rms_fc_value_var.get()), 2))
+
+    def _rms_step_curve(self):
+        return (self.rms_sc_dir_var.get(), self.rms_sc_shape_var.get(), round(float(self.rms_sc_value_var.get()), 2))
+
+    def _rms_curve_changed(self):
+        self._rms_draw_curves()
+        self._rms_persist()
+
+    def _rms_random_seed(self):
+        import random as _r
+        self.rms_seed_var.set(str(_r.randint(0, 2 ** 31 - 1)))
+        self._rms_settings_changed()
+
+    def _rms_random_scramble(self):
+        import random as _r
+        self.rms_scramble_var.set(str(_r.randint(0, 2 ** 31 - 1)))
+        self._rms_persist()
+
+    def _rms_seed(self):
+        try:
+            return int(str(self.rms_seed_var.get()).strip())
+        except (TypeError, ValueError):
+            return 300
+
+    def _rms_scramble(self):
+        try:
+            return int(str(self.rms_scramble_var.get()).strip())
+        except (TypeError, ValueError):
+            return -1
+
+    def _rms_size(self):
+        try:
+            w, h = int(self.rms_width_var.get()), int(self.rms_height_var.get())
+        except (TypeError, ValueError):
+            return 768, 768
+        return max(256, w // 32 * 32), max(256, h // 32 * 32)
+
+    def _rms_frames(self):
+        return int(self._RMS_LENGTHS.get(self.rms_frames_var.get(), 1))
+
+    def _rms_steps_turbo(self):
+        try:
+            st = max(1, min(40, int(float(self.rms_steps_var.get().strip()))))
+        except (TypeError, ValueError, AttributeError):
+            st = 6
+        try:
+            tu = max(0.0, min(1.5, float(self.rms_turbo_var.get().strip())))
+        except (TypeError, ValueError, AttributeError):
+            tu = 0.75
+        return st, tu
+
+    def _rms_settings_changed(self):
+        """Seed / length / canvas / steps / Turbo changed: the No-mod render no longer matches."""
+        st, tu = self._rms_steps_turbo()
+        self.rms_steps_var.set(str(st))
+        self.rms_turbo_var.set(f"{tu:g}")
+        self._rms_persist()
+
+    def _rms_set_retention(self, v):
+        self.rms_retention_var.set(float(v))
+        self._rms_retention_moved()
+
+    def _rms_retention_moved(self):
+        self.rms_retention_str.set(f"{float(self.rms_retention_var.get()):.2f}")
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_retention_typed(self):
+        try:
+            v = max(0.0, min(1.0, float(self.rms_retention_str.get())))
+        except (TypeError, ValueError):
+            v = float(self.rms_retention_var.get())
+        self.rms_retention_var.set(v)
+        self._rms_retention_moved()
+
+    def _rms_retention(self):
+        return max(0.0, min(1.0, float(self.rms_retention_var.get())))
+
+    # ----- mods folder + rows ------------------------------------------------------------------
+    def _rms_browse_folder(self):
+        from tkinter import filedialog
+        d = filedialog.askdirectory(title="RefMod folder", initialdir=self.rms_folder_var.get() or self._lora_initialdir())
+        if d:
+            self.rms_folder_var.set(d)
+            self._rms_rescan()
+
+    def _rms_rescan(self, quiet=False):
+        from fizgig.minimax import refmod_apply as ra
+        folder = self.rms_folder_var.get().strip()
+        found = ra.scan_refmods(folder, self._rms_scan_cache)
+        self._rms_mod_meta = {m["name"]: m for m in found}
+        names = [ra.NONE_MOD] + list(self._rms_mod_meta)
+        for row in self._rms_rows:
+            row["mod_combo"].configure(values=names, width=self._rms_picker_width(names))
+            row["mod_combo"]._rms_all = list(names)
+            if row["mod_var"].get() not in names:
+                row["mod_var"].set(ra.NONE_MOD)
+            self._rms_row_refresh(row)
+        if not quiet or found:
+            self.rms_status_var.set(f"{len(found)} RefMod{'s' if len(found) != 1 else ''} in {folder or '(no folder)'}.")
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_add_row(self, saved=None):
+        from fizgig.minimax import refmod_apply as ra
+        if len(self._rms_rows) >= ra.MAX_ROWS:
+            return
+        saved = saved or {}
+        names = [ra.NONE_MOD] + list(self._rms_mod_meta)
+        bg = COLORS["bg_surface"]
+        fr = tk.Frame(self._rms_rows_frame, bg=bg)
+        fr.grid(sticky=tk.EW, pady=(0, 8))
+        fr.columnconfigure(7, weight=1)   # the spanning lines below put their slack here, not under Copies
+        row = {"frame": fr}
+        # Line 1: the mod, its strength, copies, remove.
+        row["on_var"] = tk.BooleanVar(value=bool(saved.get("on", True)))
+        ttk.Checkbutton(fr, variable=row["on_var"], command=lambda: self._rms_row_changed(row)).grid(row=0, column=0)
+        row["mod_var"] = tk.StringVar(value=str(saved.get("mod", ra.NONE_MOD)))
+        row["mod_combo"] = ttk.Combobox(fr, textvariable=row["mod_var"], values=names, width=self._rms_picker_width(names))
+        row["mod_combo"].grid(row=0, column=1, padx=(2, 6), sticky=tk.W)
+        self._rms_make_searchable(row["mod_combo"], lambda: self._rms_row_changed(row))
+        row["value_var"] = tk.DoubleVar(value=float(saved.get("value", 1.0)))
+        row["slider_lbl"] = tk.Label(fr, text="Strength:", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
+        row["slider_lbl"].grid(row=0, column=2, padx=(4, 2))
+        _sf = tk.Frame(fr, bg=bg)
+        _sf.grid(row=0, column=3, sticky=tk.W)
+        row["scale"] = ttk.Scale(_sf, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=150, variable=row["value_var"],
+                                 command=lambda v, rw=row: self._rms_row_moved(rw))
+        row["scale"].pack(side=tk.LEFT)
+        row["value_str"] = tk.StringVar(value=f"{row['value_var'].get():.2f}")
+        _ve = ttk.Entry(_sf, textvariable=row["value_str"], width=6)
+        _ve.pack(side=tk.LEFT, padx=(4, 0))
+        _ve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
+        _ve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
+        _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored).")
+        ttk.Label(fr, text="Copies:").grid(row=0, column=4, padx=(12, 2))
+        row["copies_var"] = tk.StringVar(value=str(int(saved.get("copies", 1))))
+        _cs = ttk.Spinbox(fr, from_=1, to=ra.MAX_COPIES, width=3, textvariable=row["copies_var"],
+                          command=lambda rw=row: self._rms_row_changed(rw))
+        _cs.grid(row=0, column=5, sticky=tk.W)
+        _cs.bind("<FocusOut>", lambda e, rw=row: self._rms_row_changed(rw))
+        _rms_tip(_cs, "The same reference repeated in the bundle — 2–3 is the pack's sweet spot for a "
+                     "stronger pull; every copy costs its full tokens.")
+        _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
+        _x.grid(row=0, column=6, padx=(12, 0))
+        row["sf"] = _sf
+        # Line 2: what the picked mod is.
+        row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
+        row["info"].grid(row=1, column=1, columnspan=7, sticky=tk.W, pady=(2, 2))
+        self._rms_rows.append(row)
+        if row["mod_var"].get() not in names:
+            row["mod_var"].set(ra.NONE_MOD)
+        self._rms_row_refresh(row)
+        if len(self._rms_rows) >= ra.MAX_ROWS:
+            self._rms_add_btn.state(["disabled"])
+        if not self._rms_restoring:
+            self._rms_persist()
+
+    def _rms_remove_row(self, row):
+        if len(self._rms_rows) <= 1:
+            # the last row empties instead of vanishing
+            from fizgig.minimax import refmod_apply as ra
+            row["mod_var"].set(ra.NONE_MOD)
+            row["value_var"].set(1.0)
+            row["copies_var"].set("1")
+            self._rms_row_changed(row)
+            return
+        self._rms_rows.remove(row)
+        row["frame"].destroy()
+        self._rms_add_btn.state(["!disabled"])
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_row_moved(self, row):
+        row["value_str"].set(f"{float(row['value_var'].get()):.2f}")
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_row_typed(self, row):
+        try:
+            v = max(0.0, min(1.0, float(row["value_str"].get())))
+        except (TypeError, ValueError):
+            v = float(row["value_var"].get())
+        row["value_var"].set(v)
+        self._rms_row_moved(row)
+
+    @staticmethod
+    def _rms_picker_width(names):
+        """Both pickers as wide as the longest mod name in the list (Peter, 16 Sep 2026)."""
+        try:
+            return max(24, max(len(str(nm)) for nm in names) + 1)
+        except ValueError:
+            return 24
+
+    def _rms_make_searchable(self, combo, on_pick):
+        """A mod picker you can type into: letters narrow the list to the names containing
+        them (case-insensitive) — Down or the arrow then opens the narrowed list. Return, or
+        leaving the box, commits an exact match or the only remaining match and otherwise
+        puts the previous pick back, so a half-typed name never becomes a row's mod."""
+        combo._rms_all = list(combo.cget("values"))
+        combo._rms_last = combo.get()
+
+        def _all():
+            return list(getattr(combo, "_rms_all", None) or combo.cget("values"))
+
+        def _hits(typed):
+            t = typed.strip().lower()
+            return [nm for nm in _all() if t in nm.lower()] if t else _all()
+
+        def _popdown_open():
+            try:
+                pd = combo.tk.call("ttk::combobox::PopdownWindow", combo)
+                return bool(combo.tk.call("winfo", "ismapped", pd))
+            except tk.TclError:
+                return False
+
+        def _on_key(e):
+            if e.keysym in ("Up", "Down", "Return", "KP_Enter", "Escape", "Tab", "Left", "Right",
+                            "Home", "End", "Shift_L", "Shift_R", "Control_L", "Control_R"):
+                return
+            hits = _hits(combo.get())
+            combo.configure(values=hits or _all())
+
+        def _commit(e=None):
+            if e is not None and getattr(e, "type", None) is not None and str(e.type) == "10" and _popdown_open():
+                return   # focus went to the list itself — the pick comes back as a selection
+            typed = combo.get()
+            names = _all()
+            exact = next((nm for nm in names if nm.lower() == typed.strip().lower()), None)
+            if exact is None:
+                h = _hits(typed)
+                exact = h[0] if (typed.strip() and len(h) == 1) else None
+            combo.set(exact if exact is not None else combo._rms_last)
+            combo.configure(values=names)
+            if combo.get() != combo._rms_last:
+                combo._rms_last = combo.get()
+                on_pick()
+
+        def _selected(e):
+            combo.configure(values=_all())
+            if combo.get() != combo._rms_last:
+                combo._rms_last = combo.get()
+            on_pick()
+
+        combo.bind("<KeyRelease>", _on_key)
+        combo.bind("<Return>", _commit)
+        combo.bind("<KP_Enter>", _commit)
+        combo.bind("<FocusOut>", _commit)
+        combo.bind("<<ComboboxSelected>>", _selected)
+
+        # With the list OPEN, typing jumps to the first name starting with the letters typed
+        # (a second press of the same letter moves to the next such name) — the list-box
+        # behaviour Windows users expect, which ttk's popdown does not do by itself.
+        import time as _time
+        combo._rms_jump = ["", 0.0]
+
+        def _jump(e):
+            ch = getattr(e, "char", "") or ""
+            if not ch or not ch.isprintable() or ch in (" ",):
+                return
+            try:
+                lb = combo.tk.call("ttk::combobox::PopdownWindow", combo) + ".f.l"
+                items = [str(v) for v in combo.cget("values")]
+                if not items:
+                    return
+                now = _time.time()
+                buf, t0 = combo._rms_jump
+                prefix = (buf + ch.lower()) if (now - t0) < 1.0 else ch.lower()
+                cur = combo.tk.call(lb, "curselection")
+                cur = int(cur[0]) if cur else -1
+                if len(prefix) > 1 and len(set(prefix)) == 1:
+                    prefix, start = prefix[0], cur + 1          # same letter again: next match
+                elif len(prefix) == 1:
+                    start = cur + 1
+                else:
+                    start = 0
+                order = list(range(start, len(items))) + list(range(0, start))
+                idx = next((i for i in order if items[i].lower().startswith(prefix)), None)
+                combo._rms_jump = [prefix, now]
+                if idx is None:
+                    return
+                combo.tk.call(lb, "selection", "clear", 0, "end")
+                combo.tk.call(lb, "selection", "set", idx)
+                combo.tk.call(lb, "activate", idx)
+                combo.tk.call(lb, "see", idx)
+            except tk.TclError:
+                pass
+
+        try:
+            _lb = combo.tk.call("ttk::combobox::PopdownWindow", combo) + ".f.l"
+            combo._bind(("bind", _lb), "<KeyPress>", _jump, "+")
+        except tk.TclError:
+            pass
+        combo._rms_handlers = (_on_key, _commit, _selected, _jump)   # reachable for headless checks
+
+    def _rms_row_changed(self, row):
+        self._rms_row_refresh(row)
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_row_refresh(self, row):
+        """The number beside the slider and the info line for the picked mod."""
+        from fizgig.minimax import refmod_apply as ra
+        row["value_str"].set(f"{float(row['value_var'].get()):.2f}")
+        ma = self._rms_mod_meta.get(row["mod_var"].get())
+        if ma:
+            row["info"].configure(text=ra.describe_meta(ma))
+        elif row["mod_var"].get() != ra.NONE_MOD:
+            row["info"].configure(text="(mod not in this folder)")
+        else:
+            row["info"].configure(text="")
+
+    def _rms_row_state(self, row):
+        return {"on": bool(row["on_var"].get()), "mod": row["mod_var"].get(),
+                "value": round(float(row["value_var"].get()), 3),
+                "copies": self._rms_copies(row)}
+
+    def _rms_copies(self, row, key="copies_var"):
+        try:
+            return max(1, min(10, int(str(row[key].get()).strip())))
+        except (TypeError, ValueError):
+            return 1
+
+    def _rms_latent(self, meta):
+        """The mod's latent in the file's own dtype (fp16 as saved) — the pack mixes in it."""
+        if not meta:
+            return None
+        p = meta["path"]
+        z = self._rms_latents.get(p)
+        if z is None:
+            from safetensors import safe_open
+            with safe_open(p, framework="pt", device="cpu") as f:
+                z = f.get_tensor("latent").clone()
+            self._rms_latents[p] = z
+        return z
+
+    def _rms_mod_rows(self):
+        """ModRow objects for the current rows (latents loaded on demand)."""
+        from fizgig.minimax import refmod_apply as ra
+        out = []
+        for row in self._rms_rows:
+            ma = self._rms_mod_meta.get(row["mod_var"].get())
+            if ma is None:
+                continue
+            out.append(ra.ModRow(self._rms_latent(ma), ma, value=float(row["value_var"].get()),
+                                 copies=self._rms_copies(row), enabled=bool(row["on_var"].get()), name=ma["name"]))
+        return out
+
+    def _rms_refresh_tokens(self):
+        """Tokens footer = sum of active rows' T×(H/2)×(W/2) × copies (metadata only, no tensors)."""
+        from fizgig.minimax import refmod_apply as ra
+        total = 0
+        for row in self._rms_rows:
+            if not row["on_var"].get():
+                continue
+            if float(row["value_var"].get()) <= 0:
+                continue
+            m = self._rms_mod_meta.get(row["mod_var"].get())
+            if m:
+                total += int(m.get("tokens", 0)) * self._rms_copies(row)
+        if self._rms_retention() <= 0:
+            total = 0
+        cap = ra.NODE_TOKEN_CAP
+        self.rms_tokens_var.set(f"Tokens: {total:,} / {cap:,}".replace(",", " "))
+        self._rms_tokens_lbl.configure(fg=("#E05050" if total > cap else COLORS["text_secondary"]))
+
+    def _rms_add_hints(self):
+        from fizgig.minimax import refmod_apply as ra
+        metas = []
+        for row in self._rms_rows:
+            if not row["on_var"].get():
+                continue
+            m = self._rms_mod_meta.get(row["mod_var"].get())
+            if m and m not in metas:
+                metas.append(m)
+        hint = ra.prompt_hint(metas)
+        if not hint:
+            self.rms_status_var.set("No active mod carries a description — nothing to add.")
+            return
+        cur = self.rms_prompt_text.get("1.0", tk.END).strip()
+        if hint in cur:
+            return
+        self.rms_prompt_text.insert(tk.END, (", " if cur else "") + hint)
+        self._rms_persist()
+
+    # ----- curves canvas -----------------------------------------------------------------------
+    def _rms_draw_curves(self):
+        """The pack's debug grid, live: frame curve (accent) over the mod's frames, step curve
+        (second colour) over the denoise steps, on one canvas."""
+        from fizgig.minimax import refmod_apply as ra
+        c = getattr(self, "_rms_curve_canvas", None)
+        if c is None:
+            return
+        c.delete("all")
+        W, H = int(c["width"]), int(c["height"])
+        x0, y0, x1, y1 = 36, 12, W - 12, H - 26
+        grid_col = COLORS.get("border", "#3a3a3a")
+        for i in range(5):
+            y = y0 + (y1 - y0) * i / 4
+            c.create_line(x0, y, x1, y, fill=grid_col)
+            c.create_text(x0 - 6, y, text=f"{1 - i / 4:.2f}", anchor=tk.E, fill=COLORS["text_secondary"], font=(FONT_FAMILY, 7))
+        for i in range(5):
+            x = x0 + (x1 - x0) * i / 4
+            c.create_line(x, y0, x, y1, fill=grid_col)
+        n = 200
+        fc = self._rms_frame_curve()
+        pts = []
+        for i in range(n + 1):
+            x = i / n
+            v = ra.curve_value_at(fc, x) if not (fc[0] == "constant" and fc[1] == "linear") else float(fc[2])
+            v = max(0.0, min(1.0, v))
+            pts += [x0 + (x1 - x0) * x, y1 - (y1 - y0) * v]
+        c.create_line(*pts, fill=COLORS.get("accent", "#3B9FD8"), width=2, smooth=False)
+        c.create_text(x0 + 4, y1 + 6, text="reference frame 1", anchor=tk.NW, fill=COLORS.get("accent", "#3B9FD8"), font=(FONT_FAMILY, 7))
+        c.create_text(x1 - 4, y1 + 6, text="last frame", anchor=tk.NE, fill=COLORS.get("accent", "#3B9FD8"), font=(FONT_FAMILY, 7))
+        if self.rms_sc_on_var.get():
+            sc = self._rms_step_curve()
+            pts = []
+            for i in range(n + 1):
+                x = i / n
+                v = max(0.0, min(1.0, ra.curve_value_at(sc, x)))
+                pts += [x0 + (x1 - x0) * x, y1 - (y1 - y0) * v]
+            c.create_line(*pts, fill="#E0A030", width=2, dash=(4, 3))
+            c.create_text((x0 + x1) / 2, y1 + 6, text="step curve: first step → last step", anchor=tk.N, fill="#E0A030", font=(FONT_FAMILY, 7))
+        c.create_text(x1 - 4, y0 + 2, text="reference strength", anchor=tk.NE, fill=COLORS["text_secondary"], font=(FONT_FAMILY, 7))
+
+    # ----- curve presets -----------------------------------------------------------------------
+    def _rms_curve_preset_dir(self):
+        return os.path.join(PRESETS_DIR, "refmod_studio", "curves")
+
+    def _rms_curve_presets(self):
+        d = self._rms_curve_preset_dir()
+        if not os.path.isdir(d):
+            return []
+        try:
+            return sorted(f[:-5] for f in os.listdir(d) if f.lower().endswith(".json"))
+        except Exception:
+            return []
+
+    def _rms_curve_preset_save(self):
+        from tkinter import simpledialog
+        name = simpledialog.askstring("Save curve preset", "Preset name:", parent=self.master)
+        if not name:
+            return
+        safe = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in name).strip()
+        if not safe:
+            return
+        os.makedirs(self._rms_curve_preset_dir(), exist_ok=True)
+        d = {"frame": dict(zip(("direction", "shape", "value"), self._rms_frame_curve())),
+             "step": dict(on=bool(self.rms_sc_on_var.get()), **dict(zip(("direction", "shape", "value"), self._rms_step_curve()))),
+             "retention": self._rms_retention()}
+        with open(os.path.join(self._rms_curve_preset_dir(), safe + ".json"), "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2)
+        self._rms_curve_preset_combo.configure(values=self._rms_curve_presets())
+        self.rms_curve_preset_var.set(safe)
+        self.rms_status_var.set(f"Curve preset '{safe}' saved.")
+
+    def _rms_curve_preset_load(self):
+        from fizgig.minimax import refmod_apply as ra
+        name = self.rms_curve_preset_var.get()
+        if not name:
+            return
+        try:
+            with open(os.path.join(self._rms_curve_preset_dir(), name + ".json"), "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Curve preset", f"Couldn't read the preset:\n{e}")
+            return
+        fc, sc = d.get("frame") or {}, d.get("step") or {}
+        if fc.get("direction") in ra.CURVE_DIRECTIONS and fc.get("shape") in ra.CURVE_SHAPES:
+            self.rms_fc_dir_var.set(fc["direction"]); self.rms_fc_shape_var.set(fc["shape"])
+            self.rms_fc_value_var.set(float(fc.get("value", 1.0)))
+        if sc.get("direction") in ra.CURVE_DIRECTIONS and sc.get("shape") in ra.CURVE_SHAPES:
+            self.rms_sc_dir_var.set(sc["direction"]); self.rms_sc_shape_var.set(sc["shape"])
+            self.rms_sc_value_var.set(float(sc.get("value", 1.0)))
+            self.rms_sc_on_var.set(bool(sc.get("on", False)))
+        if "retention" in d:
+            self._rms_set_retention(float(d["retention"]))
+        self._rms_curve_changed()
+
+    def _rms_curve_preset_delete(self):
+        name = self.rms_curve_preset_var.get()
+        if not name:
+            return
+        p = os.path.join(self._rms_curve_preset_dir(), name + ".json")
+        if os.path.isfile(p) and messagebox.askyesno("Delete curve preset", f"Delete '{name}'?"):
+            os.remove(p)
+            self.rms_curve_preset_var.set("")
+            self._rms_curve_preset_combo.configure(values=self._rms_curve_presets())
+
+    def _rms_import_graph_preset(self):
+        from tkinter import filedialog
+        from fizgig.minimax import refmod_apply as ra
+        # The pack writes its graph presets to <mods folder>/graph_presets/<name>.png (the Apply
+        # node's save_preset_as); open the dialog there when it exists, else in the mods folder.
+        _mods = self.rms_folder_var.get().strip()
+        _gp = os.path.join(_mods, "graph_presets") if _mods else ""
+        _start = _gp if os.path.isdir(_gp) else (_mods if os.path.isdir(_mods) else "")
+        p = filedialog.askopenfilename(title="ComfyUI graph preset (the pack's models/refmods/graph_presets/*.png)",
+                                       initialdir=_start or None,
+                                       filetypes=[("Graph preset", "*.png *.json"), ("All", "*")])
+        if not p:
+            return
+        spec = ra.read_graph_preset_png(p)
+        if spec is None:
+            messagebox.showerror("Graph preset", "No curve found in that file (expected the pack's "
+                                                 "'graph' text chunk with direction / shape / value).")
+            return
+        self.rms_fc_dir_var.set(spec[0]); self.rms_fc_shape_var.set(spec[1]); self.rms_fc_value_var.set(spec[2])
+        self._rms_curve_changed()
+        self.rms_status_var.set(f"Frame curve from {os.path.basename(p)}: {spec[0]} / {spec[1]} / {spec[2]:.2f}.")
+
+    # ----- persistence -------------------------------------------------------------------------
+    def _rms_state(self):
+        return {"base": self.rms_base_var.get(), "model": self.rms_model_var.get(),
+                "prompt": self.rms_prompt_text.get("1.0", tk.END).strip(),
+                "seed": self.rms_seed_var.get(), "frames": self.rms_frames_var.get(),
+                "width": self.rms_width_var.get(), "height": self.rms_height_var.get(),
+                "steps": self.rms_steps_var.get(), "turbo": self.rms_turbo_var.get(),
+                "sound": bool(self.rms_sound_var.get()), "early": bool(self.rms_early_var.get()),
+                "folder": self.rms_folder_var.get(), "rows": [self._rms_row_state(r) for r in self._rms_rows],
+                "retention": self._rms_retention(), "scramble": self.rms_scramble_var.get(),
+                "frame_curve": list(self._rms_frame_curve()), "step_curve": list(self._rms_step_curve()),
+                "step_on": bool(self.rms_sc_on_var.get())}
+
+    def _rms_apply_state(self, d):
+        """Load a saved setup (the Load setup button) into the controls."""
+        from fizgig.minimax import refmod_apply as ra
+        self._rms_restoring = True
+        try:
+            for key, var in (("base", self.rms_base_var), ("model", self.rms_model_var), ("seed", self.rms_seed_var),
+                             ("frames", self.rms_frames_var),
+                             ("width", self.rms_width_var), ("height", self.rms_height_var), ("steps", self.rms_steps_var),
+                             ("turbo", self.rms_turbo_var), ("folder", self.rms_folder_var), ("scramble", self.rms_scramble_var)):
+                if key in d:
+                    var.set(str(d[key]))
+            if "prompt" in d:
+                self.rms_prompt_text.delete("1.0", tk.END)
+                self.rms_prompt_text.insert("1.0", str(d["prompt"]))
+            self.rms_sound_var.set(bool(d.get("sound", True)))
+            self.rms_early_var.set(bool(d.get("early", True)))
+            for row in list(self._rms_rows):
+                row["frame"].destroy()
+            self._rms_rows = []
+            self._rms_add_btn.state(["!disabled"])
+            self._rms_rescan(quiet=True)
+            for rd in (d.get("rows") or [{}]):
+                self._rms_add_row(rd if isinstance(rd, dict) else {})
+            self.rms_retention_var.set(float(d.get("retention", 1.0)))
+            self.rms_retention_str.set(f"{self._rms_retention():.2f}")
+            fc = d.get("frame_curve") or list(ra.DEFAULT_FRAME_CURVE)
+            sc = d.get("step_curve") or list(ra.DEFAULT_STEP_CURVE)
+            self.rms_fc_dir_var.set(fc[0]); self.rms_fc_shape_var.set(fc[1]); self.rms_fc_value_var.set(float(fc[2]))
+            self.rms_sc_dir_var.set(sc[0]); self.rms_sc_shape_var.set(sc[1]); self.rms_sc_value_var.set(float(sc[2]))
+            self.rms_sc_on_var.set(bool(d.get("step_on", False)))
+        finally:
+            self._rms_restoring = False
+        self._rms_draw_curves()
+        self._rms_refresh_tokens()
+        self._rms_persist()
+
+    def _rms_persist(self):
+        """Debounced: the whole tab's state under last_used['refmod_studio']."""
+        if getattr(self, "_rms_restoring", False):
+            return
+        if self._rms_persist_after is not None:
+            try:
+                self.master.after_cancel(self._rms_persist_after)
+            except Exception:
+                pass
+
+        def _save():
+            self._rms_persist_after = None
+            try:
+                self.last_used["refmod_studio"] = self._rms_state()
+                self._save_last_used_paths()
+            except Exception:
+                pass
+        self._rms_persist_after = self.master.after(600, _save)
+
+    def _rms_setup_dir(self):
+        d = os.path.join(PRESETS_DIR, "refmod_studio")
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _rms_setup_save(self):
+        from tkinter import filedialog
+        p = filedialog.asksaveasfilename(title="Save RefMod Studio setup", defaultextension=".json",
+                                         initialdir=self._rms_setup_dir(), filetypes=[("Setup", "*.json")])
+        if not p:
+            return
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(self._rms_state(), f, indent=2)
+        self.rms_status_var.set(f"Setup saved: {os.path.basename(p)}.")
+
+    def _rms_setup_load(self):
+        from tkinter import filedialog
+        p = filedialog.askopenfilename(title="Load RefMod Studio setup", initialdir=self._rms_setup_dir(),
+                                       filetypes=[("Setup", "*.json")])
+        if not p:
+            return
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                d = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Load setup", f"Couldn't read the setup:\n{e}")
+            return
+        self._rms_apply_state(d)
+        self.rms_status_var.set(f"Setup loaded: {os.path.basename(p)}.")
+
+    # ----- engine ------------------------------------------------------------------------------
+    def _rms_base_mode(self):
+        v = str(self.rms_base_var.get())
+        return "stream" if v.startswith("Stream") else "nf4" if v.startswith("NF4") else "auto"
+
+    def _rms_model_is_fl2va(self):
+        return str(getattr(self, "rms_model_var", None) and self.rms_model_var.get() or "").startswith("First")
+
+    def _rms_model_dit_path(self):
+        """The DiT the Model picker names: the reference (ref2va) checkpoint or the standard
+        first/last-frame (fl2va) one, from Preferences."""
+        pv = self.prefs_vars if hasattr(self, "prefs_vars") else {}
+        key = "minimax_dit" if self._rms_model_is_fl2va() else "minimax_ref_dit"
+        return pv.get(key, tk.StringVar()).get().strip()
+
+    def _rms_model_changed(self):
+        self._rms_persist()
+        if self._rms_engine_ready() and getattr(self.rms_engine, "dit_path", "") != self._rms_model_dit_path():
+            self.rms_status_var.set(f"Model set to {self.rms_model_var.get()} — the next Render reloads the base.")
+
+    def _rms_model_loaded_matches(self):
+        """False when a base is resident but it is not the model the picker names."""
+        if not self._rms_engine_ready():
+            return True
+        return getattr(self.rms_engine, "dit_path", "") == self._rms_model_dit_path()
+
+    def _rms_engine_plan(self):
+        """ensure_pipeline kwargs for the picked H3 model, or None after a messagebox."""
+        pv = self.prefs_vars if hasattr(self, "prefs_vars") else {}
+        dit_path = self._rms_model_dit_path()
+        _dit_label = ("MiniMax H3 DiT (first/last frame / fl2va)" if self._rms_model_is_fl2va()
+                      else "MiniMax H3 DiT (reference / ref2va)")
+        vae_path = pv.get("minimax_vae", tk.StringVar()).get().strip()
+        te_path = pv.get("minimax_text_encoder", tk.StringVar()).get().strip()
+        for label, p in ((_dit_label, dit_path), ("MiniMax H3 video VAE", vae_path),
+                         ("Qwen3-VL-32B text encoder", te_path)):
+            if not p or not os.path.exists(p):
+                messagebox.showerror("RefMod Studio", f"{label} path not set or not found.\n"
+                                                      "Set it on the Preferences tab.")
+                return None
+        turbo_path = pv.get("minimax_turbo_lora", tk.StringVar()).get().strip()
+        cache_dir = pv.get("cache_dir", tk.StringVar()).get().strip()
+        return dict(dit_path=dit_path, vae_path=vae_path, text_encoder_path=te_path, device="cuda",
+                    turbo_lora_path=turbo_path, turbo_lora_strength=0.75,
+                    te_cache_dir=os.path.join(cache_dir, "te_prompts") if cache_dir else "",
+                    audio_vae_path=self._repair_h3_audio_vae_path(), base_mode=self._rms_base_mode())
+
+    def _rms_engine_status(self, msg):
+        try:
+            self.master.after(0, lambda: self.rms_status_var.set(str(msg)))
+        except Exception:
+            pass
+
+    def _rms_engine_ready(self):
+        eng = self.rms_engine
+        return eng is not None and getattr(eng, "pipeline", None) is not None
+
+    def _rms_set_busy(self, busy, marquee=False):
+        self._rms_busy = bool(busy)
+        for b in (self._rms_load_btn, self._rms_render_btn, self._rms_sweep_btn):
+            b.state(["disabled"] if busy else ["!disabled"])
+        self._rms_cancel_btn.state(["!disabled"] if busy else ["disabled"])
+        bar = self._rms_progress
+        if busy:
+            self._rms_progress_det = False
+            if not bar.winfo_manager():
+                bar.pack(side=tk.LEFT, padx=(14, 0))
+            bar.configure(mode="indeterminate")
+            bar.start(60)
+            if self.rms_engine is not None and not marquee:
+                self.rms_engine.on_step = self._rms_progress_step
+        else:
+            try:
+                bar.stop()
+            except Exception:
+                pass
+            if bar.winfo_manager():
+                bar.pack_forget()
+
+    def _rms_progress_step(self, done, total):
+        def _apply():
+            if not self._rms_busy:
+                return
+            bar = self._rms_progress
+            if not self._rms_progress_det:
+                bar.stop()
+                bar.configure(mode="determinate", maximum=max(1, int(total)))
+                self._rms_progress_det = True
+            bar.configure(value=int(done))
+        try:
+            self.master.after(0, _apply)
+        except Exception:
+            pass
+
+    def _rms_run_async(self, work, on_done, on_fail):
+        """Run `work()` on a thread; marshal its result (or exception) back to Tk."""
+        import threading as _thr
+
+        def _run():
+            try:
+                res = work()
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                self.master.after(0, lambda: on_fail(e, tb))
+                return
+            self.master.after(0, lambda: on_done(res))
+        self._rms_thread = _thr.Thread(target=_run, daemon=True)
+        self._rms_thread.start()
+
+    def _rms_load(self, then=None):
+        """Load (or re-plan) the ref2va base; `then()` runs on the Tk thread once it is up."""
+        if self._rms_busy:
+            return
+        plan = self._rms_engine_plan()
+        if plan is None:
+            return
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+        from fizgig.repair_studio.h3_engine import H3RepairEngine
+        if self.rms_engine is None:
+            self.rms_engine = H3RepairEngine()
+            self.rms_engine.on_status = self._rms_engine_status
+            self.rms_engine.int8_attention = True
+        eng = self.rms_engine
+        self._rms_loading = True
+        self._rms_set_busy(True, marquee=True)
+        self.rms_status_var.set(f"Loading the {self.rms_model_var.get()} base (the 33B base takes a minute)…")
+
+        def _done(_res):
+            self._rms_loading = False
+            self._rms_set_busy(False)
+            self._rms_baseline_key = None
+            self.rms_status_var.set("Base loaded. Render when ready.")
+            if then is not None:
+                then()
+
+        def _fail(e, tb):
+            self._rms_loading = False
+            self._rms_set_busy(False)
+            print(tb, flush=True)
+            self.rms_status_var.set(f"Load failed: {e}")
+            messagebox.showerror("RefMod Studio", f"Couldn't load the base:\n{e}")
+
+        self._rms_run_async(lambda: eng.ensure_pipeline(**plan), _done, _fail)
+
+    def _rms_unload(self):
+        """Free the base (Unload button, tab switch). Waits out a running render like Repair Studio."""
+        if self._rms_busy:
+            eng = self.rms_engine
+            if eng is not None:
+                try:
+                    eng.request_cancel()
+                except Exception:
+                    pass
+            self._rms_unload_tries += 1
+            if self._rms_unload_tries <= 120:
+                self.master.after(500, self._rms_unload)
+            else:
+                self._rms_unload_tries = 0
+                print("[refmod studio] unload gave up waiting for the render worker", flush=True)
+            return
+        self._rms_unload_tries = 0
+        P = getattr(self, "_repair_player", None)
+        if P is not None and P.get("clips") is self._rms_clips:
+            self._repair_clip_player_close()
+        if self._rms_engine_ready():
+            print("[refmod studio] freeing the base…", flush=True)
+            try:
+                self.rms_engine.reset()
+            except Exception:
+                import traceback
+                print(traceback.format_exc(), flush=True)
+            self.rms_engine = None
+            self._rms_baseline_key = None
+            self.rms_status_var.set("Base unloaded. Load base to continue.")
+
+    def _rms_cancel(self):
+        eng = self.rms_engine
+        if eng is not None and self._rms_busy:
+            try:
+                eng.request_cancel()
+            except Exception:
+                pass
+            self.rms_status_var.set("Cancelling…")
+
+    # ----- rendering ---------------------------------------------------------------------------
+    def _rms_job(self, overrides=None):
+        """Everything one render needs, read on the Tk thread: prompt / seed / canvas / steps
+        / the bundle latents (Apply applied) / the step schedule. `overrides` patch one dial
+        for a sweep item."""
+        from fizgig.minimax import refmod_apply as ra
+        ov = overrides or {}
+        st, tu = self._rms_steps_turbo()
+        w, h = self._rms_size()
+        rows = self._rms_mod_rows()
+        if "copies" in ov:
+            for rw in rows:
+                rw.copies = int(ov["copies"])
+        retention = float(ov.get("retention", self._rms_retention()))
+        fc = tuple(ov.get("frame_curve", self._rms_frame_curve()))
+        sc = tuple(ov.get("step_curve", self._rms_step_curve()))
+        step_on = bool(ov.get("step_on", self.rms_sc_on_var.get()))
+        latents, describe = ra.build_bundle(rows, retention=retention, curve=fc, scramble_seed=self._rms_scramble())
+        sched = ra.step_schedule(sc, latents) if step_on else None
+        frames = int(ov.get("frames", self._rms_frames()))
+        seed = int(ov.get("seed", self._rms_seed()))
+        job = {"prompt": self.rms_prompt_text.get("1.0", tk.END).strip(), "seed": seed, "width": w, "height": h,
+               "frames": frames, "steps": st, "turbo": tu, "latents": latents, "describe": describe,
+               "schedule": sched, "retention": retention, "frame_curve": fc, "step_curve": sc if step_on else None,
+               "with_audio": bool(self.rms_sound_var.get() and self._repair_h3_audio_vae_path()),
+               "early": (2 if (self.rms_early_var.get() and st > 2) else 0),
+               "readout": ra.comfy_readout(rows, retention=retention, frame_curve=fc, scramble_seed=self._rms_scramble(),
+                                           step_curve=sc, step_on=step_on),
+               "label": ov.get("label", "")}
+        job["baseline_key"] = (job["prompt"], seed, w, h, frames, st, tu, self._rms_base_mode(),
+                               self.rms_model_var.get())
+        return job
+
+    def _rms_describe_job(self, job):
+        mods = ", ".join(f"{n}@{s:.2f}" for n, s in job["describe"]) or "no mods"
+        fc = job["frame_curve"]
+        s = f"{mods} · retention {job['retention']:.2f} · frame {fc[0]}/{fc[1]}/{fc[2]:.2f}"
+        if job["step_curve"]:
+            sc = job["step_curve"]
+            s += f" · step {sc[0]}/{sc[1]}/{sc[2]:.2f}"
+        s += f" · seed {job['seed']} · {job['width']}×{job['height']}×{job['frames']} · {job['steps']} steps · Turbo {job['turbo']:g}"
+        return s
+
+    def _rms_render(self):
+        if self._rms_busy:
+            return
+        if not self._rms_model_loaded_matches():
+            self._rms_unload()                      # a different H3 than the one resident
+        if not self._rms_engine_ready():
+            self._rms_load(then=self._rms_render)
+            return
+        try:
+            job = self._rms_job()
+        except Exception as e:
+            messagebox.showerror("RefMod Studio", f"Couldn't build the bundle:\n{e}")
+            return
+        if not job["latents"]:
+            self.rms_status_var.set("No active mod (or retention 0) — rendering With mods as the plain base.")
+        eng = self.rms_engine
+        eng.clear_cancel()
+        self._rms_set_busy(True)
+        need_base = self._rms_baseline_key != job["baseline_key"] or self._rms_clips.get("baseline") is None
+        self.rms_status_var.set(("Rendering With mods, then No mod…" if need_base else "Rendering With mods…"))
+
+        def _early(img, step, n):
+            self.master.after(0, lambda: self._rms_show_early(img, step, n))
+
+        def _show_tweaked(t):
+            # the result people came for, on screen the moment it exists — No mod follows
+            t["wav_path"] = self._repair_clip_wav("rms_tweaked", t)
+            t["job"] = job
+            self._rms_clips["tweaked"] = t
+            self._rms_show(t["middle"], "tweaked")
+            self._rms_tweaked_title.configure(text="With mods — " + (", ".join(f"{n}@{s:.2f}" for n, s in job["describe"]) or "none"))
+            self._rms_history_add(t, self._rms_describe_job(job), still=job["frames"] == 1)
+            if need_base:
+                self.rms_status_var.set("With mods done — rendering No mod for comparison…")
+
+        def _work():
+            out = {}
+            out["tweaked"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],
+                                               height=job["height"], frames=job["frames"], regime="custom",
+                                               ref_latents=job["latents"], ref_schedule=job["schedule"],
+                                               with_audio=job["with_audio"], early_step=job["early"], on_early=_early,
+                                               steps=job["steps"], turbo_strength=job["turbo"])
+            self.master.after(0, lambda t=out["tweaked"]: _show_tweaked(t))
+            if need_base:
+                out["baseline"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],
+                                                    height=job["height"], frames=job["frames"], regime="custom",
+                                                    with_audio=job["with_audio"], steps=job["steps"], turbo_strength=job["turbo"])
+            return out
+
+        def _done(out):
+            self._rms_set_busy(False)
+            if "baseline" in out:
+                b = out["baseline"]
+                b["wav_path"] = self._repair_clip_wav("rms_baseline", b)
+                self._rms_clips["baseline"] = b
+                self._rms_baseline_key = job["baseline_key"]
+                self._rms_show(b["middle"], "baseline")
+            t = self._rms_clips.get("tweaked") or out["tweaked"]
+            self.rms_status_var.set(f"Done: {self._rms_h3_regime(t)}" + (" — click With mods to play." if job["frames"] > 1 else "."))
+            if job["frames"] > 1:
+                self._rms_open_player()
+
+        def _fail(e, tb):
+            self._rms_set_busy(False)
+            from fizgig.minimax.sampling import PreviewAborted
+            if isinstance(e, PreviewAborted):
+                self.rms_status_var.set("Cancelled.")
+                return
+            print(tb, flush=True)
+            self.rms_status_var.set(f"Render failed: {e}")
+            messagebox.showerror("RefMod Studio", f"Render failed:\n{e}")
+
+        self._rms_run_async(_work, _done, _fail)
+
+    @staticmethod
+    def _rms_h3_regime(clip):
+        return LoRATrainerGUI._repair_h3_regime_label(clip)
+
+    def _rms_show_early(self, img, step, n):
+        if not self._rms_busy:
+            return
+        self._rms_show(img, "tweaked")
+        self.rms_status_var.set(f"Early look after pass {step} of {n} — finishing…")
+
+    def _rms_show(self, pil, side):
+        self._rms_pil[side] = pil
+        self._rms_redraw(side)
+
+    def _rms_schedule_redraw(self, side):
+        if self._rms_redraw_after.get(side) is not None:
+            try:
+                self.master.after_cancel(self._rms_redraw_after[side])
+            except Exception:
+                pass
+        self._rms_redraw_after[side] = self.master.after(60, lambda: self._rms_redraw(side))
+
+    def _rms_redraw(self, side):
+        self._rms_redraw_after[side] = None
+        pil = self._rms_pil.get(side)
+        if pil is None:
+            return
+        holder, label = self._rms_holders[side], self._rms_labels[side]
+        try:
+            holder.update_idletasks()
+        except Exception:
+            pass
+        bw, bh = max(200, holder.winfo_width() - 8), max(200, holder.winfo_height() - 8)
+        scale = min(bw / pil.width, bh / pil.height)
+        from PIL import Image as _PILImage
+        img = pil.resize((max(1, int(pil.width * scale)), max(1, int(pil.height * scale))), _PILImage.LANCZOS)
+        ph = ImageTk.PhotoImage(img)
+        setattr(self, f"_rms_photo_{side}", ph)
+        label.configure(image=ph, text="")
+
+    def _rms_open_preview(self, side):
+        clip = self._rms_clips.get(side)
+        if clip is None:
+            return
+        if clip.get("frames_n", 1) > 1 and self._rms_clips.get("baseline") and self._rms_clips.get("tweaked"):
+            self._rms_open_player()
+            return
+        self._rms_popout(clip["middle"], "No mod" if side == "baseline" else "With mods")
+
+    def _rms_open_player(self):
+        if not (self._rms_clips.get("baseline") and self._rms_clips.get("tweaked")):
+            return
+        self._repair_clip_player_open(clips=self._rms_clips, sides=["tweaked", "baseline"],   # With mods LEFT, like the tab
+                                      labels={"baseline": "No mod (base, same seed)", "tweaked": "With mods"},
+                                      title="RefMod Studio — Clip player (With mods vs No mod)",
+                                      metrics=False, nolora=False, stem="refmod", status_var=self.rms_status_var)
+
+    def _rms_popout(self, pil, title):
+        """A resizable window showing one still, scaled to fit."""
+        win = tk.Toplevel(self.master)
+        win.title(f"RefMod Studio — {title}")
+        win.configure(bg="#000000")
+        _w = min(pil.width, max(480, int(win.winfo_screenwidth() * 0.9)))
+        _h = min(pil.height, max(360, int(win.winfo_screenheight() * 0.85)))
+        win.geometry(f"{_w}x{_h}")
+        lbl = tk.Label(win, bg="#000000")
+        lbl.pack(fill=tk.BOTH, expand=True)
+        state = {"job": None}
+
+        def _fit():
+            state["job"] = None
+            bw, bh = max(64, win.winfo_width()), max(64, win.winfo_height())
+            scale = min(bw / pil.width, bh / pil.height)
+            from PIL import Image as _PILImage
+            img = pil.resize((max(1, int(pil.width * scale)), max(1, int(pil.height * scale))), _PILImage.LANCZOS)
+            ph = ImageTk.PhotoImage(img)
+            lbl.configure(image=ph)
+            lbl.image = ph
+
+        def _on_resize(e):
+            if e.widget is not win:
+                return
+            if state["job"] is not None:
+                try:
+                    win.after_cancel(state["job"])
+                except Exception:
+                    pass
+            state["job"] = win.after(80, _fit)
+        win.bind("<Configure>", _on_resize)
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.after(30, _fit)
+
+    # ----- history + sweeps --------------------------------------------------------------------
+    def _rms_thumb(self, pil, size=128):
+        from PIL import Image as _PILImage
+        im = pil.copy()
+        im.thumbnail((size, size), _PILImage.LANCZOS)
+        ph = ImageTk.PhotoImage(im)
+        self._rms_thumbs.append(ph)
+        if len(self._rms_thumbs) > 200:
+            del self._rms_thumbs[:100]
+        return ph
+
+    def _rms_history_add(self, clip, label, still=True):
+        self._rms_history.insert(0, {"clip": clip, "label": label, "still": still})
+        del self._rms_history[self._RMS_HISTORY_MAX:]
+        for w in self._rms_history_frame.winfo_children():
+            w.destroy()
+        for i, h in enumerate(self._rms_history):
+            b = tk.Label(self._rms_history_frame, image=self._rms_thumb(h["clip"]["middle"], 96), bg=COLORS["bg_surface"], cursor="hand2")
+            b.grid(row=0, column=i, padx=2, pady=2)
+            _rms_tip(b, h["label"])
+            b.bind("<Button-1>", lambda e, hh=h: self._rms_history_view(hh))
+
+    def _rms_history_view(self, h):
+        clip = h["clip"]
+        if not h["still"] and self._rms_clips.get("baseline") is not None:
+            self._rms_clips["tweaked"] = clip
+            self._rms_show(clip["middle"], "tweaked")
+            self._rms_open_player()
+            return
+        self._rms_popout(clip["middle"], h["label"])
+
+    def _rms_sweep_items_for(self, kind):
+        """(label, overrides) per strip chip for a sweep kind."""
+        from fizgig.minimax import refmod_apply as ra
+        if kind.startswith("Retention"):
+            return [(f"retention {v:g}", {"retention": v}) for v in (0.0, 0.15, 0.4, 0.7, 1.0)]
+        if kind.startswith("Seeds"):
+            s0 = self._rms_seed()
+            return [(f"seed {s0 + i}", {"seed": s0 + i}) for i in range(4)]
+        if kind.startswith("Frame-curve"):
+            fc = self._rms_frame_curve()
+            return [(d, {"frame_curve": (d, fc[1], fc[2])}) for d in ra.CURVE_DIRECTIONS]
+        if kind.startswith("Step-curve"):
+            sc = self._rms_step_curve()
+            return [("step off", {"step_on": False})] + [(f"step {d}", {"step_on": True, "step_curve": (d, sc[1], sc[2])})
+                                                          for d in ra.CURVE_DIRECTIONS if d != "constant"]
+        return [(f"copies {c}", {"copies": c}) for c in (1, 2, 3, 4)]
+
+    def _rms_sweep(self):
+        if self._rms_busy:
+            return
+        if not self._rms_model_loaded_matches():
+            self._rms_unload()
+        if not self._rms_engine_ready():
+            self._rms_load(then=self._rms_sweep)
+            return
+        kind = self.rms_sweep_var.get()
+        items = self._rms_sweep_items_for(kind)
+        try:
+            jobs = [self._rms_job(dict(ov, frames=self._RMS_SWEEP_FRAMES, label=lbl)) for lbl, ov in items]
+        except Exception as e:
+            messagebox.showerror("RefMod Studio", f"Couldn't build the sweep:\n{e}")
+            return
+        eng = self.rms_engine
+        eng.clear_cancel()
+        self._rms_set_busy(True)
+        for w in self._rms_sweep_frame.winfo_children():
+            w.destroy()
+        self._rms_sweep_items = []
+        self._rms_sweep_kind = kind
+        self.rms_status_var.set(f"Sweep: {kind} — {len(jobs)} clips of {self._RMS_SWEEP_FRAMES} frames…")
+
+        def _work():
+            for i, job in enumerate(jobs):
+                clip = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"], height=job["height"],
+                                         frames=self._RMS_SWEEP_FRAMES, regime="custom", ref_latents=job["latents"],
+                                         ref_schedule=job["schedule"], with_audio=False, steps=job["steps"],
+                                         turbo_strength=job["turbo"])
+                self.master.after(0, lambda c=clip, j=job, k=i: self._rms_sweep_chip(c, j, k, len(jobs)))
+            return True
+
+        def _done(_):
+            self._rms_set_busy(False)
+            self.rms_status_var.set(f"Sweep done: {kind}. Click a chip to play its clip; 💾 Save strip keeps the middle frames.")
+
+        def _fail(e, tb):
+            self._rms_set_busy(False)
+            from fizgig.minimax.sampling import PreviewAborted
+            if isinstance(e, PreviewAborted):
+                self.rms_status_var.set("Sweep cancelled.")
+                return
+            print(tb, flush=True)
+            self.rms_status_var.set(f"Sweep failed: {e}")
+
+        self._rms_run_async(_work, _done, _fail)
+
+    def _rms_sweep_chip(self, clip, job, i, n):
+        self._rms_sweep_items.append({"clip": clip, "job": job})
+        cell = tk.Frame(self._rms_sweep_frame, bg=COLORS["bg_surface"])
+        cell.grid(row=0, column=i, padx=3, pady=2)
+        lbl = tk.Label(cell, image=self._rms_thumb(clip["middle"], 160), bg=COLORS["bg_surface"], cursor="hand2")
+        lbl.pack()
+        lbl.bind("<Button-1>", lambda e, c=clip, j=job: self._rms_open_sweep_clip(c, j))
+        tk.Label(cell, text=job["label"], font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack()
+        _rms_tip(lbl, self._rms_describe_job(job))
+        self.rms_status_var.set(f"Sweep: {i + 1} of {n} done…")
+
+    def _rms_open_sweep_clip(self, clip, job):
+        """A sweep chip: play its clip in the shared player, beside No mod when one is rendered."""
+        base = self._rms_clips.get("baseline")
+        clips = {"tweaked": clip}
+        sides = ["tweaked"]
+        if base is not None and int(base.get("frames_n", 1)) == int(clip.get("frames_n", 1)):
+            clips["baseline"] = base
+            sides.append("baseline")
+        self._repair_clip_player_open(clips=clips, sides=sides,
+                                      labels={"tweaked": job["label"], "baseline": "No mod (base, same seed)"},
+                                      title=f"RefMod Studio — sweep: {job['label']}",
+                                      metrics=False, nolora=False, stem="rms_sweep", status_var=self.rms_status_var)
+
+    def _rms_save_strip(self):
+        """The sweep as one labelled contact sheet PNG (each clip's middle frame)."""
+        items = self._rms_sweep_items
+        if not items:
+            self.rms_status_var.set("No sweep to save — render one first.")
+            return
+        from tkinter import filedialog
+        p = filedialog.asksaveasfilename(title="Save sweep strip", defaultextension=".png",
+                                         initialfile=f"refmod_sweep_{getattr(self, '_rms_sweep_kind', 'strip').split(' ')[0].lower()}.png",
+                                         filetypes=[("PNG", "*.png")])
+        if not p:
+            return
+        from PIL import Image as _PILImage, ImageDraw
+        tiles = [it["clip"]["middle"] for it in items]
+        tw = max(t.width for t in tiles)
+        th = max(t.height for t in tiles)
+        band = 28
+        sheet = _PILImage.new("RGB", (tw * len(tiles), th + band), (20, 20, 20))
+        draw = ImageDraw.Draw(sheet)
+        for i, (it, t) in enumerate(zip(items, tiles)):
+            sheet.paste(t, (i * tw, 0))
+            draw.text((i * tw + 6, th + 7), it["job"]["label"], fill=(230, 230, 230))
+        sheet.save(p)
+        self.rms_status_var.set(f"Strip saved: {os.path.basename(p)}.")
+
+    # ----- actions -----------------------------------------------------------------------------
+    def _rms_save_preview(self):
+        clip = self._rms_clips.get("tweaked")
+        if clip is None:
+            self.rms_status_var.set("Nothing rendered yet.")
+            return
+        if clip.get("frames_n", 1) > 1:
+            self._repair_save_clip(clip, "refmod_with_mods", status_var=self.rms_status_var)
+            return
+        from tkinter import filedialog
+        p = filedialog.asksaveasfilename(title="Save preview", defaultextension=".png", initialfile="refmod_with_mods.png",
+                                         filetypes=[("PNG", "*.png")])
+        if not p:
+            return
+        clip["middle"].save(p)
+        self.rms_status_var.set(f"Saved {os.path.basename(p)}.")
+
+    def _rms_show_readout(self):
+        try:
+            job = self._rms_job()
+            text = job["readout"]
+        except Exception as e:
+            text = f"(couldn't build the readout: {e})"
+        win = tk.Toplevel(self.master)
+        win.title("RefMod Studio — ComfyUI settings")
+        win.configure(bg=COLORS["bg_deep"])
+        tk.Label(win, text="The node pack's widget values that reproduce this setup:", font=(FONT_FAMILY, 10),
+                 fg=COLORS["text_primary"], bg=COLORS["bg_deep"]).pack(anchor=tk.W, padx=12, pady=(10, 4))
+        txt = tk.Text(win, width=90, height=16, font=("Consolas", 10), bg=COLORS["bg_surface"], fg=COLORS["text_primary"],
+                      relief="flat", bd=1, wrap=tk.NONE)
+        txt.insert("1.0", text)
+        txt.configure(state="disabled")
+        txt.pack(fill=tk.BOTH, expand=True, padx=12)
+
+        def _copy():
+            self.master.clipboard_clear()
+            self.master.clipboard_append(text)
+            self.rms_status_var.set("ComfyUI settings copied.")
+        ttk.Button(win, text="Copy", command=_copy).pack(pady=8)
+        win.bind("<Escape>", lambda e: win.destroy())
+
+    def _rms_bake(self):
+        """One row's mod, strength × retention and the frame curve folded in (copies as repeated
+        frames), written as a new file. One mod per file: the pack's file is a single reference
+        block and the model reads a block as one subject, so two mods concatenated collapse to
+        one of them (measured, 16 Sep 2026) — two mods together are two loader slots."""
+        import torch
+        from fizgig.minimax import refmod_apply as ra
+        choices = []
+        for row in self._rms_rows:
+            if not row["on_var"].get():
+                continue
+            v = float(row["value_var"].get())
+            if v <= 0:
+                continue
+            m = self._rms_mod_meta.get(row["mod_var"].get())
+            if m:
+                choices.append((row["mod_var"].get(), min(1.0, v), m, self._rms_copies(row)))
+        if not choices:
+            messagebox.showinfo("Bake as new RefMod", "No active mod with a strength above 0.")
+            return
+        retention = self._rms_retention()
+        if retention <= 0:
+            messagebox.showinfo("Bake as new RefMod", "The master Strength (Retention) is 0 — nothing to bake.")
+            return
+        fc = self._rms_frame_curve()
+        if len(choices) == 1:
+            pick = choices[0]
+        else:
+            win = tk.Toplevel(self.master)
+            win.title("Bake as new RefMod — which mod?")
+            win.configure(bg=COLORS["bg_deep"])
+            tk.Label(win, text=("A file holds one mod. The pack loads a file as a single reference block, and "
+                                "the model reads a block as one subject — so two mods written into one file "
+                                "come out as one of them, not both. To use these mods together in ComfyUI, "
+                                "load their files in two loader slots at the strengths shown here (the "
+                                "ComfyUI settings button gives the exact values).\n\nPick the mod to bake:"),
+                     font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_deep"],
+                     wraplength=520, justify=tk.LEFT).pack(padx=12, pady=(10, 6), anchor=tk.W)
+            var = tk.StringVar(value=f"{choices[0][0]} @ {choices[0][1] * retention:.2f}")
+            opts = [f"{n} @ {s_ * retention:.2f}" for n, s_, _m, _c in choices]
+            ttk.Combobox(win, textvariable=var, values=opts, state="readonly", width=48).pack(padx=12)
+            res = {"pick": None}
+
+            def _ok():
+                res["pick"] = choices[opts.index(var.get())]
+                win.destroy()
+            ttk.Button(win, text="Bake this one", command=_ok).pack(pady=8)
+            win.grab_set()
+            self.master.wait_window(win)
+            pick = res["pick"]
+            if pick is None:
+                return
+        name, strength, meta, copies = pick
+        eff = strength * retention
+        from tkinter import filedialog
+        p = filedialog.asksaveasfilename(title="Bake as new RefMod", defaultextension=".safetensors",
+                                         initialdir=os.path.dirname(meta["path"]), initialfile=f"{name}_studio.safetensors",
+                                         filetypes=[("RefMod", "*.safetensors")])
+        if not p:
+            return
+        try:
+            z = self._rms_latent(meta)
+            baked, tags, note = ra.bake(z, meta, strength=strength, retention=retention, curve=fc)
+            if copies > 1:
+                baked = baked.repeat(1, 1, copies, 1, 1)   # copies = the frames repeated (the pack's own multiplier)
+                tags.append(f"studio: copies {copies}")
+            out = ra.save_baked(p[:-len(".safetensors")] if p.lower().endswith(".safetensors") else p, baked, meta, tags)
+        except Exception as e:
+            messagebox.showerror("Bake as new RefMod", f"Couldn't bake:\n{e}")
+            return
+        self._rms_rescan(quiet=True)
+        self.rms_status_var.set(f"Baked {os.path.basename(out)} ({name} at {eff:.2f}).")
+        messagebox.showinfo("Bake as new RefMod",
+                            f"Wrote {out}\n\nLoads at strength 1.0 in any loader as {name} at {eff:.2f}"
+                            f"{' with the frame curve' if fc[0] != 'constant' or fc[1] != 'linear' or fc[2] < 1 else ''}"
+                            f"{f', {copies} copies' if copies > 1 else ''}.\n\n"
+                            "Baked: strength × the master Strength, copies (as repeated frames) and the frame curve. "
+                            "Not baked (they act at render time): Shuffle and the step curve.")
 
     def _repair_explore_in_explorer(self):
         """Send current Repair Studio slider state to the Explorer for evolutionary discovery."""
@@ -27967,6 +30194,13 @@ class LoRATrainerGUI:
                 megapixels = float(self.dataset_megapixels_var.get())
                 if megapixels <= 0:
                     return
+                # RefMod with Steps above 0: Target MP sizes the REFERENCES (their own cache
+                # pass); the optimiser's stills are always the measured 0.25 MP.
+                try:
+                    if self._is_refmod_arch() and not self._refmod_plain_encode():
+                        megapixels = self.REFMOD_TRAIN_MP
+                except Exception:
+                    pass
                 side = int(math.sqrt(megapixels * 1_000_000))
                 side = (side // 16) * 16
                 res_width = side
@@ -28547,7 +30781,9 @@ class LoRATrainerGUI:
         # last pointed at — silently, under this run's name.
         if image_dir and not os.path.isdir(image_dir):
             errors.append(f"Training image folder does not exist: {image_dir}")
-        if image_dir and os.path.isdir(image_dir) and caption_ext:
+        # A RefMod plain encode (Steps 0) trains nothing and reads no captions — the photos
+        # alone are the references — so the caption check does not apply to it.
+        if image_dir and os.path.isdir(image_dir) and caption_ext and not self._refmod_plain_encode():
             import glob as _glob
             # glob.escape is load-bearing here: a folder like "[subject] photos" made this
             # find zero captions and block training with "No caption files found", while the
@@ -28881,6 +31117,9 @@ class LoRATrainerGUI:
             "MINIMAX_BLOCK_LIMIT": self.entries["MINIMAX_BLOCK_LIMIT"].get(),
             "MINIMAX_LR_WARMUP": self.entries["MINIMAX_LR_WARMUP"].get(),
             "MINIMAX_EMA": self.entries["MINIMAX_EMA"].get(),
+            "MINIMAX_REFMOD_GRID": (self.entries["MINIMAX_REFMOD_GRID"].get()
+                                    if "MINIMAX_REFMOD_GRID" in self.entries else ""),
+            **{_k: (self.entries[_k].get() if _k in self.entries else "") for _k in REFMOD_DEFAULTS},
             "KREA2_EMA": self.entries["KREA2_EMA"].get(),
             "MINIMAX_ADAPTER_RAMP": self.entries["MINIMAX_ADAPTER_RAMP"].get(),
             "MINIMAX_CAPTION_DROPOUT": self.entries["MINIMAX_CAPTION_DROPOUT"].get(),
@@ -28951,6 +31190,14 @@ class LoRATrainerGUI:
         # queue run 2) retargeted run 1: dataset 2 trained under run 1's name and
         # settings. From here on, settings["DATASET_CONFIG"] is the run's immutable
         # snapshot; the live TOML belongs to the editor alone.
+        # RefMod: the TOML's resolution follows Steps (0.25 MP whenever the optimiser runs),
+        # a rule the edit-time writer applies; rewrite once here so the snapshot below
+        # carries it whatever order the last preset/queue item set things in.
+        if self._is_refmod_arch() and not _is_resuming_clear:
+            try:
+                self.auto_save_dataset_config_silent()
+            except Exception:
+                pass
         self.settings["DATASET_CONFIG"] = self._snapshot_dataset_config_for_run(
             self.settings.get("DATASET_CONFIG", ""), resuming=_is_resuming_clear,
             prev_config=_prev_dataset_config)
@@ -29002,9 +31249,30 @@ class LoRATrainerGUI:
                 self.update_console("Text encoder caching completed.\nStarting training...\n")
                 self.run_subprocess(command, "Training", on_training_complete)
 
-            def on_cache_preparation_complete():
-                self.update_console("Cache preparation completed.\nStarting text encoder caching...\n")
+            _ref_cache_cmd = (self._build_refmod_ref_cache_command(config)
+                              if config.get("is_refmod") and self._refmod_ref_pass_needed() else None)
+
+            def _after_latents():
+                if config.get("is_refmod") and self._refmod_plain_encode():
+                    # Steps 0: the references are the latent caches alone — no captions are
+                    # read and no text-encoder cache is needed, so that stage is skipped.
+                    self.update_console("Plain encode — no captions needed, skipping text "
+                                        "encoder caching.\nStarting...\n")
+                    self.run_subprocess(command, "Training", on_training_complete)
+                    return
+                self.update_console("Starting text encoder caching...\n")
                 self.run_subprocess(cache_text_cmd, "Text Encoder Caching", on_text_encoder_caching_complete)
+
+            def on_cache_preparation_complete():
+                self.update_console("Cache preparation completed.\n")
+                if _ref_cache_cmd is not None:
+                    # The optimiser's stills are cached at 0.25 MP above; the mod's references
+                    # get their own pass at Target MP into the '-refs' sibling folder.
+                    self.update_console(f"Encoding the references at "
+                                        f"{self.dataset_megapixels_var.get()} MP...\n")
+                    self.run_subprocess(_ref_cache_cmd, "Reference Caching", _after_latents)
+                    return
+                _after_latents()
 
             self.run_subprocess(cache_latents_cmd, "Cache Preparation", on_cache_preparation_complete)
         else:
@@ -29106,6 +31374,8 @@ class LoRATrainerGUI:
             if bool(getattr(self, "krea2_finetune_var", None) and self.krea2_finetune_var.get()):
                 self._launched_ft_family = "krea2"
             return self._build_krea2_train_command()
+        if config.get("is_refmod"):
+            return self._build_minimax_refmod_command()
         if config.get("is_minimax"):
             if bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get()):
                 self._launched_ft_family = "minimax"
@@ -29459,6 +31729,9 @@ class LoRATrainerGUI:
             # re-encodes only the clips that have no pick yet.
             if self.settings.get("MINIMAX_CLIP_STILL"):
                 cmd += ["--clip_still"]
+            # A RefMod plain encode takes every image, captioned or not (nothing trains).
+            if config.get("is_refmod") and self._refmod_plain_encode():
+                cmd += ["--captions_optional"]
             return cmd
         arch = self.settings["ARCHITECTURE"]
         python_path = self._venv_python()
@@ -29480,6 +31753,14 @@ class LoRATrainerGUI:
             command.extend(["--model_version", config["model_version"]])
 
         return command
+
+    def _build_refmod_ref_cache_command(self, config):
+        """The references' own latents pass at Target MP into the '-refs' sibling folder —
+        the ordinary MiniMax latents command with the resolution override and suffix."""
+        return self.build_cache_latents_command(config) + [
+            "--megapixels", str(self.dataset_megapixels_var.get()).strip(),
+            # '=' form: a bare "-refs" reads as a flag to argparse
+            "--cache_suffix=-refs"]
 
     def build_cache_text_command(self, config):
         """Build the cache text encoder command based on architecture"""
@@ -29990,6 +32271,58 @@ class LoRATrainerGUI:
                     cmd += ["--sample_ref_image", ref_img]
         return cmd
 
+    def _build_minimax_refmod_command(self):
+        """MiniMax H3 RefMod: minimax_refmod.py builds the mod from the caches and, with Steps
+        above 0, optimises its latent against the frozen H3 base at the measured rate, pull and
+        noise window (the script's defaults). Never a LoRA run."""
+        _d = REFMOD_DEFAULTS
+        _refs = str(self.settings.get("MINIMAX_REFMOD_REFS", _d["MINIMAX_REFMOD_REFS"]) or "16").strip().lower()
+        _refs_arg = "10000" if _refs.startswith("all") else refmod_num(_refs, "16", int)
+        _grid = refmod_grid_value(self.settings.get("MINIMAX_REFMOD_GRID"))
+        _steps = refmod_steps_value(self.settings.get("MINIMAX_REFMOD_STEPS", _d["MINIMAX_REFMOD_STEPS"]))
+        _dit = (self._krea2_pref("minimax_ref_dit")
+                if (self.settings.get("MINIMAX_TRAIN_BASE") == "ref2va" and self._krea2_pref("minimax_ref_dit"))
+                else self._krea2_pref("minimax_dit"))
+        cmd = [
+            self._venv_python(),
+            self._krea2_script("minimax_refmod.py"),
+            "--dit", _dit,
+            "--dataset_config", self.settings["DATASET_CONFIG"],
+            "--output_dir", self.settings["LORA_OUTPUT_DIR"],
+            "--output_name", self.settings["LORA_NAME"],
+            "--grid", _grid, "--steps", _steps, "--max_refs", _refs_arg,
+            "--clips", refmod_clips_value(self.settings.get("MINIMAX_REFMOD_CLIPS", _d["MINIMAX_REFMOD_CLIPS"])),
+            "--concept_type", (str(self.settings.get("MINIMAX_REFMOD_CONCEPT", "") or "").strip()
+                               if str(self.settings.get("MINIMAX_REFMOD_CONCEPT", "") or "").strip() in REFMOD_CONCEPT_OPTIONS
+                               else _d["MINIMAX_REFMOD_CONCEPT"]),
+            "--seed", str(self.settings.get("SEED", 42) or 42),
+        ]
+        _desc = str(self.settings.get("MINIMAX_REFMOD_DESC", "") or "").strip()
+        if _desc:
+            cmd += ["--description", _desc]
+        _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
+        cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
+        # NF4 always (Peter, 16 Sep 2026): 10.5 GB resident, so the step fits without recompute
+        # on 32 GB and without streaming on 16/24 GB; the Training tab's precision box is H3
+        # LoRA/FT's and does not apply here.
+        cmd += ["--base_quant", "nf4"]
+        if self._refmod_ref_pass_needed():
+            # With caching off the reference pass never runs, so only a '-refs' folder that
+            # already exists (an earlier run's) can be used; otherwise the references come
+            # from the dataset caches and the console says so.
+            _caching = bool(getattr(self, "enable_cache_var", None) and self.enable_cache_var.get())
+            for _d in self._refmod_ref_cache_dirs():
+                if _caching or os.path.isdir(_d):
+                    cmd += ["--ref_cache_dir", _d]
+                else:
+                    self.update_console(f"[refmod] caching is off and {_d} does not exist — the "
+                                        f"references come from the dataset caches (0.25 MP) this "
+                                        f"run; tick Enable Cache for a Target MP reference pass\n")
+        # No previews from the GUI (Peter, 16 Sep 2026): the Samples pane is ignored for this
+        # family — a mod is judged in RefMod Studio. (minimax_refmod.py keeps its --sample_*
+        # flags for command-line sweeps.)
+        return cmd
+
     def _build_minimax_train_command(self):
         """Build the native MiniMax H3 training command: LoRA / LoKR / rotation fine-tune over
         the int8 / NF4 / HQQ base, with previews (Turbo), block swap, context LoRA and output
@@ -30056,7 +32389,11 @@ class LoRATrainerGUI:
         # EMA: "0.98 (recommended)" -> 0.98 (a saved "0.99 (recommended)" still parses to 0.99).
         _em = str(self.settings.get("MINIMAX_EMA", "0.98") or "Off").split(" ")[0]
         _em_ft = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
-        if _em.replace(".", "", 1).isdigit() and not _em_ft:      # no EMA under fine-tune
+        if _em_ft:
+            pass                                                  # no EMA under fine-tune
+        elif _em.lower().startswith("short"):
+            cmd += ["--ema_decay", "short"]
+        elif _em.replace(".", "", 1).isdigit():
             cmd += ["--ema_decay", _em]
         _ar = str(self.settings.get("MINIMAX_ADAPTER_RAMP", "Off") or "Off").split(" ")[0]
         if _ar.replace(".", "", 1).isdigit():

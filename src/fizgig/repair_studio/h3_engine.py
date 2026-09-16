@@ -1152,7 +1152,7 @@ class H3RepairEngine:
                       height: Optional[int] = None, frames: Optional[int] = None,
                       steps: Optional[int] = None, turbo_strength: Optional[float] = None,
                       keyframes=None, on_denoised=None, no_lora: bool = False,
-                      references=None):
+                      references=None, ref_latents=None, ref_schedule=None):
         """Apply the slider state and sample ONE clip: returns (latent [1,24,T,H/16,W/16] on
         CPU fp32, audio_rows [2*A, 32] on CPU fp32 or None). No decode — the caller decides
         (decode_clip_frames / decode_audio, or store it in the render cache).
@@ -1175,7 +1175,12 @@ class H3RepairEngine:
 
         no_lora: the base model on its own — every primary / donor module off for this render
         (the Turbo regime stays: it is the sampler, not the LoRA under test); the state is
-        re-applied afterwards so the next render is unaffected, and the resume sits out."""
+        re-applied afterwards so the next render is unaffected, and the resume sits out.
+
+        ref_latents: bare reference latents ([1,24,T,h,w] each — RefMods) riding as condition
+        rows with the prompt encoded WITHOUT pictures (no vision side, no token tags), what
+        refmod.render_previews does; ref_schedule(step, n, sigma) -> that step's list (the
+        RefMod Studio's step curve). Either one turns the pass-1 resume off."""
         from fizgig.minimax import sampling
         self.apply_state(state)
         if no_lora and self.primary_network is not None:
@@ -1199,14 +1204,20 @@ class H3RepairEngine:
             references = getattr(state, "references", None)
         if turbo_strength is not None:
             self.set_turbo_strength(turbo_strength)
-        ref_latents, text_tags = None, None
-        if references:
+        bare_refs = bool(ref_latents) or ref_schedule is not None
+        text_tags = None
+        if bare_refs:
+            # RefMods: latents only, the prompt encoded plain.
+            emb = self._encode_prompt(prompt)
+            ref_latents = [z.to(self.device, torch.float32) for z in (ref_latents or [])]
+        elif references:
             # ref2va: the prompt is encoded WITH the reference pictures (vision blocks), and
             # the same pictures' latents ride as condition rows.
             emb = self._encode_prompt(prompt, images=[im for im, _z in references])
             text_tags = self._prompt_cache_tags
             ref_latents = [z for _im, z in references]
         else:
+            ref_latents = None
             emb = self._encode_prompt(prompt)
 
         def _abort_check(_seconds, _step, _total):
@@ -1225,7 +1236,7 @@ class H3RepairEngine:
                round(float(getattr(state, "donor_scale", 1.0)), 4),
                getattr(self, "dit_path", None), bool(getattr(self, "int8_attention", False)))
         resume_ok = (self.resume_enabled and not keyframes and not references and not no_lora
-                     and not getattr(self, "_blocks_swapped", 0)
+                     and not bare_refs and not getattr(self, "_blocks_swapped", 0)
                      and hasattr(self.dit, "forward_cached"))
         if self._act_cache and not (resume_ok and self._act_cache_key == key):
             # Another setup's cache is dead weight — on the GPU it can be several GB
@@ -1276,7 +1287,8 @@ class H3RepairEngine:
                     num_frames=frames, on_slow_step=_abort_check, slow_step_s=0.0,
                     return_audio=True, keyframes=keyframes, block_cache=block_cache,
                     on_denoised=on_denoised, exact_frames=True,
-                    ref_latents=ref_latents, text_token_tags=text_tags)
+                    ref_latents=ref_latents, text_token_tags=text_tags,
+                    ref_schedule=ref_schedule)
 
         try:
             resume_failed = False
@@ -1473,6 +1485,39 @@ class H3RepairEngine:
             except Exception:
                 logger.exception("render cache: put failed (render still shown)")
         return clip
+
+    def render_refmod(self, *, seed: int, prompt: str, width: int, height: int, frames: int = 1,
+                      regime: str = "confirm", ref_latents=None, ref_schedule=None,
+                      with_audio: bool = True, early_step: int = 0, on_early=None,
+                      steps=None, turbo_strength=None) -> dict:
+        """The RefMod Studio's render: the base model (no LoRA state) with bare reference
+        latents as condition rows, decoded to the same clip dict render_clip returns
+        ({"latent", "audio_rows", "frames", "wav", "middle", "regime", "steps",
+        "turbo_strength", "frames_n"}). frames=1 is a still (no sound). No render cache —
+        a RefMod setup has no slider signature."""
+        from fizgig.repair_studio.state import SliderState
+        state = SliderState.default_h3()
+        state.seed, state.prompt = int(seed), prompt
+        state.preview_width, state.preview_height = int(width), int(height)
+        st, strength = self.regime_params(regime, steps, turbo_strength)
+        frames = max(1, int(frames))
+
+        def _on_denoised(step, n, x0):
+            if on_early is None or step != int(early_step):
+                return
+            on_early(self.decode_middle_frame_image(x0), step, n)
+
+        lat, aud = self.render_latent(state, seed=int(seed), prompt=prompt, width=width,
+                                      height=height, frames=frames, steps=st,
+                                      turbo_strength=strength,
+                                      on_denoised=_on_denoised if early_step > 0 else None,
+                                      ref_latents=ref_latents, ref_schedule=ref_schedule)
+        imgs = self.decode_clip_frames(lat)
+        wav = self.decode_audio(aud) if (with_audio and frames > 1) else None
+        return {"latent": lat, "audio_rows": aud, "frames": imgs, "wav": wav,
+                "middle": imgs[len(imgs) // 2], "regime": regime, "steps": st,
+                "turbo_strength": strength, "frames_n": frames, "cached": False,
+                "sig": "refmod", "int8_attention": self._int8_tag()}
 
     def clip_from_cache(self, cache, sig: str, *, regime: str = "dial",
                         with_audio: bool = True, steps=None, turbo_strength=None) -> Optional[dict]:

@@ -143,10 +143,11 @@ def setup_parser() -> argparse.ArgumentParser:
                    help="Ramp the LR linearly from 0 to the configured rate over the first N "
                         "epochs (fractions allowed). Static LR only — ignored under adaptive. "
                         "0 = off.")
-    p.add_argument("--ema_decay", type=float, default=0.0, metavar="D",
+    p.add_argument("--ema_decay", type=str, default="0", metavar="D",
                    help="Keep an exponential moving average of the adapter and save/preview THAT "
                         "instead of the raw weights (0.98 recommended). Training still runs on "
-                        "the raw weights. 0 = off.")
+                        "the raw weights. 0 = off. 'short' = short-run mode: the window is sized "
+                        "to the run (decay 1 - 4/steps, fast ramp) for short, high-LR runs.")
     p.add_argument("--train_token_refiner", action="store_true",
                    help="Train the text token refiner too (LoRA: its Linears join the targets; "
                         "fine-tune: it trains alongside every window). Off by default: "
@@ -389,7 +390,8 @@ def main():
         adapter_ramp=args.adapter_ramp,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         lr_warmup_epochs=args.lr_warmup_epochs,
-        ema_decay=args.ema_decay,
+        ema_decay=(args.ema_decay if str(args.ema_decay).strip().lower().startswith("short")
+                   else float(args.ema_decay or 0)),
         quantize=not args.no_quantize,
         shift=args.shift,
         highnoise_lr_scale=args.highnoise_lr_scale,
