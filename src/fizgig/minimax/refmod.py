@@ -94,7 +94,8 @@ def exclude_refs_from_training(group, ref_stems) -> Tuple[int, int]:
     clip whose still is a reference goes too (clips are skipped by the optimisers anyway).
     Returns (items removed, items remaining)."""
     from fizgig.dataset.image_dataset import BucketBatchManager
-    stems = set(ref_stems)
+    # Compared without the _WxH size token: the references may be cached at another size.
+    stems = {image_stem(s) for s in ref_stems}
     suffix = f"_{ARCH}.safetensors"
     removed = 0
     for ds in group.datasets:
@@ -107,7 +108,7 @@ def exclude_refs_from_training(group, ref_stems) -> Tuple[int, int]:
             for it in items:
                 base = os.path.basename(getattr(it, "latent_cache_path", "") or "")
                 stem = base[: -len(suffix)] if base.endswith(suffix) else base
-                if stem in stems:
+                if image_stem(stem) in stems:
                     removed += 1
                 else:
                     keep.append(it)
@@ -612,7 +613,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                sample_seed: int = 42, preview_every: int = 0,
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
-               sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False) -> str:
+               sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
+               ref_cache_dirs: Optional[List[str]] = None) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -649,7 +651,12 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
     if trains and group.num_train_items == 0:
         raise RuntimeError("No training items — run the MiniMax cache steps first.")
     cache_dirs = [getattr(ds, "cache_directory", "") for ds in group.datasets]
-    refs = collect_refs(cache_dirs, max_refs=max_refs)
+    # The references may come from their own caches (Target MP) while the optimiser's stills
+    # stay at 0.25 MP in the dataset's caches: the mod's pixels are what the file carries, the
+    # stills are only the loss target, and the recipe was measured at 0.25 (16 Sep 2026).
+    if ref_cache_dirs:
+        logger.info(f"[refmod] references from {', '.join(ref_cache_dirs)}")
+    refs = collect_refs(ref_cache_dirs or cache_dirs, max_refs=max_refs)
     # Faces, for the references that end up cropped: the dataset is prepared framing, so a
     # crop keeps the face rather than the frame centre (Peter, 16 Sep 2026).
     faces = reference_face_centres(refs, [getattr(ds, "image_directory", "") for ds in group.datasets])

@@ -58,6 +58,10 @@ def setup_parser():
     p.add_argument("--holdout_refs", action="store_true",
                    help="hold the reference stills OUT of the optimiser's training set (default: it "
                         "trains on every still, references included)")
+    p.add_argument("--ref_cache_dir", action="append", default=None,
+                   help="take the references from this cache folder (repeatable) instead of the "
+                        "dataset's own — the GUI's Target MP pass; the optimiser's stills stay in "
+                        "the dataset caches")
     p.add_argument("--init_from", default=None,
                    help="start from an existing mod file instead of the caches (re-preview it "
                         "with --steps 0, or keep optimising it)")
@@ -85,6 +89,7 @@ def main():
                sample_seed=a.sample_seed, preview_every=a.preview_every,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, init_from=a.init_from, exclude_refs=a.holdout_refs,
+               ref_cache_dirs=a.ref_cache_dir or None,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 
 

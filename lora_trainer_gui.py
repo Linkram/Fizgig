@@ -4275,6 +4275,11 @@ class LoRATrainerGUI:
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
+            # Steps decides the training resolution in the TOML (0.25 MP whenever the
+            # optimiser runs), so an edit here rewrites it like a Dataset-section edit does.
+            for _ev in ("<<ComboboxSelected>>", "<KeyRelease>"):
+                self.entries["MINIMAX_REFMOD_STEPS"].bind(
+                    _ev, lambda e: getattr(self, "_auto_save_ds", lambda *a: None)())
             try:
                 self.dataset_megapixels_var.trace_add("write", lambda *a: self._refresh_refmod_tokens())
             except Exception:
@@ -4295,7 +4300,9 @@ class LoRATrainerGUI:
                       "reference's canvas — the only setting that carries a face; the pooled "
                       "grids are small, stackable, concept-level mods. References: how many "
                       "stills stack into the mod. Steps: 0 is the plain encode, the same file "
-                      "the node pack's extractor makes. Output: <name>.safetensors in the LoRA "
+                      "the node pack's extractor makes. Target MP sizes the references; with "
+                      "Steps above 0 the optimiser's own stills are always cached at 0.25 MP "
+                      "(a second, lighter pass), the measured recipe. Output: <name>.safetensors in the LoRA "
                       "output folder — copy it to ComfyUI/models/refmods/ and load it with "
                       "Load H3 RefMods → Apply H3 RefMod. Previews render with the mod as it "
                       "will be used. Mods ride H3's Reference (ref2va) model — Training Base "
@@ -7690,6 +7697,28 @@ class LoRATrainerGUI:
     def _is_refmod_arch(self) -> bool:
         return ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_refmod", False)
 
+    REFMOD_TRAIN_MP = 0.25   # the optimiser's stills: the measured recipe, whatever Target MP says
+
+    def _refmod_ref_pass_needed(self) -> bool:
+        """RefMod with Steps above 0 and Target MP other than 0.25: the references need their
+        own cache pass at Target MP (the dataset's caches are the optimiser's, at 0.25)."""
+        if not self._is_refmod_arch() or self._refmod_plain_encode():
+            return False
+        try:
+            return abs(float(self.dataset_megapixels_var.get()) - self.REFMOD_TRAIN_MP) > 1e-6
+        except (TypeError, ValueError, AttributeError):
+            return False
+
+    def _refmod_ref_cache_dirs(self):
+        """The '-refs' sibling of the dataset's cache folder — the same rule the TOML builder
+        uses (<cache root>/<folder>-<hash>, or the image folder itself when no root is set)."""
+        img = self.image_folder_var.get().strip()
+        if not img:
+            return []
+        root = self.prefs_vars["cache_dir"].get().strip() if "cache_dir" in self.prefs_vars else ""
+        base = self._cache_dir_for(root, img) if root else img
+        return [base.rstrip("/\\") + "-refs"]
+
     def _refmod_plain_encode(self) -> bool:
         """RefMod at Steps 0: a plain encode of the references. Nothing trains, so the run
         needs no captions and no text-encoder caches — the launch path reads this to skip
@@ -8463,6 +8492,10 @@ class LoRATrainerGUI:
         collapsible section hides; leaving the entry re-packs them in canonical order
         (training, memory, timestep/optimizer/scheduler as the family rules above left them)."""
         is_refmod = self._is_refmod_arch()
+        try:
+            getattr(self, "_auto_save_ds", lambda *a: None)()   # the 0.25 MP training rule
+        except Exception:
+            pass
         _fr = getattr(self, "_refmod_frame", None)
         _hint = getattr(self, "_refmod_hint", None)
         _std = getattr(self, "_refmod_std_hint", None)
@@ -29826,6 +29859,13 @@ class LoRATrainerGUI:
                 megapixels = float(self.dataset_megapixels_var.get())
                 if megapixels <= 0:
                     return
+                # RefMod with Steps above 0: Target MP sizes the REFERENCES (their own cache
+                # pass); the optimiser's stills are always the measured 0.25 MP.
+                try:
+                    if self._is_refmod_arch() and not self._refmod_plain_encode():
+                        megapixels = self.REFMOD_TRAIN_MP
+                except Exception:
+                    pass
                 side = int(math.sqrt(megapixels * 1_000_000))
                 side = (side // 16) * 16
                 res_width = side
@@ -30866,16 +30906,30 @@ class LoRATrainerGUI:
                 self.update_console("Text encoder caching completed.\nStarting training...\n")
                 self.run_subprocess(command, "Training", on_training_complete)
 
-            def on_cache_preparation_complete():
+            _ref_cache_cmd = (self._build_refmod_ref_cache_command(config)
+                              if config.get("is_refmod") and self._refmod_ref_pass_needed() else None)
+
+            def _after_latents():
                 if config.get("is_refmod") and self._refmod_plain_encode():
                     # Steps 0: the references are the latent caches alone — no captions are
                     # read and no text-encoder cache is needed, so that stage is skipped.
-                    self.update_console("Cache preparation completed.\nPlain encode — no captions "
-                                        "needed, skipping text encoder caching.\nStarting...\n")
+                    self.update_console("Plain encode — no captions needed, skipping text "
+                                        "encoder caching.\nStarting...\n")
                     self.run_subprocess(command, "Training", on_training_complete)
                     return
-                self.update_console("Cache preparation completed.\nStarting text encoder caching...\n")
+                self.update_console("Starting text encoder caching...\n")
                 self.run_subprocess(cache_text_cmd, "Text Encoder Caching", on_text_encoder_caching_complete)
+
+            def on_cache_preparation_complete():
+                self.update_console("Cache preparation completed.\n")
+                if _ref_cache_cmd is not None:
+                    # The optimiser's stills are cached at 0.25 MP above; the mod's references
+                    # get their own pass at Target MP into the '-refs' sibling folder.
+                    self.update_console(f"Encoding the references at "
+                                        f"{self.dataset_megapixels_var.get()} MP...\n")
+                    self.run_subprocess(_ref_cache_cmd, "Reference Caching", _after_latents)
+                    return
+                _after_latents()
 
             self.run_subprocess(cache_latents_cmd, "Cache Preparation", on_cache_preparation_complete)
         else:
@@ -31356,6 +31410,13 @@ class LoRATrainerGUI:
             command.extend(["--model_version", config["model_version"]])
 
         return command
+
+    def _build_refmod_ref_cache_command(self, config):
+        """The references' own latents pass at Target MP into the '-refs' sibling folder —
+        the ordinary MiniMax latents command with the resolution override and suffix."""
+        return self.build_cache_latents_command(config) + [
+            "--megapixels", str(self.dataset_megapixels_var.get()).strip(),
+            "--cache_suffix", "-refs"]
 
     def build_cache_text_command(self, config):
         """Build the cache text encoder command based on architecture"""
@@ -31891,6 +31952,9 @@ class LoRATrainerGUI:
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]
+        if self._refmod_ref_pass_needed():
+            for _d in self._refmod_ref_cache_dirs():
+                cmd += ["--ref_cache_dir", _d]
         if self.sample_enabled_var.get():
             prompt_file = self._write_krea2_sample_prompts("minimax_prompts.txt")
             _te = self._krea2_pref("minimax_text_encoder")
