@@ -27658,6 +27658,7 @@ class LoRATrainerGUI:
     _RMS_SWEEPS = ("Retention 0 · 0.15 · 0.4 · 0.7 · 1", "Seeds ×4",
                    "Frame-curve directions ×5", "Step-curve directions ×5", "Copies 1 · 2 · 3 · 4")
     _RMS_HISTORY_MAX = 12
+    _RMS_MODELS = ("Reference (ref2va)", "First / Last Frame (fl2va)")
 
     def create_refmod_studio_tab(self):
         """RefMod Studio: mods → apply → preview → actions (Start-tab styled)."""
@@ -27723,6 +27724,18 @@ class LoRATrainerGUI:
         _rms_tip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
                      "(new mods land in the RefMod family's Output folder; ComfyUI reads models/refmods).")
         r = 1
+        ttk.Label(setup, text="Model:").grid(row=r, column=0, sticky=tk.W, pady=2)
+        self.rms_model_var = tk.StringVar(value=str(saved.get("model", self._RMS_MODELS[0])))
+        if self.rms_model_var.get() not in self._RMS_MODELS:
+            self.rms_model_var.set(self._RMS_MODELS[0])
+        _mc = ttk.Combobox(setup, textvariable=self.rms_model_var, values=list(self._RMS_MODELS),
+                           state="readonly", width=44)
+        _mc.grid(row=r, column=1, sticky=tk.W, pady=2)
+        _mc.bind("<<ComboboxSelected>>", lambda e: self._rms_model_changed())
+        _rms_tip(_mc, "Which H3 the mods run on. Both work; a mod does best on the model it was made "
+                     "for (Training Base on the Training tab). Pick the one you use in ComfyUI — "
+                     "the next Render reloads if it changed.")
+        r += 1
         ttk.Label(setup, text="Base:").grid(row=r, column=0, sticky=tk.W, pady=2)
         self.rms_base_var = tk.StringVar(value=str(saved.get("base", REPAIR_H3_BASE_OPTIONS[0])))
         _bc = ttk.Combobox(setup, textvariable=self.rms_base_var, values=list(REPAIR_H3_BASE_OPTIONS),
@@ -27972,11 +27985,11 @@ class LoRATrainerGUI:
         _ec = ttk.Checkbutton(_sr, text="Show early", variable=self.rms_early_var, command=self._rms_persist)
         _ec.pack(side=tk.LEFT, padx=(8, 0))
         _rms_tip(_ec, "Put up the pass-2 estimate while the remaining passes run.")
-        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=2, column=0, pady=(10, 0))
         self._rms_tweaked_title = ttk.Label(prev, text="With mods", font=(FONT_FAMILY, 10, "bold"))
-        self._rms_tweaked_title.grid(row=2, column=1, pady=(10, 0))
+        self._rms_tweaked_title.grid(row=2, column=0, pady=(10, 0))
+        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=2, column=1, pady=(10, 0))
         self._rms_holders, self._rms_labels = {}, {}
-        for col, side in ((0, "baseline"), (1, "tweaked")):
+        for col, side in ((0, "tweaked"), (1, "baseline")):
             h = tk.Frame(prev, width=448, height=448, bg="#1c1c1c", highlightthickness=0)
             h.grid(row=3, column=col, padx=4, pady=4, sticky="nsew")
             h.pack_propagate(False)
@@ -28632,7 +28645,8 @@ class LoRATrainerGUI:
 
     # ----- persistence -------------------------------------------------------------------------
     def _rms_state(self):
-        return {"base": self.rms_base_var.get(), "prompt": self.rms_prompt_text.get("1.0", tk.END).strip(),
+        return {"base": self.rms_base_var.get(), "model": self.rms_model_var.get(),
+                "prompt": self.rms_prompt_text.get("1.0", tk.END).strip(),
                 "seed": self.rms_seed_var.get(), "frames": self.rms_frames_var.get(),
                 "width": self.rms_width_var.get(), "height": self.rms_height_var.get(),
                 "steps": self.rms_steps_var.get(), "turbo": self.rms_turbo_var.get(),
@@ -28647,7 +28661,8 @@ class LoRATrainerGUI:
         from fizgig.minimax import refmod_apply as ra
         self._rms_restoring = True
         try:
-            for key, var in (("base", self.rms_base_var), ("seed", self.rms_seed_var), ("frames", self.rms_frames_var),
+            for key, var in (("base", self.rms_base_var), ("model", self.rms_model_var), ("seed", self.rms_seed_var),
+                             ("frames", self.rms_frames_var),
                              ("width", self.rms_width_var), ("height", self.rms_height_var), ("steps", self.rms_steps_var),
                              ("turbo", self.rms_turbo_var), ("folder", self.rms_folder_var), ("scramble", self.rms_scramble_var)):
                 if key in d:
@@ -28731,13 +28746,36 @@ class LoRATrainerGUI:
         v = str(self.rms_base_var.get())
         return "stream" if v.startswith("Stream") else "nf4" if v.startswith("NF4") else "auto"
 
-    def _rms_engine_plan(self):
-        """ensure_pipeline kwargs for the reference (ref2va) base, or None after a messagebox."""
+    def _rms_model_is_fl2va(self):
+        return str(getattr(self, "rms_model_var", None) and self.rms_model_var.get() or "").startswith("First")
+
+    def _rms_model_dit_path(self):
+        """The DiT the Model picker names: the reference (ref2va) checkpoint or the standard
+        first/last-frame (fl2va) one, from Preferences."""
         pv = self.prefs_vars if hasattr(self, "prefs_vars") else {}
-        dit_path = pv.get("minimax_ref_dit", tk.StringVar()).get().strip()
+        key = "minimax_dit" if self._rms_model_is_fl2va() else "minimax_ref_dit"
+        return pv.get(key, tk.StringVar()).get().strip()
+
+    def _rms_model_changed(self):
+        self._rms_persist()
+        if self._rms_engine_ready() and getattr(self.rms_engine, "dit_path", "") != self._rms_model_dit_path():
+            self.rms_status_var.set(f"Model set to {self.rms_model_var.get()} — the next Render reloads the base.")
+
+    def _rms_model_loaded_matches(self):
+        """False when a base is resident but it is not the model the picker names."""
+        if not self._rms_engine_ready():
+            return True
+        return getattr(self.rms_engine, "dit_path", "") == self._rms_model_dit_path()
+
+    def _rms_engine_plan(self):
+        """ensure_pipeline kwargs for the picked H3 model, or None after a messagebox."""
+        pv = self.prefs_vars if hasattr(self, "prefs_vars") else {}
+        dit_path = self._rms_model_dit_path()
+        _dit_label = ("MiniMax H3 DiT (first/last frame / fl2va)" if self._rms_model_is_fl2va()
+                      else "MiniMax H3 DiT (reference / ref2va)")
         vae_path = pv.get("minimax_vae", tk.StringVar()).get().strip()
         te_path = pv.get("minimax_text_encoder", tk.StringVar()).get().strip()
-        for label, p in (("MiniMax H3 DiT (reference / ref2va)", dit_path), ("MiniMax H3 video VAE", vae_path),
+        for label, p in ((_dit_label, dit_path), ("MiniMax H3 video VAE", vae_path),
                          ("Qwen3-VL-32B text encoder", te_path)):
             if not p or not os.path.exists(p):
                 messagebox.showerror("RefMod Studio", f"{label} path not set or not found.\n"
@@ -28830,7 +28868,7 @@ class LoRATrainerGUI:
         eng = self.rms_engine
         self._rms_loading = True
         self._rms_set_busy(True, marquee=True)
-        self.rms_status_var.set("Loading the reference base (the 33B base takes a minute)…")
+        self.rms_status_var.set(f"Loading the {self.rms_model_var.get()} base (the 33B base takes a minute)…")
 
         def _done(_res):
             self._rms_loading = False
@@ -28918,7 +28956,8 @@ class LoRATrainerGUI:
                "readout": ra.comfy_readout(rows, retention=retention, frame_curve=fc, scramble_seed=self._rms_scramble(),
                                            step_curve=sc, step_on=step_on),
                "label": ov.get("label", "")}
-        job["baseline_key"] = (job["prompt"], seed, w, h, frames, st, tu, self._rms_base_mode())
+        job["baseline_key"] = (job["prompt"], seed, w, h, frames, st, tu, self._rms_base_mode(),
+                               self.rms_model_var.get())
         return job
 
     def _rms_describe_job(self, job):
@@ -28934,6 +28973,8 @@ class LoRATrainerGUI:
     def _rms_render(self):
         if self._rms_busy:
             return
+        if not self._rms_model_loaded_matches():
+            self._rms_unload()                      # a different H3 than the one resident
         if not self._rms_engine_ready():
             self._rms_load(then=self._rms_render)
             return
@@ -28948,22 +28989,34 @@ class LoRATrainerGUI:
         eng.clear_cancel()
         self._rms_set_busy(True)
         need_base = self._rms_baseline_key != job["baseline_key"] or self._rms_clips.get("baseline") is None
-        self.rms_status_var.set(("Rendering No mod, then With mods…" if need_base else "Rendering With mods…"))
+        self.rms_status_var.set(("Rendering With mods, then No mod…" if need_base else "Rendering With mods…"))
 
         def _early(img, step, n):
             self.master.after(0, lambda: self._rms_show_early(img, step, n))
 
+        def _show_tweaked(t):
+            # the result people came for, on screen the moment it exists — No mod follows
+            t["wav_path"] = self._repair_clip_wav("rms_tweaked", t)
+            t["job"] = job
+            self._rms_clips["tweaked"] = t
+            self._rms_show(t["middle"], "tweaked")
+            self._rms_tweaked_title.configure(text="With mods — " + (", ".join(f"{n}@{s:.2f}" for n, s in job["describe"]) or "none"))
+            self._rms_history_add(t, self._rms_describe_job(job), still=job["frames"] == 1)
+            if need_base:
+                self.rms_status_var.set("With mods done — rendering No mod for comparison…")
+
         def _work():
             out = {}
-            if need_base:
-                out["baseline"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],
-                                                    height=job["height"], frames=job["frames"], regime="custom",
-                                                    with_audio=job["with_audio"], steps=job["steps"], turbo_strength=job["turbo"])
             out["tweaked"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],
                                                height=job["height"], frames=job["frames"], regime="custom",
                                                ref_latents=job["latents"], ref_schedule=job["schedule"],
                                                with_audio=job["with_audio"], early_step=job["early"], on_early=_early,
                                                steps=job["steps"], turbo_strength=job["turbo"])
+            self.master.after(0, lambda t=out["tweaked"]: _show_tweaked(t))
+            if need_base:
+                out["baseline"] = eng.render_refmod(seed=job["seed"], prompt=job["prompt"], width=job["width"],
+                                                    height=job["height"], frames=job["frames"], regime="custom",
+                                                    with_audio=job["with_audio"], steps=job["steps"], turbo_strength=job["turbo"])
             return out
 
         def _done(out):
@@ -28974,13 +29027,7 @@ class LoRATrainerGUI:
                 self._rms_clips["baseline"] = b
                 self._rms_baseline_key = job["baseline_key"]
                 self._rms_show(b["middle"], "baseline")
-            t = out["tweaked"]
-            t["wav_path"] = self._repair_clip_wav("rms_tweaked", t)
-            t["job"] = job
-            self._rms_clips["tweaked"] = t
-            self._rms_show(t["middle"], "tweaked")
-            self._rms_tweaked_title.configure(text="With mods — " + (", ".join(f"{n}@{s:.2f}" for n, s in job["describe"]) or "none"))
-            self._rms_history_add(t, self._rms_describe_job(job), still=job["frames"] == 1)
+            t = self._rms_clips.get("tweaked") or out["tweaked"]
             self.rms_status_var.set(f"Done: {self._rms_h3_regime(t)}" + (" — click With mods to play." if job["frames"] > 1 else "."))
             if job["frames"] > 1:
                 self._rms_open_player()
@@ -29140,6 +29187,8 @@ class LoRATrainerGUI:
     def _rms_sweep(self):
         if self._rms_busy:
             return
+        if not self._rms_model_loaded_matches():
+            self._rms_unload()
         if not self._rms_engine_ready():
             self._rms_load(then=self._rms_sweep)
             return
