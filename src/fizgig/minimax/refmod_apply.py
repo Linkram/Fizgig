@@ -407,6 +407,11 @@ def describe_meta(meta: dict) -> str:
     parts = [str(meta.get("kind", "?")),
              f"{meta.get('latent_t', '?')}×{meta.get('latent_h', '?')}×{meta.get('latent_w', '?')}",
              f"{int(meta.get('tokens', 0)):,} tokens".replace(",", " ")]
+    # which H3 model it was tuned on (Fizgig writes the tag; the pack's Inspect node shows it too)
+    for _t in meta.get("tags") or []:
+        if str(_t).startswith("tuned on "):
+            parts.append("for " + str(_t)[len("tuned on "):])
+            break
     steps = int(meta.get("optimize_steps", 0) or 0)
     parts.append(f"optimised {steps}" if steps > 0 else "plain encode")
     d = str(meta.get("description") or "").strip()

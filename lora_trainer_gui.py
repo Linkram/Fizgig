@@ -32712,6 +32712,7 @@ class LoRATrainerGUI:
                                if str(self.settings.get("MINIMAX_REFMOD_CONCEPT", "") or "").strip() in REFMOD_CONCEPT_OPTIONS
                                else _d["MINIMAX_REFMOD_CONCEPT"]),
             "--seed", str(self.settings.get("SEED", 42) or 42),
+            "--base_model", ("ref2va" if self.settings.get("MINIMAX_TRAIN_BASE") == "ref2va" else "fl2va"),
         ]
         _desc = str(self.settings.get("MINIMAX_REFMOD_DESC", "") or "").strip()
         if _desc:

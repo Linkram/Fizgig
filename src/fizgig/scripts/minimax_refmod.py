@@ -89,6 +89,9 @@ def setup_parser():
                    choices=["voice", "singing", "music_style", "sound_fx", "ambience"],
                    help="the audio mod's concept type, in the pack's terms")
     p.add_argument("--audio_vae", default=None, help="H3 audio VAE (minimax_h3_audio_vae_fp32.safetensors)")
+    p.add_argument("--base_model", default="", choices=["", "ref2va", "fl2va"],
+                   help="which H3 model the mod is tuned against, written into the file (the GUI passes "
+                        "Training Base; blank = read it from the --dit file name)")
     p.add_argument("--holdout_refs", action="store_true",
                    help="hold the reference stills OUT of the optimiser's training set (default: it "
                         "trains on every still, references included)")
@@ -125,7 +128,7 @@ def main():
                description=a.description, concept_type=a.concept_type, init_from=a.init_from,
                exclude_refs=a.holdout_refs, token_cap=a.token_cap,
                audio=a.audio, audio_max_seconds=a.audio_max_seconds, audio_concept=a.audio_concept,
-               audio_vae_path=a.audio_vae,
+               audio_vae_path=a.audio_vae, base_model=a.base_model,
                ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset, clips=a.clips,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 

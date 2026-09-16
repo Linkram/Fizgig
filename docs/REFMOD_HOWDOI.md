@@ -60,6 +60,8 @@ Both are covered, and it matters. **Training Base** on the card picks the model 
 
 Measured: the same 16 stills optimised for ref2va and run on the first/last-frame model scored 60 against the dataset; optimised for fl2va and run there, 65, with the matched mod's worst frame above the mismatched mod's best. Made for the model it runs on, a mod holds the person about as well on either. So: load the mod in ComfyUI with the model it was made for, and make one per model if you use both.
 
+The file says which. A tuned mod carries the tag "tuned on ref2va" or "tuned on fl2va" (and the base file's name in its header), which the pack's Inspect node shows and RefMod Studio prints on the row's info line as "for ref2va"; a plain encode is tagged "plain encode", since no model was in the loop.
+
 ## What do the controls on the card mean?
 
 - **Grid.** Full reference keeps every photo at its size, the only setting that carries a face. The pooled grids (32×32, 16×16, 8×8) make small stackable concept mods.

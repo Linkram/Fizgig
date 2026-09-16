@@ -605,6 +605,19 @@ def load_refmod(path: str):
     return latent, meta
 
 
+def base_model_kind(base_model: str, dit_path: str) -> str:
+    """'ref2va' | 'fl2va' | the base file's name: the given kind when it is one of the two,
+    else read from the file name, else the name itself."""
+    k = str(base_model or "").strip().lower()
+    if k in ("ref2va", "fl2va"):
+        return k
+    name = os.path.basename(str(dit_path or "")).lower()
+    for kind in ("ref2va", "fl2va"):
+        if kind in name:
+            return kind
+    return os.path.basename(str(dit_path or "")) or "unknown"
+
+
 def token_count(latent: torch.Tensor) -> int:
     return int(latent.shape[2]) * (int(latent.shape[3]) // 2) * (int(latent.shape[4]) // 2)
 
@@ -1018,7 +1031,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1,
                clips: str = "still", concept_type: str = "identity", token_cap: int = 0,
                audio: str = "off", audio_max_seconds: float = 30.0, audio_concept: str = "voice",
-               audio_vae_path: Optional[str] = None) -> str:
+               audio_vae_path: Optional[str] = None, base_model: str = "") -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -1197,14 +1210,21 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
         _preview(mod, int(math.ceil(steps / float(preview_every))) if preview_every else 1)
 
     _audio = str(audio or "off").lower()
+    # Which H3 model the mod was tuned against (Peter, 16 Sep 2026): the GUI passes Training
+    # Base; a CLI run without it is read from the base file's name. A plain encode had no
+    # model in the loop and says so. The tag is what the pack's Inspect node shows.
+    _bm = base_model_kind(base_model, dit_path) if trains else "not trained"
+    _base_tag = f"tuned on {_bm}" if trains else "plain encode"
     _save_kw = dict(name=output_name, mode=mode, pool=pool_label, optimize_steps=steps, source_shape=source_shape,
-                    tags=tags + (["fizgig optimised"] if steps > 0 else []),
+                    tags=tags + (["fizgig optimised"] if steps > 0 else []) + [_base_tag],
                     description=description, concept_type=(concept_type or "identity"))
     _extra = {"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
               "ss_refmod_ref_subset": str(int(ref_subset or 0)),
               "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
               "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full"),
-              "ss_refmod_token_cap": str(int(token_cap or 0))}
+              "ss_refmod_token_cap": str(int(token_cap or 0)),
+              "ss_refmod_base_model": _bm,
+              "ss_refmod_base_checkpoint": (os.path.basename(dit_path or "") if trains else "")}
     _out_base = os.path.join(output_dir, output_name)
     if _audio == "off":
         out = save_refmod(_out_base, mod, extra=_extra, **_save_kw)
