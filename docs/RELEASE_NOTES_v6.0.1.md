@@ -1,6 +1,6 @@
 # Fizgig v6.0.1
 
-RefMods for MiniMax H3: make them from photos, tune them against the model, test them in the RefMod Studio tab, and now give them sound. This release follows 6.0.0 closely, so the whole RefMod story is here in one place.
+RefMods for MiniMax H3, made with the model in the loop, and RefMod Studio to test them. Make them from photos, from clips prepared with Gizmo, and with an audio mod of the folder's sound alongside; tune them against H3 itself; try them side by side with the base before ComfyUI. This release follows 6.0.0 closely, so the whole RefMod story is here in one place.
 
 A RefMod is your reference photos saved as one small file that the [ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod) nodes (by **@Luisacaotica**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's reference path. No training run, a file in minutes, and the basic kind needs no captions. Fizgig makes them, and adds the one thing no other maker has: it can tune the file against H3 itself. The full guide is [RefMods — how do I…?](https://github.com/shootthesound/Fizgig/blob/master/docs/REFMOD_HOWDOI.md).
 
