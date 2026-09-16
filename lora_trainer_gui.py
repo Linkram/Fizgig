@@ -27701,10 +27701,26 @@ class LoRATrainerGUI:
         # ── Card 1: Setup ──────────────────────────────────────────────────────────────
         setup = self._start_section_card(
             outer, "Setup",
-            "The reference model (ref2va) is what RefMods condition — its path, the VAE, the "
-            "text encoder and the Turbo LoRA come from Preferences. Load once per session.")
+            "The folder your mods live in (ComfyUI reads models/refmods; Fizgig writes to the LoRA "
+            "output folder), and the model they run on — its path, the VAE, the text encoder and the "
+            "Turbo LoRA come from Preferences. Load once per session.")
         setup.columnconfigure(1, weight=1)
-        r = 0
+        # The mods folder first — it is the one thing every row below depends on.
+        _fr = tk.Frame(setup, bg=COLORS["bg_surface"])
+        _fr.grid(row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 6))
+        _fr.columnconfigure(1, weight=1)
+        ttk.Label(_fr, text="RefMod folder:").grid(row=0, column=0, sticky=tk.W)
+        _default_dir = str(saved.get("folder") or self.settings.get("LORA_OUTPUT_DIR", "") or "")
+        self.rms_folder_var = tk.StringVar(value=_default_dir)
+        _fe = ttk.Entry(_fr, textvariable=self.rms_folder_var)
+        _fe.grid(row=0, column=1, sticky=tk.EW, padx=(6, 6))
+        _fe.bind("<Return>", lambda e: self._rms_rescan())
+        ttk.Button(_fr, text="Browse…", width=9, command=self._rms_browse_folder).grid(row=0, column=2)
+        _rb = ttk.Button(_fr, text="↻", width=3, command=self._rms_rescan)
+        _rb.grid(row=0, column=3, padx=(4, 0))
+        _rms_tip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
+                     "(Fizgig writes mods to the LoRA output folder; ComfyUI reads models/refmods).")
+        r = 1
         ttk.Label(setup, text="Base:").grid(row=r, column=0, sticky=tk.W, pady=2)
         self.rms_base_var = tk.StringVar(value=str(saved.get("base", REPAIR_H3_BASE_OPTIONS[0])))
         _bc = ttk.Combobox(setup, textvariable=self.rms_base_var, values=list(REPAIR_H3_BASE_OPTIONS),
@@ -27809,20 +27825,6 @@ class LoRATrainerGUI:
             "pick a second mod under 'vs' and the row becomes an A/B axis (left of centre is "
             "A, right is B, distance is strength).")
         mods.columnconfigure(0, weight=1)
-        _fr = tk.Frame(mods, bg=COLORS["bg_surface"])
-        _fr.grid(row=0, column=0, sticky=tk.EW, pady=(0, 6))
-        _fr.columnconfigure(1, weight=1)
-        ttk.Label(_fr, text="RefMod folder:").grid(row=0, column=0, sticky=tk.W)
-        _default_dir = str(saved.get("folder") or self.settings.get("LORA_OUTPUT_DIR", "") or "")
-        self.rms_folder_var = tk.StringVar(value=_default_dir)
-        _fe = ttk.Entry(_fr, textvariable=self.rms_folder_var)
-        _fe.grid(row=0, column=1, sticky=tk.EW, padx=(6, 6))
-        _fe.bind("<Return>", lambda e: self._rms_rescan())
-        ttk.Button(_fr, text="Browse…", width=9, command=self._rms_browse_folder).grid(row=0, column=2)
-        _rb = ttk.Button(_fr, text="↻", width=3, command=self._rms_rescan)
-        _rb.grid(row=0, column=3, padx=(4, 0))
-        _rms_tip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
-                     "(Fizgig writes mods to the LoRA output folder; ComfyUI reads models/refmods).")
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
         self._rms_rows_frame.columnconfigure(0, weight=1)
