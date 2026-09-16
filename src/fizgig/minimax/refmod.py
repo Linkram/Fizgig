@@ -579,12 +579,34 @@ def optimize_refmod(dit, group, mod0: torch.Tensor, *, steps: int, lr: float = D
 
 # ─── previews ────────────────────────────────────────────────────────────────────────────────
 
+def write_silent_mp4(path: str, frames: torch.Tensor, fps: int = 24) -> None:
+    """Decoded frames [3, F, H, W] in [0, 1] -> a playable mp4 with no sound track (the mod is
+    a visual reference; its previews carry no audio). Raises on any failure."""
+    import subprocess
+    from fizgig.minimax.trainer import _find_ffmpeg
+    ffmpeg = _find_ffmpeg()
+    if not ffmpeg:
+        raise RuntimeError("no ffmpeg available")
+    h, w = int(frames.shape[2]), int(frames.shape[3])
+    raw = (frames.permute(1, 2, 3, 0).clamp(0, 1) * 255).byte().cpu().numpy().tobytes()
+    cmd = [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}", "-r", str(fps), "-i", "-",
+           "-an", "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+           "-movflags", "+faststart", path]
+    p = subprocess.run(cmd, input=raw, capture_output=True,
+                       creationflags=0x08000000 if os.name == "nt" else 0)
+    if p.returncode != 0 or not os.path.isfile(path):
+        raise RuntimeError((p.stderr or b"").decode("utf-8", "replace")[-300:] or "ffmpeg failed")
+
+
 def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, output_name: str,
                     epoch: int, width: int, height: int, steps: int, seed: int, device, dtype,
-                    decoder=None, n_swap: int = 0, turbo=None):
-    """One still per prompt with the mod as the reference block — the way the node will use
-    it (no <Picture> vision blocks: the file has no vision side). PNG names follow the
-    gallery's contract `<name>_e<epoch>_<i>_<ts>_<seed>.png`."""
+                    decoder=None, n_swap: int = 0, turbo=None, num_frames: int = 1):
+    """One preview per prompt with the mod as the reference block — the way the node will use
+    it (no <Picture> vision blocks: the file has no vision side). num_frames 1 = a still;
+    above 1 = a clip (22 by default from the GUI): the middle frame is saved as the PNG and
+    the whole clip as a silent mp4 beside it. PNG names follow the gallery's contract
+    `<name>_e<epoch>_<i>_<ts>_<seed>.png`."""
     from PIL import Image
     from fizgig.minimax import sampling
     from fizgig.minimax.trainer import (park_dit_to_cpu, restore_parked_dit, turbo_adaln_patch,
@@ -603,12 +625,13 @@ def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, ou
             turbo_adaln_patch(dit, turbo_adaln, device, dtype)
         with torch.no_grad():
             for i, txt in enumerate(encoded_prompts):
+                _nf = max(1, int(num_frames))
                 print(f"[preview] refmod preview {epoch}: prompt {i + 1}/{len(encoded_prompts)} "
-                      f"({width}x{height}, seed {seed + i})", flush=True)
+                      f"({width}x{height}, {_nf} frame{'s' if _nf > 1 else ''}, seed {seed + i})", flush=True)
                 lat, _ = sampling.sample_image(dit, txt.to(device, dtype), width=width, height=height,
                                                steps=steps, cfg_scale=1.0, seed=seed + i,
                                                device=device, dtype=dtype, log_steps=False,
-                                               num_frames=1, ref_latents=[ref], return_audio=True)
+                                               num_frames=_nf, ref_latents=[ref], return_audio=True)
                 rendered.append((f"{output_name}_e{epoch:06d}_{i:02d}_{ts}_{seed + i}", lat.to("cpu")))
                 del lat
     finally:
@@ -636,12 +659,25 @@ def render_previews(dit, mod: torch.Tensor, encoded_prompts, *, out_dir: str, ou
             decoder = decoder.to(device)
         with torch.no_grad():
             for stem, lat in rendered:
-                if decoder is not None:
+                if decoder is not None and lat.shape[2] > 1:
+                    # a clip: every frame to a silent mp4, the middle frame as the PNG
+                    px = decoder.decode_clip(lat.to(device).float())[0]      # [3, F, H, W]
+                    n_f = int(px.shape[1])
+                    mid = (px[:, n_f // 2].permute(1, 2, 0).clamp(0, 1) * 255).byte().cpu().numpy()
+                    img = Image.fromarray(mid)
+                    try:
+                        write_silent_mp4(os.path.join(out_dir, stem + ".mp4"), px.cpu())
+                        print(f"[preview] wrote {n_f}-frame clip: {stem}.mp4", flush=True)
+                    except Exception as _me:
+                        logger.warning(f"[preview] mp4 skipped ({type(_me).__name__}: {_me}) — "
+                                       f"the middle frame is saved as the PNG")
+                    del px
+                elif decoder is not None:
                     px = decoder.decode(lat.to(device).float())[0]
                     arr = (px.permute(1, 2, 0).clamp(0, 1) * 255).byte().cpu().numpy()
                     img = Image.fromarray(arr)
                 else:
-                    arr = sampling.latent_to_rgb(lat)
+                    arr = sampling.latent_to_rgb(lat[:, :, :1] if lat.shape[2] > 1 else lat)
                     img = Image.fromarray(arr).resize((width, height), Image.NEAREST)
                 img.save(os.path.join(out_dir, stem + ".png"))
     finally:
@@ -662,7 +698,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                blocks_to_swap="auto", vae_path: Optional[str] = None,
                te_path: Optional[str] = None, sample_prompts: Optional[List[str]] = None,
                sample_width: int = 768, sample_height: int = 768, sample_steps: int = 20,
-               sample_seed: int = 42, preview_every: int = 0,
+               sample_seed: int = 42, preview_every: int = 0, sample_frames: int = 1,
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
@@ -815,7 +851,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
             return
         render_previews(dit, mod, encoded, out_dir=sample_dir, output_name=output_name, epoch=epoch,
                         width=sample_width, height=sample_height, steps=sample_steps, seed=sample_seed,
-                        device=device, dtype=dtype, decoder=decoder, n_swap=n_swap, turbo=turbo)
+                        device=device, dtype=dtype, decoder=decoder, n_swap=n_swap, turbo=turbo,
+                        num_frames=sample_frames)
 
     _preview(mod0, 0)
     mod = mod0

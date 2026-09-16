@@ -53,6 +53,9 @@ def setup_parser():
     p.add_argument("--vae", default=None, help="H3 video VAE (previews decode with it)")
     p.add_argument("--text_encoder", default=None, help="Qwen3-VL-32B (preview prompts)")
     p.add_argument("--sample_prompts", default=None, help="one prompt per line")
+    p.add_argument("--sample_frames", type=int, default=1,
+                   help="preview length: 1 = a still, 22 = a ~1 s clip (silent mp4 + the middle "
+                        "frame as PNG); the GUI sends 22")
     p.add_argument("--sample_width", type=int, default=768)
     p.add_argument("--sample_height", type=int, default=768)
     p.add_argument("--sample_steps", type=int, default=20)
@@ -93,7 +96,7 @@ def main():
                seed=a.seed, base_quant=a.base_quant, blocks_to_swap=a.blocks_to_swap,
                vae_path=a.vae, te_path=a.text_encoder, sample_prompts=_read_prompts(a.sample_prompts),
                sample_width=a.sample_width, sample_height=a.sample_height, sample_steps=a.sample_steps,
-               sample_seed=a.sample_seed, preview_every=a.preview_every,
+               sample_seed=a.sample_seed, preview_every=a.preview_every, sample_frames=a.sample_frames,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, init_from=a.init_from, exclude_refs=a.holdout_refs,
                ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset,
