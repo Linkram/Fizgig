@@ -442,9 +442,9 @@ def thin_motion_frames(mod: torch.Tensor, refs, cap: int, label: str = "mod"):
         return mod, list(range(t)), None
     budget = cap - per_frame * len(fixed)
     if budget < per_frame * len(clips):
-        logger.warning(f"[refmod] {label}: the photos alone are {per_frame * len(fixed):,} tokens against a "
-                       f"{cap:,} cap — they are kept whole (the cap only thins clips); each clip keeps "
-                       f"one frame")
+        logger.warning(f"[refmod] {label}: the photos take {per_frame * len(fixed):,} of the {cap:,}-token "
+                       f"cap, which leaves no room for the clips — the photos are kept whole (the cap "
+                       f"only thins clips) and each clip keeps one frame")
     # pass 1: each clip loses its near-duplicates
     deduped = {i: [fr[j] for j in dedup_frame_indices(mod[:, :, fr])] for i, fr in clips.items()}
     n_dup = sum(len(clips[i]) - len(deduped[i]) for i in clips)
@@ -456,8 +456,14 @@ def thin_motion_frames(mod: torch.Tensor, refs, cap: int, label: str = "mod"):
     fit_frames = max(len(clips), budget // per_frame)
     kept_m = []
     if total > fit_frames:
+        shares = {i: max(1, int(fit_frames * len(fr) / float(total))) for i, fr in deduped.items()}
+        # the one-frame floor can push the total over; trim the biggest shares until it fits
+        # (fit_frames >= the clip count, so it always can)
+        while sum(shares.values()) > fit_frames:
+            big = max(shares, key=lambda i: shares[i])
+            shares[big] -= 1
         for i, fr in deduped.items():
-            share = max(1, int(fit_frames * len(fr) / float(total)))
+            share = shares[i]
             if share < len(fr):
                 idx = torch.linspace(0, len(fr) - 1, share).round().long().tolist()
                 fr = [fr[j] for j in idx]

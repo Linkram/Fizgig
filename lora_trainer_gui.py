@@ -1109,7 +1109,7 @@ REFMOD_CONCEPT_OPTIONS = ["identity", "style", "pose_motion", "clothing", "backg
 # Token cap (16 Sep 2026): the pack's extractor rule for CLIPS AS MOTION only — near-duplicate
 # frames first, then an even resample to what fits. Photos are never touched (Peter: "that's not
 # what it's for"); a cap with no motion clips does nothing. Off by default.
-REFMOD_TOKEN_CAP_OPTIONS = ["off (keep every frame)", "5,120 (the pack's default)", "8,192 (the library's files)",
+REFMOD_TOKEN_CAP_OPTIONS = ["off (every clip frame kept)", "5,120 (the pack's default)", "8,192 (the library's files)",
                             "16,384"]
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "16",
@@ -4377,7 +4377,7 @@ class LoRATrainerGUI:
             ToolTip(self.entries["MINIMAX_REFMOD_CONCEPT"],
                     "What the mod is, in the pack's terms: identity (a person), style (a look), "
                     "pose_motion (a dance, a camera move), clothing, background, generic.")
-            tk.Label(self._refmod_frame2, text="Token cap:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame2, text="Clip token cap (stills untouched):", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_TOKEN_CAP"] = ttk.Combobox(
                 self._refmod_frame2, values=list(REFMOD_TOKEN_CAP_OPTIONS), state="readonly", width=24)
