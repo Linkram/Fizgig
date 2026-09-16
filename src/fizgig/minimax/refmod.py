@@ -251,12 +251,14 @@ def reference_face_centres(refs, image_dirs, face_sizes: Optional[dict] = None) 
         if not path:
             continue
         try:
-            faces = det.detect_all(path)
+            # Opened with PIL, not cv2.imread: libpng's "iCCP: known incorrect sRGB profile"
+            # line for every PNG with a stale colour profile came from OpenCV's reader.
+            with _Image.open(path) as im:
+                W, H = im.size
+                faces = det.detect_from_pil(im.convert("RGB"))
             face = det.get_largest(faces) if faces else None
             if face is None:
                 continue
-            with _Image.open(path) as im:
-                W, H = im.size
             cx, cy = face.center
             out[stem] = (float(max(0.0, min(1.0, cy / float(H)))), float(max(0.0, min(1.0, cx / float(W)))))
             if face_sizes is not None:
