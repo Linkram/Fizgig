@@ -27768,8 +27768,8 @@ class LoRATrainerGUI:
             "Copies is how many times it rides in the bundle (more copies pull harder, each costs its "
             "tokens). One mod is one row. To use two together — a character and a style, say — stack "
             "a second row with the button below; each row keeps its own strength and copies, so one "
-            "can sit below 1 if it tends to overbake, and both go into the render. Untick a row to "
-            "leave it out.")
+            "can sit below 1 if it tends to overbake, and both go into the render (in ComfyUI that is "
+            "two loader slots, one file each). Untick a row to leave it out.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
@@ -28053,13 +28053,14 @@ class LoRATrainerGUI:
         act = self._start_section_card(
             outer, "Actions",
             "Take the result to ComfyUI. ComfyUI settings copies the exact values to type into the "
-            "pack's nodes, so the same render comes out there with the mod files as they are. Bake as "
-            "new RefMod is the only thing here that writes a file: it takes one row's mod and folds "
-            "that row's Strength, the master Strength and the Fade-across-the-clip curve into the "
-            "latent itself, so the new file gives this look when loaded plainly at 1.0 with no curve. "
-            "Copies, Shuffle and Change-during-the-render act at render time and cannot be baked — "
-            "they stay in the ComfyUI settings. Save preview keeps the picture; Save and Load setup "
-            "keep this whole tab.")
+            "pack's nodes, so the same render comes out there with the mod files as they are — with "
+            "two mods stacked, that is two loader slots. Bake as new RefMod is the only thing here that "
+            "writes a file: it takes one row's mod and folds that row's Strength, the master Strength, "
+            "its Copies and the Fade-across-the-clip curve into the latent itself, so the new file gives "
+            "this look when loaded plainly at 1.0 with no curve. One mod per file — a file is a single "
+            "reference block, and the model reads a block as one subject, so two mods in one file come "
+            "out as one of them. Shuffle and Change-during-the-render act at render time and cannot be "
+            "baked. Save preview keeps the picture; Save and Load setup keep this whole tab.")
         _ar = tk.Frame(act, bg=COLORS["bg_surface"])
         _ar.pack(fill=tk.X)
         ttk.Button(_ar, text="💾 Save preview…", command=self._rms_save_preview).pack(side=tk.LEFT)
@@ -28072,10 +28073,11 @@ class LoRATrainerGUI:
         _bk = ttk.Button(_ar, text="🧪 Bake as new RefMod…", command=self._rms_bake)
         _bk.pack(side=tk.LEFT, padx=(6, 0))
         _rms_tip(_bk, "Writes a NEW mod file from one row. Carried into the file: that row's Strength "
-                     "multiplied by the master Strength (Retention), and the Fade-across-the-clip curve, "
-                     "applied to the latent itself. Load the new file in ComfyUI at 1.0 with no frame "
-                     "curve and you get this look with nothing to set. Not carried, because they act at "
-                     "render time: Copies, Shuffle and Change-during-the-render (use ComfyUI settings for those).")
+                     "multiplied by the master Strength (Retention), its Copies (as repeated frames), and the "
+                     "Fade-across-the-clip curve, applied to the latent itself. Load the new file in ComfyUI at "
+                     "1.0 with no frame curve and you get this look with nothing to set. One mod per file: two "
+                     "mods together are two loader slots in ComfyUI (the ComfyUI settings button gives the "
+                     "values). Not carried, because they act at render time: Shuffle and Change-during-the-render.")
         self._add_youtube_help_button(outer, "refmod_studio")
 
         # rows (restored or one empty), first scan, curve plot
@@ -29284,12 +29286,12 @@ class LoRATrainerGUI:
         win.bind("<Escape>", lambda e: win.destroy())
 
     def _rms_bake(self):
-        """Every active row with a strength, folded into ONE new file: strength × retention and
-        the frame curve per row, copies as repeated frames, all on the first row's canvas.
-        One row = that mod; several = the stack the preview shows, after a confirmation."""
+        """One row's mod, strength × retention and the frame curve folded in (copies as repeated
+        frames), written as a new file. One mod per file: the pack's file is a single reference
+        block and the model reads a block as one subject, so two mods concatenated collapse to
+        one of them (measured, 16 Sep 2026) — two mods together are two loader slots."""
         import torch
         from fizgig.minimax import refmod_apply as ra
-        from fizgig.minimax.refmod import cover_crop
         choices = []
         for row in self._rms_rows:
             if not row["on_var"].get():
@@ -29308,64 +29310,59 @@ class LoRATrainerGUI:
             messagebox.showinfo("Bake as new RefMod", "The master Strength (Retention) is 0 — nothing to bake.")
             return
         fc = self._rms_frame_curve()
-        stacked = len(choices) > 1
-        if stacked:
-            lines = "\n".join(f"  •  {n}  at {s_ * retention:.2f}" + (f"  ×{c} copies" if c > 1 else "")
-                               for n, s_, _m, c in choices)
-            if not messagebox.askokcancel(
-                    "Bake as new RefMod",
-                    f"These {len(choices)} mods will be baked TOGETHER into one file, stacked as the "
-                    f"preview shows them:\n\n{lines}\n\nLoad the new file at 1.0 and you get all of them "
-                    f"at once, nothing to set. Continue?"):
+        if len(choices) == 1:
+            pick = choices[0]
+        else:
+            win = tk.Toplevel(self.master)
+            win.title("Bake as new RefMod — which mod?")
+            win.configure(bg=COLORS["bg_deep"])
+            tk.Label(win, text=("A file holds one mod. The pack loads a file as a single reference block, and "
+                                "the model reads a block as one subject — so two mods written into one file "
+                                "come out as one of them, not both. To use these mods together in ComfyUI, "
+                                "load their files in two loader slots at the strengths shown here (the "
+                                "ComfyUI settings button gives the exact values).\n\nPick the mod to bake:"),
+                     font=(FONT_FAMILY, 10), fg=COLORS["text_explain"], bg=COLORS["bg_deep"],
+                     wraplength=520, justify=tk.LEFT).pack(padx=12, pady=(10, 6), anchor=tk.W)
+            var = tk.StringVar(value=f"{choices[0][0]} @ {choices[0][1] * retention:.2f}")
+            opts = [f"{n} @ {s_ * retention:.2f}" for n, s_, _m, _c in choices]
+            ttk.Combobox(win, textvariable=var, values=opts, state="readonly", width=48).pack(padx=12)
+            res = {"pick": None}
+
+            def _ok():
+                res["pick"] = choices[opts.index(var.get())]
+                win.destroy()
+            ttk.Button(win, text="Bake this one", command=_ok).pack(pady=8)
+            win.grab_set()
+            self.master.wait_window(win)
+            pick = res["pick"]
+            if pick is None:
                 return
-        first_name, _s0, first_meta, _c0 = choices[0]
-        default_name = (first_name + "_studio") if not stacked else ("+".join(n for n, *_ in choices) + "_stack")
+        name, strength, meta, copies = pick
+        eff = strength * retention
         from tkinter import filedialog
         p = filedialog.asksaveasfilename(title="Bake as new RefMod", defaultextension=".safetensors",
-                                         initialdir=os.path.dirname(first_meta["path"]),
-                                         initialfile=f"{default_name}.safetensors",
+                                         initialdir=os.path.dirname(meta["path"]), initialfile=f"{name}_studio.safetensors",
                                          filetypes=[("RefMod", "*.safetensors")])
         if not p:
             return
         try:
-            parts, tags, notes, desc, shapes = [], [], [], [], []
-            canvas = None
-            for name, strength, meta, copies in choices:
-                z = self._rms_latent(meta)
-                baked, t_, note = ra.bake(z, meta, strength=strength, retention=retention, curve=fc)
-                if canvas is None:
-                    canvas = (int(baked.shape[-2]), int(baked.shape[-1]))
-                elif (int(baked.shape[-2]), int(baked.shape[-1])) != canvas:
-                    # one file is one stack: bring this mod onto the first row's canvas, frame by frame
-                    frames = [cover_crop(baked[:, :, t].float(), canvas[0], canvas[1]) for t in range(baked.shape[2])]
-                    baked = torch.stack(frames, dim=2).to(baked.dtype)
-                if copies > 1:
-                    baked = baked.repeat(1, 1, copies, 1, 1)
-                parts.append(baked)
-                tags.extend(x for x in t_ if x not in tags)
-                notes.append(note)
-                desc.append(str(meta.get("description", "") or name))
-                shapes.append(str(meta.get("source_shape", "")))
-            latent = torch.cat(parts, dim=2) if stacked else parts[0]
-            meta_out = dict(first_meta)
-            if stacked:
-                meta_out["description"] = " + ".join(d for d in desc if d)
-                meta_out["source_shape"] = " + ".join(x for x in shapes if x)
-                meta_out["pool"] = f"stack of {len(choices)}: " + ", ".join(n for n, *_ in choices)
-                tags.append("studio: stacked " + ", ".join(f"{n}@{s_ * retention:.2f}" for n, s_, _m, _c in choices))
-            out = ra.save_baked(p[:-len(".safetensors")] if p.lower().endswith(".safetensors") else p,
-                                latent, meta_out, tags)
+            z = self._rms_latent(meta)
+            baked, tags, note = ra.bake(z, meta, strength=strength, retention=retention, curve=fc)
+            if copies > 1:
+                baked = baked.repeat(1, 1, copies, 1, 1)   # copies = the frames repeated (the pack's own multiplier)
+                tags.append(f"studio: copies {copies}")
+            out = ra.save_baked(p[:-len(".safetensors")] if p.lower().endswith(".safetensors") else p, baked, meta, tags)
         except Exception as e:
             messagebox.showerror("Bake as new RefMod", f"Couldn't bake:\n{e}")
             return
         self._rms_rescan(quiet=True)
-        what = (f"{len(choices)} mods stacked" if stacked else f"{first_name} at {choices[0][1] * retention:.2f}")
-        self.rms_status_var.set(f"Baked {os.path.basename(out)} ({what}).")
+        self.rms_status_var.set(f"Baked {os.path.basename(out)} ({name} at {eff:.2f}).")
         messagebox.showinfo("Bake as new RefMod",
-                            f"Wrote {out}\n\nLoads at strength 1.0 in any loader as {what}"
-                            f"{' with the frame curve' if fc[0] != 'constant' or fc[1] != 'linear' or fc[2] < 1 else ''}.\n\n"
-                            "Baked: each mod's strength × the master Strength, copies (as repeated frames) and the "
-                            "frame curve. Not baked (they act at render time): Shuffle and the step curve.")
+                            f"Wrote {out}\n\nLoads at strength 1.0 in any loader as {name} at {eff:.2f}"
+                            f"{' with the frame curve' if fc[0] != 'constant' or fc[1] != 'linear' or fc[2] < 1 else ''}"
+                            f"{f', {copies} copies' if copies > 1 else ''}.\n\n"
+                            "Baked: strength × the master Strength, copies (as repeated frames) and the frame curve. "
+                            "Not baked (they act at render time): Shuffle and the step curve.")
 
     def _repair_explore_in_explorer(self):
         """Send current Repair Studio slider state to the Explorer for evolutionary discovery."""
