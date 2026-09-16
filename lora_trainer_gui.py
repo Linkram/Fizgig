@@ -29176,8 +29176,11 @@ class LoRATrainerGUI:
                "readout": ra.comfy_readout(rows, retention=retention, frame_curve=fc, scramble_seed=self._rms_scramble(),
                                            step_curve=sc, step_on=step_on),
                "label": ov.get("label", "")}
+        # Everything the No-mod render depends on, Sound included: the audio rows ride the same
+        # denoise, so a baseline made without sound is not the baseline for a render with it
+        # (@mabseyuk, 16 Sep 2026).
         job["baseline_key"] = (job["prompt"], seed, w, h, frames, st, tu, self._rms_base_mode(),
-                               self.rms_model_var.get())
+                               self.rms_model_var.get(), job["with_audio"])
         return job
 
     def _rms_describe_job(self, job):
