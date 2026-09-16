@@ -4426,8 +4426,10 @@ class LoRATrainerGUI:
             self.entries["MINIMAX_REFMOD_AUDIO"].pack(side=tk.LEFT)
             ToolTip(self.entries["MINIMAX_REFMOD_AUDIO"],
                     "Also write <name>_audio.safetensors: the folder's sound (each clip's soundtrack and "
-                    "any audio file, in file order, muted clips skipped) through the H3 audio VAE, the "
-                    "pack's audio RefMod. A plain encode, no training. Load it in the same loader slot "
+                    "any audio file, in file order) through the H3 audio VAE, the pack's audio RefMod. "
+                    "A clip Gizmo marked mute (_mute in its name) lends no sound, the same rule as H3 "
+                    "training, so you choose which clips the mod hears. A plain encode, no training. "
+                    "Load it in the same loader slot "
                     "as the visual mod (components: Audio) or on its own. Needs the Audio VAE path in "
                     "Preferences. RefMod Studio renders visual mods only; audio mods play in ComfyUI. "
                     "The pack's own tests carried music across but not a speaker's voice.")
