@@ -28129,7 +28129,7 @@ class LoRATrainerGUI:
         row["on_var"] = tk.BooleanVar(value=bool(saved.get("on", True)))
         ttk.Checkbutton(fr, variable=row["on_var"], command=lambda: self._rms_row_changed(row)).grid(row=0, column=0)
         row["mod_var"] = tk.StringVar(value=str(saved.get("mod", ra.NONE_MOD)))
-        row["mod_combo"] = ttk.Combobox(fr, textvariable=row["mod_var"], values=names, state="readonly", width=24)
+        row["mod_combo"] = ttk.Combobox(fr, textvariable=row["mod_var"], values=names, state="readonly", width=48)
         row["mod_combo"].grid(row=0, column=1, padx=(2, 6))
         row["mod_combo"].bind("<<ComboboxSelected>>", lambda e: self._rms_row_changed(row))
         row["value_var"] = tk.DoubleVar(value=float(saved.get("value", 1.0)))
@@ -28153,7 +28153,7 @@ class LoRATrainerGUI:
                      "stronger pull; every copy costs its full tokens.")
         ttk.Label(fr, text="vs").grid(row=0, column=7, padx=(12, 2))
         row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
-        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, state="readonly", width=20)
+        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, state="readonly", width=36)
         row["b_combo"].grid(row=0, column=8)
         row["b_combo"].bind("<<ComboboxSelected>>", lambda e: self._rms_row_changed(row))
         _rms_tip(row["b_combo"], "Pick a second mod to turn the row into the Axis node: the slider runs "
