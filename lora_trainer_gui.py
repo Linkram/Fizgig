@@ -7710,14 +7710,23 @@ class LoRATrainerGUI:
             return False
 
     def _refmod_ref_cache_dirs(self):
-        """The '-refs' sibling of the dataset's cache folder — the same rule the TOML builder
-        uses (<cache root>/<folder>-<hash>, or the image folder itself when no root is set)."""
-        img = self.image_folder_var.get().strip()
-        if not img:
-            return []
+        """The '-refs' sibling of each dataset folder's cache folder — the same rule the TOML
+        builder uses (<cache root>/<folder>-<hash>, or the image folder itself when no root is
+        set), for every [[datasets]] block (Multi Concept adds folders; the reference pass
+        suffixes them all)."""
+        try:
+            folders = [f for f in self._dataset_folders() if f]
+        except Exception:
+            folders = []
+        if not folders:
+            img = self.image_folder_var.get().strip()
+            folders = [img] if img else []
         root = self.prefs_vars["cache_dir"].get().strip() if "cache_dir" in self.prefs_vars else ""
-        base = self._cache_dir_for(root, img) if root else img
-        return [base.rstrip("/\\") + "-refs"]
+        out = []
+        for img in folders:
+            base = self._cache_dir_for(root, img) if root else img
+            out.append(base.rstrip("/\\") + "-refs")
+        return out
 
     def _refmod_plain_encode(self) -> bool:
         """RefMod at Steps 0: a plain encode of the references. Nothing trains, so the run
@@ -30855,6 +30864,14 @@ class LoRATrainerGUI:
         # queue run 2) retargeted run 1: dataset 2 trained under run 1's name and
         # settings. From here on, settings["DATASET_CONFIG"] is the run's immutable
         # snapshot; the live TOML belongs to the editor alone.
+        # RefMod: the TOML's resolution follows Steps (0.25 MP whenever the optimiser runs),
+        # a rule the edit-time writer applies; rewrite once here so the snapshot below
+        # carries it whatever order the last preset/queue item set things in.
+        if self._is_refmod_arch() and not _is_resuming_clear:
+            try:
+                self.auto_save_dataset_config_silent()
+            except Exception:
+                pass
         self.settings["DATASET_CONFIG"] = self._snapshot_dataset_config_for_run(
             self.settings.get("DATASET_CONFIG", ""), resuming=_is_resuming_clear,
             prev_config=_prev_dataset_config)
@@ -31953,8 +31970,17 @@ class LoRATrainerGUI:
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]
         if self._refmod_ref_pass_needed():
+            # With caching off the reference pass never runs, so only a '-refs' folder that
+            # already exists (an earlier run's) can be used; otherwise the references come
+            # from the dataset caches and the console says so.
+            _caching = bool(getattr(self, "enable_cache_var", None) and self.enable_cache_var.get())
             for _d in self._refmod_ref_cache_dirs():
-                cmd += ["--ref_cache_dir", _d]
+                if _caching or os.path.isdir(_d):
+                    cmd += ["--ref_cache_dir", _d]
+                else:
+                    self.update_console(f"[refmod] caching is off and {_d} does not exist — the "
+                                        f"references come from the dataset caches (0.25 MP) this "
+                                        f"run; tick Enable Cache for a Target MP reference pass\n")
         if self.sample_enabled_var.get():
             prompt_file = self._write_krea2_sample_prompts("minimax_prompts.txt")
             _te = self._krea2_pref("minimax_text_encoder")
