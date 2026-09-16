@@ -1100,10 +1100,21 @@ REFMOD_BUILT_IN_PRESETS = {
     # (portraits 70 vs 60 for 8), and 200 optimisation steps add ~5 on top. A companion LoRA
     # in the same file was tried in eleven configurations and never lifted likeness beyond
     # noise while dropping portraits ~10 (pose drift) — removed 14 Sep 2026.
-    "✨ MiniMax H3 RefMod (Full reference, 16 refs, optimised)": {
+    "✨ RefMod — Fizgig recipe (Full reference, 16 refs, optimised)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         **REFMOD_DEFAULTS,
+        "MINIMAX_CLIP_STILL": True,
+    },
+    # The community recipe (16 Sep 2026): what the most-downloaded library was made with —
+    # encode mode (no optimisation), refs at a 1024px short edge (~1 MP), under an 8 192-token
+    # cap (8 references at 1 MP ~ 8 000 tokens). Same photos, both ways, for a fair comparison.
+    "✨ RefMod — community recipe (plain encode, 8 refs at 1 MP)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        "MINIMAX_REFMOD_REFS": "8",
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
     },
 }
