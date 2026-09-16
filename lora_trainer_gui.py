@@ -1119,6 +1119,27 @@ REFMOD_BUILT_IN_PRESETS = {
         **REFMOD_DEFAULTS,
         "MINIMAX_CLIP_STILL": True,
     },
+    # Style (16 Sep 2026): a look, not a person — plain encode of EVERY still (the optimiser's
+    # loss rewards reproducing the stills themselves, which on a style set means their subjects
+    # and framing; untested there, so Steps stays 0 and anyone can type a number). Community =
+    # the pack's concept recipe, the pooled 16x16 grid (stacks under the cap, carries palette
+    # and feel); high fidelity = Full at 0.25 MP (keeps texture, grain, brushwork).
+    "✨ RefMod — style, community (16×16 grid, all refs, plain encode)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[2],
+        "MINIMAX_REFMOD_REFS": "all",
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "DATASET_MEGAPIXELS": "0.25",
+        "MINIMAX_CLIP_STILL": True,
+    },
+    "✨ RefMod — style, high fidelity (Full at 0.25 MP, all refs, plain encode)": {
+        **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
+        "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
+        "MINIMAX_REFMOD_REFS": "all",
+        "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
+        "DATASET_MEGAPIXELS": "0.25",
+        "MINIMAX_CLIP_STILL": True,
+    },
 }
 
 
