@@ -72,6 +72,10 @@ def setup_parser():
     p.add_argument("--concept_type", default="identity",
                    choices=["identity", "style", "pose_motion", "clothing", "background", "generic"],
                    help="what the mod is (the pack's concept types; default identity)")
+    p.add_argument("--token_cap", type=int, default=0,
+                   help="thin the mod to this many tokens the way the node pack's extractor does "
+                        "(near-duplicate frames dropped first, then an even resample); 0 = keep "
+                        "every frame (default). The pack's own default is 5120")
     p.add_argument("--holdout_refs", action="store_true",
                    help="hold the reference stills OUT of the optimiser's training set (default: it "
                         "trains on every still, references included)")
@@ -106,7 +110,7 @@ def main():
                sample_seed=a.sample_seed, preview_every=a.preview_every, sample_frames=a.sample_frames,
                turbo_lora_path=a.turbo_lora_path, turbo_lora_strength=a.turbo_lora_strength,
                description=a.description, concept_type=a.concept_type, init_from=a.init_from,
-               exclude_refs=a.holdout_refs,
+               exclude_refs=a.holdout_refs, token_cap=a.token_cap,
                ref_cache_dirs=a.ref_cache_dir or None, ref_subset=a.ref_subset, clips=a.clips,
                sigma_range=((a.sigma_min, a.sigma_max) if a.sigma_min >= 0 and a.sigma_max > 0 else None))
 

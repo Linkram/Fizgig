@@ -395,6 +395,59 @@ def token_count(latent: torch.Tensor) -> int:
     return int(latent.shape[2]) * (int(latent.shape[3]) // 2) * (int(latent.shape[4]) // 2)
 
 
+def dedup_frame_indices(z: torch.Tensor, threshold: float = 0.02) -> List[int]:
+    """Indices of the frames kept by the node pack's greedy near-duplicate rule.
+
+    Each frame is compared with the last KEPT frame: mean-abs difference over the frames' own
+    mean magnitude, dropped below `threshold`. A clip's static run (a held shot, a talking head)
+    is mostly codec noise frame to frame and each frame still costs its tokens at every step;
+    distinct photos land well above the threshold and all survive. `z` is [1, 24, T, h, w]."""
+    t = int(z.shape[2])
+    if t <= 1:
+        return list(range(t))
+    flat = z[0].float()
+    kept = [0]
+    prev = flat[:, 0]
+    for i in range(1, t):
+        cur = flat[:, i]
+        denom = (cur.abs().mean() + prev.abs().mean()) / 2 + 1e-6
+        diff = (cur - prev).abs().mean() / denom
+        if float(diff) >= threshold:
+            kept.append(i)
+            prev = cur
+    return kept
+
+
+def fit_token_budget(latent: torch.Tensor, cap: int, label: str = "mod") -> Tuple[torch.Tensor, List[int]]:
+    """The node pack's extractor rule, at make time: bring the mod under `cap` tokens.
+
+    Nothing happens under the cap. Over it, two passes in the pack's order: near-duplicate
+    frames go first (free — they carry nothing new), then a uniform resample down to the most
+    frames that fit. The frame size is never touched (that would move the rope grid). Returns
+    the latent and the indices of the frames kept, so the caller can say which references
+    survived."""
+    t = int(latent.shape[2])
+    per_frame = (int(latent.shape[3]) // 2) * (int(latent.shape[4]) // 2)
+    kept = list(range(t))
+    if cap <= 0 or per_frame * t <= cap:
+        return latent, kept
+    kept = dedup_frame_indices(latent)
+    if len(kept) < t:
+        logger.info(f"[refmod] {label}: over the {cap:,}-token cap — dropped {t - len(kept)} "
+                    f"near-duplicate frame(s) ({t} -> {len(kept)})")
+    if per_frame * len(kept) > cap:
+        fit_t = max(1, cap // per_frame)
+        if fit_t < len(kept):
+            idx = torch.linspace(0, len(kept) - 1, fit_t).round().long().tolist()
+            kept = [kept[i] for i in idx]
+            logger.info(f"[refmod] {label}: still over the cap — resampled to {fit_t} frame(s) "
+                        f"spread evenly across the set")
+        if per_frame * len(kept) > cap:
+            logger.warning(f"[refmod] {label}: one frame alone is {per_frame:,} tokens, above the "
+                           f"{cap:,} cap — a lower Target MP or a pooled Grid is the only way under it")
+    return latent[:, :, kept].contiguous(), kept
+
+
 # ─── the base model, planned like a training run ────────────────────────────────────────────
 
 def plan_and_load_dit(dit_path: str, *, device, dtype, base_quant: str = "auto",
@@ -714,7 +767,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
                ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1,
-               clips: str = "still", concept_type: str = "identity") -> str:
+               clips: str = "still", concept_type: str = "identity", token_cap: int = 0) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
@@ -782,6 +835,23 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                     + ", ".join(r[0] for r in refs))
         mod0, pool_label = build_mod(refs, grid, faces)
         mode = "training" if grid is not None else "encode"
+        if token_cap and int(token_cap) > 0:
+            # Thinning (the pack's extractor rule): only over the cap. A reference is kept when
+            # any of its frames is; a motion clip keeps just its surviving frames.
+            _owner = [i for i, r in enumerate(refs) for _ in range(int(r[1].shape[1]) if r[1].dim() == 4 else 1)]
+            _before = int(mod0.shape[2])
+            mod0, _kept = fit_token_budget(mod0, int(token_cap), label=output_name)
+            if len(_kept) < _before:
+                _keep_ref = sorted({_owner[k] for k in _kept})
+                _per_ref = {i: sum(1 for k in _kept if _owner[k] == i) for i in _keep_ref}
+                refs = [r for i, r in enumerate(refs) if i in _per_ref]
+                _ref_frames = [_per_ref[i] for i in _keep_ref]
+                logger.info(f"[refmod] thinned to {len(_kept)} frame(s) from {len(refs)} reference(s) "
+                            f"under the {int(token_cap):,}-token cap")
+            else:
+                _ref_frames = None
+        else:
+            _ref_frames = None
         _tok = token_count(mod0)
         logger.info(f"[refmod] mod {tuple(mod0.shape)} ({pool_label}, {_tok} tokens, "
                     f"mode {mode}) — the node pack's extractor caps at {NODE_TOKEN_CAP} by default")
@@ -791,8 +861,9 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                            f"those tokens rides in the sequence at each sampling step — slower and "
                            f"more VRAM at generation. Fewer References or a pooled Grid brings it "
                            f"down.")
-        source_shape = " +".join(f"{(r[1].shape[1] if r[1].dim() == 4 else 1)}x{r[1].shape[-2]}x{r[1].shape[-1]}"
-                                 for r in refs)
+        source_shape = " +".join(
+            f"{(_ref_frames[i] if _ref_frames else (r[1].shape[1] if r[1].dim() == 4 else 1))}x{r[1].shape[-2]}x{r[1].shape[-1]}"
+            for i, r in enumerate(refs))
 
     # The per-step subset draws from the references with a large face in frame (at least half
     # the largest face's area), so every step's gradient comes from a face-sized signal.
@@ -887,7 +958,8 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                       extra={"ss_refmod_steps": str(steps), "ss_refmod_lr": f"{lr:g}",
                              "ss_refmod_ref_subset": str(int(ref_subset or 0)),
                              "ss_refmod_pull": f"{pull:g}", "ss_refmod_refs": str(len(refs)),
-                             "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full")})
+                             "ss_refmod_base": base_mode, "ss_refmod_grid": str(grid or "full"),
+                             "ss_refmod_token_cap": str(int(token_cap or 0))})
     mb = os.path.getsize(out) / 1024 / 1024
     logger.info(f"[refmod] saved {out} ({token_count(mod)} tokens, {mb:.2f} MB) — copy it to "
                 f"ComfyUI/models/refmods/ and load it with the ComfyUI-MiniMaxH3Mod nodes")

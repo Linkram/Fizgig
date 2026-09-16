@@ -1106,13 +1106,29 @@ REFMOD_CLIPS_OPTIONS = ["as their sharpest still", "as motion (all their frames)
 # together they are the mod's HINT — what RefMod Studio's '+ mod hints' and the pack's Loader
 # emit into the prompt ("identity: a ginger woman with messy hair").
 REFMOD_CONCEPT_OPTIONS = ["identity", "style", "pose_motion", "clothing", "background", "generic"]
+# Token cap (16 Sep 2026): the pack's extractor thins a mod to its cap — near-duplicate frames
+# first, then an even resample. Off by default: the person presets are measured at their full
+# reference count (16 at 1 MP is ~16,000 tokens), so a cap only belongs where the user wants it —
+# clips as motion, above all, where a held shot is mostly repeated frames.
+REFMOD_TOKEN_CAP_OPTIONS = ["off (keep every frame)", "5,120 (the pack's default)", "8,192 (the library's files)",
+                            "16,384"]
 REFMOD_DEFAULTS = {
     "MINIMAX_REFMOD_REFS": "16",
     "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[1],
     "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
     "MINIMAX_REFMOD_DESC": "",
     "MINIMAX_REFMOD_CONCEPT": REFMOD_CONCEPT_OPTIONS[0],
+    "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
 }
+
+
+def refmod_token_cap_value(label) -> str:
+    """'5,120 (the pack's default)' -> '5120'; 'off …', blank or unparsable -> '0'."""
+    head = str(label or "").strip().split(" ")[0].replace(",", "")
+    try:
+        return str(max(0, int(head)))
+    except ValueError:
+        return "0"
 
 
 def refmod_clips_value(label) -> str:
@@ -1128,6 +1144,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "8",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
         "MINIMAX_REFMOD_CONCEPT": "identity",
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
@@ -1165,6 +1182,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "all",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
         "MINIMAX_REFMOD_CONCEPT": "style",
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
@@ -1177,6 +1195,7 @@ REFMOD_BUILT_IN_PRESETS = {
         "MINIMAX_REFMOD_REFS": "8",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
+        "MINIMAX_REFMOD_TOKEN_CAP": REFMOD_TOKEN_CAP_OPTIONS[0],
         "MINIMAX_REFMOD_CONCEPT": "style",
         "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
@@ -4359,6 +4378,19 @@ class LoRATrainerGUI:
             ToolTip(self.entries["MINIMAX_REFMOD_CONCEPT"],
                     "What the mod is, in the pack's terms: identity (a person), style (a look), "
                     "pose_motion (a dance, a camera move), clothing, background, generic.")
+            tk.Label(self._refmod_frame2, text="Token cap:", font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
+            self.entries["MINIMAX_REFMOD_TOKEN_CAP"] = ttk.Combobox(
+                self._refmod_frame2, values=list(REFMOD_TOKEN_CAP_OPTIONS), state="readonly", width=24)
+            _tc = str(self.settings.get("MINIMAX_REFMOD_TOKEN_CAP", REFMOD_DEFAULTS["MINIMAX_REFMOD_TOKEN_CAP"]))
+            self.entries["MINIMAX_REFMOD_TOKEN_CAP"].set(_tc if _tc in REFMOD_TOKEN_CAP_OPTIONS else REFMOD_TOKEN_CAP_OPTIONS[0])
+            self.entries["MINIMAX_REFMOD_TOKEN_CAP"].pack(side=tk.LEFT)
+            ToolTip(self.entries["MINIMAX_REFMOD_TOKEN_CAP"],
+                    "Thin the mod to a token budget the way the pack's extractor does: only when the mod is "
+                    "over the cap, frames that are near-duplicates of the last kept one go first (a held shot "
+                    "in a clip is mostly those), then the rest are spread evenly down to what fits. Off keeps "
+                    "every frame — the person presets are measured that way. Worth setting for clips as "
+                    "motion, where two similar clips would otherwise carry the same frames twice.")
             for _k in ("MINIMAX_REFMOD_GRID", "MINIMAX_REFMOD_REFS"):
                 self.entries[_k].bind("<<ComboboxSelected>>", lambda e: self._refresh_refmod_tokens())
                 self.entries[_k].bind("<KeyRelease>", lambda e: self._refresh_refmod_tokens())
@@ -32300,6 +32332,9 @@ class LoRATrainerGUI:
         _desc = str(self.settings.get("MINIMAX_REFMOD_DESC", "") or "").strip()
         if _desc:
             cmd += ["--description", _desc]
+        _cap = refmod_token_cap_value(self.settings.get("MINIMAX_REFMOD_TOKEN_CAP", _d["MINIMAX_REFMOD_TOKEN_CAP"]))
+        if _cap != "0":
+            cmd += ["--token_cap", _cap]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
         # NF4 always (Peter, 16 Sep 2026): 10.5 GB resident, so the step fits without recompute
