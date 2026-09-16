@@ -2076,8 +2076,8 @@ class LoRATrainerGUI:
         self._dataset_config_var = tk.StringVar(value=self.settings["DATASET_CONFIG"])
 
         # The LoRA output folder is remembered PER MODEL FAMILY (16 Sep 2026): the family the
-        # app opens on gets its own folder back; a family never used before keeps whatever the
-        # field last held; the default is output_loras inside Fizgig.
+        # app opens on gets its own folder back; a family never used before gets the default,
+        # output_loras inside Fizgig (never another family's folder).
         _od = self.last_used.get("lora_output_dirs")
         self._output_dir_memory = dict(_od) if isinstance(_od, dict) else {}
         _start_arch = str(self.last_used.get("architecture") or "")
@@ -9435,10 +9435,12 @@ class LoRATrainerGUI:
 
     def _restore_output_dir_for_family(self, arch: str) -> None:
         """Put a family's remembered output folder into the field (and settings). A family with
-        no memory keeps whatever the field holds, so nothing moves until the user decides."""
-        d = str(self._output_dir_memory.get(str(arch), "") or "").strip()
+        no memory gets the default, output_loras inside Fizgig — never the folder the previous
+        family was using (Peter, 16 Sep 2026: RefMod's ComfyUI refmods folder followed him to
+        Krea 2)."""
+        d = str(self._output_dir_memory.get(str(arch), "") or "").strip() or OUTPUT_LORAS_DIR
         e = self.entries.get("LORA_OUTPUT_DIR") if hasattr(self, "entries") else None
-        if not d or e is None:
+        if e is None:
             return
         try:
             if e.get().strip() != d:
