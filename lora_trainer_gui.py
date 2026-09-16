@@ -27766,20 +27766,21 @@ class LoRATrainerGUI:
             "files stay as made (to write one out with a setting baked in, see Actions at the "
             "bottom). Each row is one mod: Strength is how strongly it applies (0 off, 1 as stored), "
             "Copies is how many times it rides in the bundle (more copies pull harder, each costs its "
-            "tokens). One mod is one row. To use two together — a character and a style, say — stack "
-            "a second row with the button below; each row keeps its own strength and copies, so one "
-            "can sit below 1 if it tends to overbake, and both go into the render (in ComfyUI that is "
-            "two loader slots, one file each). Untick a row to leave it out.")
+            "tokens). One mod is one row. The button below adds a second row so you can see what two "
+            "mods look like together — a character and a style, say — each at its own strength, the "
+            "way two loader slots run them in ComfyUI. That is for trying things: Bake writes one mod "
+            "per file. Untick a row to leave it out.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
         self._rms_rows_frame.columnconfigure(0, weight=1)
         _ft = tk.Frame(mods, bg=COLORS["bg_surface"])
         _ft.grid(row=2, column=0, sticky=tk.EW, pady=(6, 0))
-        self._rms_add_btn = ttk.Button(_ft, text="+ Stack another mod (e.g. a style with a character)",
+        self._rms_add_btn = ttk.Button(_ft, text="+ Add a second mod, to see two together (e.g. a style with a character)",
                                        command=lambda: self._rms_add_row())
-        _rms_tip(self._rms_add_btn, "Adds a row for a second mod. Both go into the render together, each at its "
-                                    "own strength and copies — the pack's loader with two slots filled.")
+        _rms_tip(self._rms_add_btn, "For experimenting: a second row renders alongside the first so you can see the "
+                                    "two together, each at its own strength — the pack's loader with two slots "
+                                    "filled. Bake still writes one mod per file.")
         self._rms_add_btn.pack(side=tk.LEFT)
         self.rms_tokens_var = tk.StringVar(value="Tokens: 0 / 5 120")
         self._rms_tokens_lbl = tk.Label(_ft, textvariable=self.rms_tokens_var, font=(FONT_FAMILY, 10, "bold"),
