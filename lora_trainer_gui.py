@@ -27694,9 +27694,10 @@ class LoRATrainerGUI:
 
         self._add_tab_banner(
             outer, "RefMod Studio",
-            "Test a RefMod the way ComfyUI will run it: strengths, copies, A/B axis, retention, "
-            "frame and step curves — rendered against the ref2va base with sound, "
-            "No mod beside With mods.")
+            "Try your RefMods before ComfyUI. Point it at the folder your mods live in, pick one "
+            "or a few, set how strongly they apply, and render a still or a short clip with and "
+            "without them, side by side on the same seed. Every dial here is a setting on the "
+            "ComfyUI-MiniMaxH3Mod nodes, so what works here is what to type there.")
 
         # ── Card 1: Setup ──────────────────────────────────────────────────────────────
         setup = self._start_section_card(
