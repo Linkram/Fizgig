@@ -26694,7 +26694,7 @@ class LoRATrainerGUI:
             pass
 
     def _repair_clip_player_open(self, clips=None, labels=None, title=None, metrics=True,
-                                 nolora=True, stem="repair", status_var=None):
+                                 nolora=True, stem="repair", status_var=None, sides=None):
         """Open (or raise) the H3 clip player — baseline | tweaked looping side by side.
 
         Repair Studio calls it bare. Another tab (RefMod Studio) passes its own `clips` dict
@@ -26811,7 +26811,7 @@ class LoRATrainerGUI:
 
         self._repair_player = {
             "win": win, "panes": panes, "titles": titles, "top": top,
-            "sides": ["nolora", "baseline", "tweaked"],   # No-LoRA on the LEFT (Peter)
+            "sides": list(sides) if sides else ["nolora", "baseline", "tweaked"],   # No-LoRA on the LEFT (Peter); a caller may order its own panes
             "idx": 0, "playing": False, "t0": None, "offset": 0.0, "speed": 1.0, "gen": 0,
             "job": None, "cache": {}, "n": 1, "photo": [None, None, None], "play_btn": play_btn,
             "speed_var": speed_var, "sound_var": sound_var, "scrub": scrub, "pos_lbl": pos_lbl,
@@ -27766,18 +27766,20 @@ class LoRATrainerGUI:
             "files stay as made (to write one out with a setting baked in, see Actions at the "
             "bottom). Each row is one mod: Strength is how strongly it applies (0 off, 1 as stored), "
             "Copies is how many times it rides in the bundle (more copies pull harder, each costs its "
-            "tokens). The 'vs' picker on the second line is optional: pick a second mod there — the "
-            "same person made two ways, or two different people — and a Balance slider appears: left "
-            "is all the first mod, right is all the second, centre is neither, and Strength above sets "
-            "how strongly whichever side wins is used (the pack's Axis node). Untick a row to leave "
-            "it out.")
+            "tokens). One mod is one row. To use two together — a character and a style, say — stack "
+            "a second row with the button below; each row keeps its own strength and copies, so one "
+            "can sit below 1 if it tends to overbake, and both go into the render. Untick a row to "
+            "leave it out.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
         self._rms_rows_frame.columnconfigure(0, weight=1)
         _ft = tk.Frame(mods, bg=COLORS["bg_surface"])
         _ft.grid(row=2, column=0, sticky=tk.EW, pady=(6, 0))
-        self._rms_add_btn = ttk.Button(_ft, text="+ Add row", width=10, command=lambda: self._rms_add_row())
+        self._rms_add_btn = ttk.Button(_ft, text="+ Stack another mod (e.g. a style with a character)",
+                                       command=lambda: self._rms_add_row())
+        _rms_tip(self._rms_add_btn, "Adds a row for a second mod. Both go into the render together, each at its "
+                                    "own strength and copies — the pack's loader with two slots filled.")
         self._rms_add_btn.pack(side=tk.LEFT)
         self.rms_tokens_var = tk.StringVar(value="Tokens: 0 / 5 120")
         self._rms_tokens_lbl = tk.Label(_ft, textvariable=self.rms_tokens_var, font=(FONT_FAMILY, 10, "bold"),
@@ -28204,12 +28206,10 @@ class LoRATrainerGUI:
         self._rms_mod_meta = {m["name"]: m for m in found}
         names = [ra.NONE_MOD] + list(self._rms_mod_meta)
         for row in self._rms_rows:
-            for _cb in (row["mod_combo"], row["b_combo"]):
-                _cb.configure(values=names, width=self._rms_picker_width(names))
-                _cb._rms_all = list(names)
-            for var in (row["mod_var"], row["b_var"]):
-                if var.get() not in names:
-                    var.set(ra.NONE_MOD)
+            row["mod_combo"].configure(values=names, width=self._rms_picker_width(names))
+            row["mod_combo"]._rms_all = list(names)
+            if row["mod_var"].get() not in names:
+                row["mod_var"].set(ra.NONE_MOD)
             self._rms_row_refresh(row)
         if not quiet or found:
             self.rms_status_var.set(f"{len(found)} RefMod{'s' if len(found) != 1 else ''} in {folder or '(no folder)'}.")
@@ -28247,8 +28247,7 @@ class LoRATrainerGUI:
         _ve.pack(side=tk.LEFT, padx=(4, 0))
         _ve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
         _ve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
-        _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored). With a second mod picked "
-                               "below, it is how strongly the side the Balance picks is used.")
+        _rms_tip(row["scale"], "How strongly this mod applies (0 = off, 1 = as stored).")
         ttk.Label(fr, text="Copies:").grid(row=0, column=4, padx=(12, 2))
         row["copies_var"] = tk.StringVar(value=str(int(saved.get("copies", 1))))
         _cs = ttk.Spinbox(fr, from_=1, to=ra.MAX_COPIES, width=3, textvariable=row["copies_var"],
@@ -28260,39 +28259,12 @@ class LoRATrainerGUI:
         _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
         _x.grid(row=0, column=6, padx=(12, 0))
         row["sf"] = _sf
-        # Line 2: the optional second mod — the same layout as line 1, its picker under the first.
-        tk.Label(fr, text="vs", font=(FONT_FAMILY, 10), fg=COLORS["text_secondary"], bg=bg).grid(row=1, column=0, pady=(4, 0))
-        row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
-        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
-        row["b_combo"].grid(row=1, column=1, padx=(2, 6), sticky=tk.W, pady=(4, 0))
-        self._rms_make_searchable(row["b_combo"], lambda: self._rms_row_changed(row))
-        _rms_tip(row["b_combo"], "Optional second mod. Pick one and a Balance slider appears below: left is "
-                                "the first mod, right is the second, centre is neither. Strength above is "
-                                "how strongly whichever side wins is used. Leave at (none) for one mod.")
-        # Line 3 (only with a second mod): the balance, under Strength.
-        row["balance_var"] = tk.DoubleVar(value=float(saved.get("balance", -1.0)))
-        row["balance_lbl"] = tk.Label(fr, text="Balance:", font=(FONT_FAMILY, 10), fg=COLORS["text_primary"], bg=bg)
-        row["bf"] = tk.Frame(fr, bg=bg)
-        tk.Label(row["bf"], text="first ◀", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg).pack(side=tk.LEFT, padx=(0, 4))
-        row["balance_scale"] = ttk.Scale(row["bf"], from_=-1.0, to=1.0, orient=tk.HORIZONTAL, length=150,
-                                         variable=row["balance_var"], command=lambda v, rw=row: self._rms_balance_moved(rw))
-        row["balance_scale"].pack(side=tk.LEFT)
-        tk.Label(row["bf"], text="▶ second", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg).pack(side=tk.LEFT, padx=(4, 4))
-        row["balance_str"] = tk.StringVar(value=f"{row['balance_var'].get():+.2f}")
-        _bve = ttk.Entry(row["bf"], textvariable=row["balance_str"], width=6)
-        _bve.pack(side=tk.LEFT)
-        _bve.bind("<Return>", lambda e, rw=row: self._rms_balance_typed(rw))
-        _bve.bind("<FocusOut>", lambda e, rw=row: self._rms_balance_typed(rw))
-        _rms_tip(row["balance_scale"], "Which of the two mods is used: -1 all the first, +1 all the second, 0 neither, "
-                                       "in between a weaker use of that side. Together with Strength this is the "
-                                       "pack's Axis node value (strength × balance).")
-        # Line 4: what each picked mod is.
+        # Line 2: what the picked mod is.
         row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
-        row["info"].grid(row=3, column=1, columnspan=7, sticky=tk.W, pady=(2, 2))
+        row["info"].grid(row=1, column=1, columnspan=7, sticky=tk.W, pady=(2, 2))
         self._rms_rows.append(row)
-        for var in (row["mod_var"], row["b_var"]):
-            if var.get() not in names:
-                var.set(ra.NONE_MOD)
+        if row["mod_var"].get() not in names:
+            row["mod_var"].set(ra.NONE_MOD)
         self._rms_row_refresh(row)
         if len(self._rms_rows) >= ra.MAX_ROWS:
             self._rms_add_btn.state(["disabled"])
@@ -28304,7 +28276,6 @@ class LoRATrainerGUI:
             # the last row empties instead of vanishing
             from fizgig.minimax import refmod_apply as ra
             row["mod_var"].set(ra.NONE_MOD)
-            row["b_var"].set(ra.NONE_MOD)
             row["value_var"].set(1.0)
             row["copies_var"].set("1")
             self._rms_row_changed(row)
@@ -28314,14 +28285,6 @@ class LoRATrainerGUI:
         self._rms_add_btn.state(["!disabled"])
         self._rms_refresh_tokens()
         self._rms_persist()
-
-    def _rms_row_value(self, row):
-        """The value the pack sees for this row: the strength for a plain row; for a compare row
-        the Axis node's signed value, strength × balance (left negative = the first mod)."""
-        v = max(0.0, min(1.0, float(row["value_var"].get())))
-        if self._rms_row_is_axis(row):
-            return v * max(-1.0, min(1.0, float(row["balance_var"].get())))
-        return v
 
     def _rms_row_moved(self, row):
         row["value_str"].set(f"{float(row['value_var'].get()):.2f}")
@@ -28335,23 +28298,6 @@ class LoRATrainerGUI:
             v = float(row["value_var"].get())
         row["value_var"].set(v)
         self._rms_row_moved(row)
-
-    def _rms_balance_moved(self, row):
-        row["balance_str"].set(f"{float(row['balance_var'].get()):+.2f}")
-        self._rms_refresh_tokens()
-        self._rms_persist()
-
-    def _rms_balance_typed(self, row):
-        try:
-            v = max(-1.0, min(1.0, float(row["balance_str"].get())))
-        except (TypeError, ValueError):
-            v = float(row["balance_var"].get())
-        row["balance_var"].set(v)
-        self._rms_balance_moved(row)
-
-    def _rms_row_is_axis(self, row):
-        from fizgig.minimax import refmod_apply as ra
-        return row["b_var"].get() not in ("", ra.NONE_MOD)
 
     @staticmethod
     def _rms_picker_width(names):
@@ -28468,37 +28414,25 @@ class LoRATrainerGUI:
         self._rms_persist()
 
     def _rms_row_refresh(self, row):
-        """Axis or plain: the scale's range and label; the info line for the picked mod(s)."""
+        """The number beside the slider and the info line for the picked mod."""
         from fizgig.minimax import refmod_apply as ra
-        axis = self._rms_row_is_axis(row)
-        if axis:
-            row["balance_lbl"].grid(row=2, column=2, padx=(4, 2), pady=(4, 0))
-            row["bf"].grid(row=2, column=3, columnspan=4, sticky=tk.W, pady=(4, 0))
-        else:
-            row["balance_lbl"].grid_remove()
-            row["bf"].grid_remove()
         row["value_str"].set(f"{float(row['value_var'].get()):.2f}")
-        row["balance_str"].set(f"{float(row['balance_var'].get()):+.2f}")
         ma = self._rms_mod_meta.get(row["mod_var"].get())
-        mb = self._rms_mod_meta.get(row["b_var"].get()) if axis else None
-        bits = []
         if ma:
-            bits.append(("A: " if axis else "") + ra.describe_meta(ma))
+            row["info"].configure(text=ra.describe_meta(ma))
         elif row["mod_var"].get() != ra.NONE_MOD:
-            bits.append("(mod not in this folder)")
-        if axis:
-            bits.append("B: " + (ra.describe_meta(mb) if mb else "(mod not in this folder)"))
-        row["info"].configure(text="   ".join(bits))
+            row["info"].configure(text="(mod not in this folder)")
+        else:
+            row["info"].configure(text="")
 
     def _rms_row_state(self, row):
         return {"on": bool(row["on_var"].get()), "mod": row["mod_var"].get(),
                 "value": round(float(row["value_var"].get()), 3),
-                "balance": round(float(row["balance_var"].get()), 3),
-                "copies": self._rms_copies(row), "b": row["b_var"].get()}
+                "copies": self._rms_copies(row)}
 
-    def _rms_copies(self, row):
+    def _rms_copies(self, row, key="copies_var"):
         try:
-            return max(1, min(10, int(str(row["copies_var"].get()).strip())))
+            return max(1, min(10, int(str(row[key].get()).strip())))
         except (TypeError, ValueError):
             return 1
 
@@ -28521,14 +28455,10 @@ class LoRATrainerGUI:
         out = []
         for row in self._rms_rows:
             ma = self._rms_mod_meta.get(row["mod_var"].get())
-            axis = self._rms_row_is_axis(row)
-            mb = self._rms_mod_meta.get(row["b_var"].get()) if axis else None
-            if ma is None and mb is None:
+            if ma is None:
                 continue
-            out.append(ra.ModRow(self._rms_latent(ma), ma, value=self._rms_row_value(row),
-                                 copies=self._rms_copies(row), enabled=bool(row["on_var"].get()),
-                                 b_latent=self._rms_latent(mb) if mb else None, b_meta=mb,
-                                 name=ma["name"] if ma else "", b_name=mb["name"] if mb else ""))
+            out.append(ra.ModRow(self._rms_latent(ma), ma, value=float(row["value_var"].get()),
+                                 copies=self._rms_copies(row), enabled=bool(row["on_var"].get()), name=ma["name"]))
         return out
 
     def _rms_refresh_tokens(self):
@@ -28538,16 +28468,9 @@ class LoRATrainerGUI:
         for row in self._rms_rows:
             if not row["on_var"].get():
                 continue
-            axis = self._rms_row_is_axis(row)
-            v = self._rms_row_value(row)
-            if axis:
-                if abs(v) < 1e-6:
-                    continue
-                m = self._rms_mod_meta.get(row["b_var"].get() if v > 0 else row["mod_var"].get())
-            else:
-                if v <= 0:
-                    continue
-                m = self._rms_mod_meta.get(row["mod_var"].get())
+            if float(row["value_var"].get()) <= 0:
+                continue
+            m = self._rms_mod_meta.get(row["mod_var"].get())
             if m:
                 total += int(m.get("tokens", 0)) * self._rms_copies(row)
         if self._rms_retention() <= 0:
@@ -28562,10 +28485,9 @@ class LoRATrainerGUI:
         for row in self._rms_rows:
             if not row["on_var"].get():
                 continue
-            for key in ("mod_var", "b_var"):
-                m = self._rms_mod_meta.get(row[key].get())
-                if m and m not in metas:
-                    metas.append(m)
+            m = self._rms_mod_meta.get(row["mod_var"].get())
+            if m and m not in metas:
+                metas.append(m)
         hint = ra.prompt_hint(metas)
         if not hint:
             self.rms_status_var.set("No active mod carries a description — nothing to add.")
@@ -29149,9 +29071,9 @@ class LoRATrainerGUI:
     def _rms_open_player(self):
         if not (self._rms_clips.get("baseline") and self._rms_clips.get("tweaked")):
             return
-        self._repair_clip_player_open(clips=self._rms_clips,
+        self._repair_clip_player_open(clips=self._rms_clips, sides=["tweaked", "baseline"],   # With mods LEFT, like the tab
                                       labels={"baseline": "No mod (base, same seed)", "tweaked": "With mods"},
-                                      title="RefMod Studio — Clip player (No mod vs With mods)",
+                                      title="RefMod Studio — Clip player (With mods vs No mod)",
                                       metrics=False, nolora=False, stem="refmod", status_var=self.rms_status_var)
 
     def _rms_popout(self, pil, title):
@@ -29362,75 +29284,88 @@ class LoRATrainerGUI:
         win.bind("<Escape>", lambda e: win.destroy())
 
     def _rms_bake(self):
-        """One row's mod with strength × retention and the frame curve folded in."""
+        """Every active row with a strength, folded into ONE new file: strength × retention and
+        the frame curve per row, copies as repeated frames, all on the first row's canvas.
+        One row = that mod; several = the stack the preview shows, after a confirmation."""
+        import torch
         from fizgig.minimax import refmod_apply as ra
+        from fizgig.minimax.refmod import cover_crop
         choices = []
         for row in self._rms_rows:
             if not row["on_var"].get():
                 continue
-            axis = self._rms_row_is_axis(row)
-            v = self._rms_row_value(row)
-            if axis:
-                if abs(v) < 1e-6:
-                    continue
-                name = row["b_var"].get() if v > 0 else row["mod_var"].get()
-                strength = min(1.0, abs(v))
-            else:
-                if v <= 0:
-                    continue
-                name, strength = row["mod_var"].get(), min(1.0, v)
-            m = self._rms_mod_meta.get(name)
+            v = float(row["value_var"].get())
+            if v <= 0:
+                continue
+            m = self._rms_mod_meta.get(row["mod_var"].get())
             if m:
-                choices.append((name, strength, m))
+                choices.append((row["mod_var"].get(), min(1.0, v), m, self._rms_copies(row)))
         if not choices:
             messagebox.showinfo("Bake as new RefMod", "No active mod with a strength above 0.")
             return
         retention = self._rms_retention()
-        fc = self._rms_frame_curve()
-        if len(choices) == 1:
-            pick = choices[0]
-        else:
-            win = tk.Toplevel(self.master)
-            win.title("Bake as new RefMod — which row?")
-            win.configure(bg=COLORS["bg_deep"])
-            var = tk.StringVar(value=f"{choices[0][0]} @ {choices[0][1]:.2f}")
-            opts = [f"{n} @ {s:.2f}" for n, s, _m in choices]
-            ttk.Label(win, text="Row to bake:").pack(padx=12, pady=(10, 2), anchor=tk.W)
-            ttk.Combobox(win, textvariable=var, values=opts, state="readonly", width=40).pack(padx=12)
-            res = {"pick": None}
-
-            def _ok():
-                res["pick"] = choices[opts.index(var.get())]
-                win.destroy()
-            ttk.Button(win, text="OK", command=_ok).pack(pady=8)
-            win.grab_set()
-            self.master.wait_window(win)
-            pick = res["pick"]
-            if pick is None:
-                return
-        name, strength, meta = pick
-        eff = strength * retention
-        if eff <= 0:
-            messagebox.showinfo("Bake as new RefMod", "Strength × retention is 0 — nothing to bake.")
+        if retention <= 0:
+            messagebox.showinfo("Bake as new RefMod", "The master Strength (Retention) is 0 — nothing to bake.")
             return
+        fc = self._rms_frame_curve()
+        stacked = len(choices) > 1
+        if stacked:
+            lines = "\n".join(f"  •  {n}  at {s_ * retention:.2f}" + (f"  ×{c} copies" if c > 1 else "")
+                               for n, s_, _m, c in choices)
+            if not messagebox.askokcancel(
+                    "Bake as new RefMod",
+                    f"These {len(choices)} mods will be baked TOGETHER into one file, stacked as the "
+                    f"preview shows them:\n\n{lines}\n\nLoad the new file at 1.0 and you get all of them "
+                    f"at once, nothing to set. Continue?"):
+                return
+        first_name, _s0, first_meta, _c0 = choices[0]
+        default_name = (first_name + "_studio") if not stacked else ("+".join(n for n, *_ in choices) + "_stack")
         from tkinter import filedialog
         p = filedialog.asksaveasfilename(title="Bake as new RefMod", defaultextension=".safetensors",
-                                         initialdir=os.path.dirname(meta["path"]), initialfile=f"{name}_studio.safetensors",
+                                         initialdir=os.path.dirname(first_meta["path"]),
+                                         initialfile=f"{default_name}.safetensors",
                                          filetypes=[("RefMod", "*.safetensors")])
         if not p:
             return
         try:
-            z = self._rms_latent(meta)
-            baked, tags, note = ra.bake(z, meta, strength=strength, retention=retention, curve=fc)
-            out = ra.save_baked(p[:-len(".safetensors")] if p.lower().endswith(".safetensors") else p, baked, meta, tags)
+            parts, tags, notes, desc, shapes = [], [], [], [], []
+            canvas = None
+            for name, strength, meta, copies in choices:
+                z = self._rms_latent(meta)
+                baked, t_, note = ra.bake(z, meta, strength=strength, retention=retention, curve=fc)
+                if canvas is None:
+                    canvas = (int(baked.shape[-2]), int(baked.shape[-1]))
+                elif (int(baked.shape[-2]), int(baked.shape[-1])) != canvas:
+                    # one file is one stack: bring this mod onto the first row's canvas, frame by frame
+                    frames = [cover_crop(baked[:, :, t].float(), canvas[0], canvas[1]) for t in range(baked.shape[2])]
+                    baked = torch.stack(frames, dim=2).to(baked.dtype)
+                if copies > 1:
+                    baked = baked.repeat(1, 1, copies, 1, 1)
+                parts.append(baked)
+                tags.extend(x for x in t_ if x not in tags)
+                notes.append(note)
+                desc.append(str(meta.get("description", "") or name))
+                shapes.append(str(meta.get("source_shape", "")))
+            latent = torch.cat(parts, dim=2) if stacked else parts[0]
+            meta_out = dict(first_meta)
+            if stacked:
+                meta_out["description"] = " + ".join(d for d in desc if d)
+                meta_out["source_shape"] = " + ".join(x for x in shapes if x)
+                meta_out["pool"] = f"stack of {len(choices)}: " + ", ".join(n for n, *_ in choices)
+                tags.append("studio: stacked " + ", ".join(f"{n}@{s_ * retention:.2f}" for n, s_, _m, _c in choices))
+            out = ra.save_baked(p[:-len(".safetensors")] if p.lower().endswith(".safetensors") else p,
+                                latent, meta_out, tags)
         except Exception as e:
             messagebox.showerror("Bake as new RefMod", f"Couldn't bake:\n{e}")
             return
         self._rms_rescan(quiet=True)
-        self.rms_status_var.set(f"Baked {os.path.basename(out)} (strength {eff:.2f}). {note}")
+        what = (f"{len(choices)} mods stacked" if stacked else f"{first_name} at {choices[0][1] * retention:.2f}")
+        self.rms_status_var.set(f"Baked {os.path.basename(out)} ({what}).")
         messagebox.showinfo("Bake as new RefMod",
-                            f"Wrote {out}\n\nLoads at strength 1.0 in any loader as this row at {eff:.2f}"
-                            f"{' with the frame curve' if fc[0] != 'constant' or fc[1] != 'linear' or fc[2] < 1 else ''}.\n\n{note}")
+                            f"Wrote {out}\n\nLoads at strength 1.0 in any loader as {what}"
+                            f"{' with the frame curve' if fc[0] != 'constant' or fc[1] != 'linear' or fc[2] < 1 else ''}.\n\n"
+                            "Baked: each mod's strength × the master Strength, copies (as repeated frames) and the "
+                            "frame curve. Not baked (they act at render time): Shuffle and the step curve.")
 
     def _repair_explore_in_explorer(self):
         """Send current Repair Studio slider state to the Explorer for evolutionary discovery."""
