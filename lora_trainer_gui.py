@@ -4332,17 +4332,17 @@ class LoRATrainerGUI:
             # Training-tab sections (which _apply_refmod_visibility hides). Registered in
             # self.entries so presets, last-train and the queue carry them like any field.
             self._refmod_frame = tk.Frame(model_card, bg=COLORS["bg_surface"])
-            tk.Label(self._refmod_frame, text="Grid:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame, text="Grid:", width=24, anchor=tk.W, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_GRID"] = ttk.Combobox(
-                self._refmod_frame, values=list(REFMOD_GRID_OPTIONS), state="readonly", width=30)
+                self._refmod_frame, values=list(REFMOD_GRID_OPTIONS), state="readonly", width=44)
             self.entries["MINIMAX_REFMOD_GRID"].set(
                 str(self.settings.get("MINIMAX_REFMOD_GRID", REFMOD_GRID_OPTIONS[0])))
-            self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT, padx=(0, 18))
-            tk.Label(self._refmod_frame, text="References:", font=(FONT_FAMILY, 10),
-                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
+            self.entries["MINIMAX_REFMOD_GRID"].pack(side=tk.LEFT)
+            tk.Label(self._refmod_frame, text="References:", width=12, anchor=tk.E, font=(FONT_FAMILY, 10),
+                     fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_REFS"] = ttk.Combobox(
-                self._refmod_frame, values=list(REFMOD_REFS_OPTIONS), width=5)
+                self._refmod_frame, values=list(REFMOD_REFS_OPTIONS), width=12)
             self.entries["MINIMAX_REFMOD_REFS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_REFS", REFMOD_DEFAULTS["MINIMAX_REFMOD_REFS"])))
             self.entries["MINIMAX_REFMOD_REFS"].pack(side=tk.LEFT)
@@ -4350,26 +4350,26 @@ class LoRATrainerGUI:
             # pack's default extractor cap (5,120). A readout, not the Clip token cap below.
             self._refmod_tokens_lbl = tk.Label(self._refmod_frame, text="", font=(FONT_FAMILY, 9),
                                                fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
-            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(12, 0))
+            self._refmod_tokens_lbl.pack(side=tk.LEFT, padx=(18, 0))
             # Second line of the row (16 Sep 2026: one line ran past the window's minimum width).
             self._refmod_frame1b = tk.Frame(model_card, bg=COLORS["bg_surface"])
-            tk.Label(self._refmod_frame1b, text="Steps:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame1b, text="Steps:", width=24, anchor=tk.W, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_STEPS"] = ttk.Combobox(
-                self._refmod_frame1b, values=list(REFMOD_STEP_OPTIONS), width=40)
+                self._refmod_frame1b, values=list(REFMOD_STEP_OPTIONS), width=44)
             self.entries["MINIMAX_REFMOD_STEPS"].set(
                 str(self.settings.get("MINIMAX_REFMOD_STEPS", REFMOD_DEFAULTS["MINIMAX_REFMOD_STEPS"])))
             self.entries["MINIMAX_REFMOD_STEPS"].pack(side=tk.LEFT)
             # Target Megapixels: the SAME variable as the Dataset section's control (hidden under
             # RefMod) — the one MiniMax default Peter wants in view here (10 Sep 2026); the
             # references are encoded at this resolution.
-            tk.Label(self._refmod_frame1b, text="Target MP:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame1b, text="Target MP:", width=12, anchor=tk.E, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self._refmod_mp_combo = ttk.Combobox(
                 self._refmod_frame1b, textvariable=self.dataset_megapixels_var,
-                values=["0.25", "0.37", "0.5", "0.75", "1.0"], width=6, state="readonly")
+                values=["0.25", "0.37", "0.5", "0.75", "1.0"], width=12, state="readonly")
             self._refmod_mp_combo.pack(side=tk.LEFT)
-            tk.Label(self._refmod_frame1b, text="Clips:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame1b, text="Clips:", width=34, anchor=tk.E, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_CLIPS"] = ttk.Combobox(
                 self._refmod_frame1b, values=list(REFMOD_CLIPS_OPTIONS), state="readonly", width=26)
@@ -4383,16 +4383,16 @@ class LoRATrainerGUI:
                     "Prepare clips with Gizmo first — cut to H3's frame grid at the right size, they work best.")
             # Second row: the mod's hint — a description and what it is. Both go into the file.
             self._refmod_frame2 = tk.Frame(model_card, bg=COLORS["bg_surface"])
-            tk.Label(self._refmod_frame2, text="Description (mod hint):", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame2, text="Description (mod hint):", width=24, anchor=tk.W, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
-            self.entries["MINIMAX_REFMOD_DESC"] = ttk.Entry(self._refmod_frame2, width=64)
+            self.entries["MINIMAX_REFMOD_DESC"] = ttk.Entry(self._refmod_frame2, width=46)
             self.entries["MINIMAX_REFMOD_DESC"].insert(0, str(self.settings.get("MINIMAX_REFMOD_DESC", "") or ""))
             self.entries["MINIMAX_REFMOD_DESC"].pack(side=tk.LEFT)
             ToolTip(self.entries["MINIMAX_REFMOD_DESC"],
                     "A few words saying what the mod is — 'a ginger woman with messy hair', 'a 1970s film "
                     "look'. Stored in the file; RefMod Studio's '+ mod hints' and the pack's loader put "
                     "'concept: description' into the prompt so the model knows what it is looking at.")
-            tk.Label(self._refmod_frame2, text="Concept:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame2, text="Concept:", width=12, anchor=tk.E, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_CONCEPT"] = ttk.Combobox(
                 self._refmod_frame2, values=list(REFMOD_CONCEPT_OPTIONS), state="readonly", width=12)
@@ -4402,10 +4402,10 @@ class LoRATrainerGUI:
             ToolTip(self.entries["MINIMAX_REFMOD_CONCEPT"],
                     "What the mod is, in the pack's terms: identity (a person), style (a look), "
                     "pose_motion (a dance, a camera move), clothing, background, generic.")
-            tk.Label(self._refmod_frame2, text="Clip token cap (stills untouched):", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame2, text="Clip token cap (stills untouched):", width=34, anchor=tk.E, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(18, 8))
             self.entries["MINIMAX_REFMOD_TOKEN_CAP"] = ttk.Combobox(
-                self._refmod_frame2, values=list(REFMOD_TOKEN_CAP_OPTIONS), state="readonly", width=24)
+                self._refmod_frame2, values=list(REFMOD_TOKEN_CAP_OPTIONS), state="readonly", width=26)
             _tc = str(self.settings.get("MINIMAX_REFMOD_TOKEN_CAP", REFMOD_DEFAULTS["MINIMAX_REFMOD_TOKEN_CAP"]))
             self.entries["MINIMAX_REFMOD_TOKEN_CAP"].set(_tc if _tc in REFMOD_TOKEN_CAP_OPTIONS else REFMOD_TOKEN_CAP_OPTIONS[0])
             self.entries["MINIMAX_REFMOD_TOKEN_CAP"].pack(side=tk.LEFT)
@@ -4417,7 +4417,7 @@ class LoRATrainerGUI:
                     "with no motion clips this does nothing. Off keeps every frame.")
             # Third row: the audio mod — the pack's audio RefMod, a plain encode of the folder's sound.
             self._refmod_frame3 = tk.Frame(model_card, bg=COLORS["bg_surface"])
-            tk.Label(self._refmod_frame3, text="Audio support:", font=(FONT_FAMILY, 10),
+            tk.Label(self._refmod_frame3, text="Audio support:", width=24, anchor=tk.W, font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_AUDIO"] = ttk.Combobox(
                 self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=56)
@@ -7954,9 +7954,9 @@ class LoRATrainerGUI:
                            fg=COLORS["text_secondary"])
             else:
                 over = total > cap
-                lbl.config(text=f"≈ {total:,} tokens at generation ({per:,} per reference"
-                                + (f"; above the pack's {cap:,} default, slower at every step)" if over
-                                   else f"; under the pack's {cap:,} default)"),
+                lbl.config(text=f"≈ {total:,} tokens at generation ({per:,} per reference), "
+                                + (f"above the pack's {cap:,} default" if over
+                                   else f"under the pack's {cap:,} default"),
                            fg=COLORS["warning"] if over else COLORS["text_secondary"])
         except Exception:
             pass
