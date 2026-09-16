@@ -832,32 +832,13 @@ BUILT_IN_PRESETS = {
 # ships a single sensible-defaults entry. Users can still save their own via Save Preset —
 # those land in the per-architecture preset folder and appear alongside this one.
 KREA2_BUILT_IN_PRESETS = {
-    "✨ Krea 2 Defaults (rank 32, full model)": {
-        "NETWORK_DIM": 32, "NETWORK_ALPHA": 32, "NETWORK_TYPE": "LoRA (standard)",
-        "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 30, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
-        "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
-        "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
-        "OPTIMIZER_TYPE": "adamw8bit",
-        "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
-        "DATASET_MEGAPIXELS": "0.25",
-        # Memory settings all auto — each resolves from the actual GPU at launch.
-        # BLOCKS_SWAP must be the combobox's exact label: _apply_preset_values matches a
-        # preset value against the offered options on its first token, case-sensitively,
-        # so a bare "auto" would not select "Auto (detect from GPU)".
-        "BLOCKS_SWAP": "Auto (detect from GPU)",
-        "QUANT_4BIT_MODE": "auto", "COMPILE_BLOCKS": "Auto",
-        # Per-image loss watch: detection + the LR throttle on, the two interventions that
-        # rewrite captions or pre-judge images left off — those want a deliberate choice.
-        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True,
-        "KREA2_AUTO_RECAPTION": False, "KREA2_WARMUP_LOOK": False,
-    },
-    # Rank 8 + Adaptive LR at an aggressive floor: fewer epochs to a usable LoRA. Everything
-    # else identical to Krea 2 Defaults (which stays the preset applied on family switch).
+    # THE DEFAULT (applied on the first visit to Krea 2 — first entry wins): rank 8 with
+    # Adaptive LR at an aggressive floor. Rank 8 is more than enough for a character on a
+    # 12.9B model and lands the right result more reliably than 32 (Peter, 16 Sep 2026).
     "✨ Krea 2 Ultra Fast (rank 8, adaptive LR)": {
         "NETWORK_DIM": 8, "NETWORK_ALPHA": 8, "NETWORK_TYPE": "LoRA (standard)",
         "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 20, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "MAX_TRAIN_EPOCHS": 30, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": True, "ADAPTIVE_LR_MIN": "2e-4", "ADAPTIVE_LR_MAX": "4e-4",
         "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
         "OPTIMIZER_TYPE": "adamw8bit",
@@ -884,11 +865,31 @@ KREA2_BUILT_IN_PRESETS = {
     #
     # Fewer epochs (15) because style overbakes fast, and on Krea 2 that shows up as
     # generations dragging toward the training set's COMPOSITIONS, not just its look —
+    "✨ Krea 2 Standard (rank 32, full model)": {
+        "NETWORK_DIM": 32, "NETWORK_ALPHA": 32, "NETWORK_TYPE": "LoRA (standard)",
+        "LEARNING_RATE": 1e-4,
+        "MAX_TRAIN_EPOCHS": 64, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "4e-4",
+        "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
+        "OPTIMIZER_TYPE": "adamw8bit",
+        "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
+        "DATASET_MEGAPIXELS": "0.25",
+        # Memory settings all auto — each resolves from the actual GPU at launch.
+        # BLOCKS_SWAP must be the combobox's exact label: _apply_preset_values matches a
+        # preset value against the offered options on its first token, case-sensitively,
+        # so a bare "auto" would not select "Auto (detect from GPU)".
+        "BLOCKS_SWAP": "Auto (detect from GPU)",
+        "QUANT_4BIT_MODE": "auto", "COMPILE_BLOCKS": "Auto",
+        # Per-image loss watch: detection + the LR throttle on, the two interventions that
+        # rewrite captions or pre-judge images left off — those want a deliberate choice.
+        "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True,
+        "KREA2_AUTO_RECAPTION": False, "KREA2_WARMUP_LOOK": False,
+    },
     # so save every epoch and scrub for the sweet spot in LoRA Royale.
     "✨ Krea 2 Style (rank 16, gentle LR)": {
         "NETWORK_DIM": 16, "NETWORK_ALPHA": 16, "NETWORK_TYPE": "LoRA (standard)",
         "LEARNING_RATE": 1e-4,
-        "MAX_TRAIN_EPOCHS": 15, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
+        "MAX_TRAIN_EPOCHS": 64, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": True, "ADAPTIVE_LR_MIN": "5e-5", "ADAPTIVE_LR_MAX": "2e-4",
         "TARGET_LAYERS": "Full Model", "MIN_TIMESTEP": "", "MAX_TIMESTEP": "",
         "OPTIMIZER_TYPE": "adamw8bit",
@@ -1652,7 +1653,8 @@ SETTING_TO_PREF = {
     "DIT_MODEL": "base_dit",
     "VAE_MODEL": "vae",
     "TEXT_ENCODER": "text_encoder",
-    "LORA_OUTPUT_DIR": "lora_output_dir",
+    # LORA_OUTPUT_DIR is NOT pref-backed (16 Sep 2026): the Output Directory lives on the
+    # Training tab only and is remembered per model family (last_used["lora_output_dirs"]).
 }
 
 
@@ -1998,8 +2000,15 @@ class LoRATrainerGUI:
         # from the Training tab; Dataset-tab callbacks write here, training command builders read here.
         self._dataset_config_var = tk.StringVar(value=self.settings["DATASET_CONFIG"])
 
-        # Override with last-used LoRA output directory if available
-        if self.last_used.get("lora_output_dir"):
+        # The LoRA output folder is remembered PER MODEL FAMILY (16 Sep 2026): the family the
+        # app opens on gets its own folder back; a family never used before keeps whatever the
+        # field last held; the default is output_loras inside Fizgig.
+        _od = self.last_used.get("lora_output_dirs")
+        self._output_dir_memory = dict(_od) if isinstance(_od, dict) else {}
+        _start_arch = str(self.last_used.get("architecture") or "")
+        if self._output_dir_memory.get(_start_arch):
+            self.settings["LORA_OUTPUT_DIR"] = self._output_dir_memory[_start_arch]
+        elif self.last_used.get("lora_output_dir"):
             self.settings["LORA_OUTPUT_DIR"] = self.last_used["lora_output_dir"]
 
         # Training queue — loaded before any UI so the status-bar button can show its count.
@@ -2512,6 +2521,7 @@ class LoRATrainerGUI:
         ("explorer_intensity_var", "explorer_intensity"),
         ("explorer_mutations_var", "explorer_mutations"),
         ("explorer_structure_var", "explorer_structure"),
+        ("explorer_strength_var", "explorer_strength"),
     ]
 
     def _restore_workbench_setup_fields(self):
@@ -2605,6 +2615,13 @@ class LoRATrainerGUI:
         # Save LoRA output directory if entry exists
         if "LORA_OUTPUT_DIR" in self.entries:
             data["lora_output_dir"] = self.entries["LORA_OUTPUT_DIR"].get()
+            try:
+                _fam = str(self.architecture_var.get()) if hasattr(self, "architecture_var") else ""
+                if _fam and data["lora_output_dir"].strip():
+                    self._output_dir_memory[_fam] = data["lora_output_dir"].strip()
+                data["lora_output_dirs"] = dict(self._output_dir_memory)
+            except Exception:
+                pass
         # Remember the last LoRA Royale checkpoint folder + render inputs
         if hasattr(self, 'royale_folder_var'):
             data["royale_folder"] = self.royale_folder_var.get()
@@ -4336,6 +4353,12 @@ class LoRATrainerGUI:
         # Save LoRA output directory when it changes
         self.entries["LORA_OUTPUT_DIR"].bind("<FocusOut>", lambda e: self._save_last_used_paths())
         self.entries["LORA_OUTPUT_DIR"].bind("<Return>", lambda e: self._save_last_used_paths())
+        self._output_dir_hint = ttk.Label(
+            output_content,
+            text="Remembered per model family — Klein, Krea 2 and MiniMax H3 each keep their own "
+                 "folder here. Default: output_loras inside Fizgig.",
+            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
+        self._output_dir_hint.grid(row=2, column=0, columnspan=3, sticky=tk.W, padx=5, pady=(0, 4))
 
         # === Training Parameters Section (Expanded by default) ===
         training_section = CollapsibleFrame(outer,"Training Parameters", default_expanded=True)
@@ -9263,6 +9286,33 @@ class LoRATrainerGUI:
             rel = rel[len("FizgigIndependent/"):]
         return os.path.join(FIZGIG_DIR, rel)
 
+    def _current_output_dir(self) -> str:
+        """The Training tab's Output Directory as it stands (entry first, settings second,
+        output_loras inside Fizgig last) — the one place every consumer reads it from."""
+        try:
+            if hasattr(self, "entries") and "LORA_OUTPUT_DIR" in self.entries:
+                v = str(self.entries["LORA_OUTPUT_DIR"].get()).strip()
+                if v:
+                    return v
+        except Exception:
+            pass
+        return str(self.settings.get("LORA_OUTPUT_DIR", "") or "").strip() or OUTPUT_LORAS_DIR
+
+    def _restore_output_dir_for_family(self, arch: str) -> None:
+        """Put a family's remembered output folder into the field (and settings). A family with
+        no memory keeps whatever the field holds, so nothing moves until the user decides."""
+        d = str(self._output_dir_memory.get(str(arch), "") or "").strip()
+        e = self.entries.get("LORA_OUTPUT_DIR") if hasattr(self, "entries") else None
+        if not d or e is None:
+            return
+        try:
+            if e.get().strip() != d:
+                e.delete(0, tk.END)
+                e.insert(0, d)
+            self.settings["LORA_OUTPUT_DIR"] = d
+        except Exception:
+            pass
+
     def _get_path(self, key: str) -> str:
         """Resolve a model/path setting from the current source of truth.
 
@@ -9273,8 +9323,9 @@ class LoRATrainerGUI:
             "VAE_MODEL": "vae",
             "DIT_MODEL": "base_dit",
             "TEXT_ENCODER": "text_encoder",
-            "LORA_OUTPUT_DIR": "lora_output_dir",
         }
+        if key == "LORA_OUTPUT_DIR":
+            return self._current_output_dir()
         pref_key = pref_map.get(key)
         if pref_key and pref_key in self.prefs_vars:
             return self.prefs_vars[pref_key].get()
@@ -10077,7 +10128,7 @@ class LoRATrainerGUI:
             # Per-category retirement rows: only when the dataset is genuinely MIXED — with
             # one category there is nothing to finish separately.
             if hasattr(self, "_mixed_stop_label"):
-                _mixed = _has_audio and not audio_only
+                _mixed = self._minimax_dataset_mixed()
                 if _mixed:
                     self._mixed_stop_label.grid(row=28, column=0, sticky=tk.W, padx=5,
                                                 pady=(8, 2))
@@ -10091,6 +10142,13 @@ class LoRATrainerGUI:
                     self._mixed_stop_hint.grid_remove()
         except tk.TclError:
             pass
+
+    def _minimax_dataset_mixed(self):
+        """True when the training folder holds BOTH voice recordings and visuals — the only
+        case 'Finish one category early' applies to (it is what shows the row, and what the
+        command builder gates the flag on, #136)."""
+        return bool(self._count_training_audio_files() > 0
+                    and not self._training_folder_audio_only())
 
     def _training_folder_audio_only(self):
         """True when the training folder holds voice recordings and nothing visual — the state
@@ -12228,6 +12286,12 @@ class LoRATrainerGUI:
         _arch_changed = _arch_new != _arch_old
         if _arch_changed and _arch_old:
             try:
+                _od_e = self.entries.get("LORA_OUTPUT_DIR") if hasattr(self, "entries") else None
+                if _od_e is not None and _od_e.get().strip():
+                    self._output_dir_memory[_arch_old] = _od_e.get().strip()
+            except Exception:
+                pass
+            try:
                 self._arch_settings_memory[_arch_old] = self._collect_preset_values()
                 # Capture the preset LABEL here too — refresh_preset_combobox() below
                 # rewrites it, so this is the last moment it still names the old family's.
@@ -12255,7 +12319,7 @@ class LoRATrainerGUI:
         #
         # Naming a preset without applying it is a lie the user acts on: switching to Krea 2
         # left Klein's 55 epochs / rank 16 sitting in the fields while the dropdown read
-        # "Krea 2 Defaults (rank 32, full model)". Those values don't transfer — Klein's
+        # "Krea 2 Standard (rank 32, full model)". Those values don't transfer — Klein's
         # rank/epoch/block-targeting recipe is meaningless for Krea 2.
         #
         # Per-family memory: first visit to a family gets its default preset, every later
@@ -12282,6 +12346,10 @@ class LoRATrainerGUI:
                     self.update_console(f"[preset] {_arch_new} selected — applied {_default_name}\n")
             elif _default_name and not self.custom_preset_var.get():
                 self.custom_preset_var.set(_default_name)
+            if _arch_changed:
+                # AFTER the settings restore above: the family's own output folder wins over
+                # whatever a session snapshot or preset carried.
+                self._restore_output_dir_for_family(_arch_new)
         except Exception:
             pass
         # Retag the LoRA name LAST — _apply_preset_values above rewrites every field including
@@ -15863,7 +15931,15 @@ class LoRATrainerGUI:
                    command=lambda: self._browse_repair_lora(self.explorer_lora_var)).pack(side=tk.LEFT, padx=2)
         ttk.Label(btn_frame, text="Strength:").pack(side=tk.LEFT, padx=(12, 4))
         self.explorer_strength_var = tk.StringVar(value="1.0")
-        ttk.Entry(btn_frame, textvariable=self.explorer_strength_var, width=5).pack(side=tk.LEFT)
+        self._explorer_strength_entry = ttk.Entry(btn_frame, textvariable=self.explorer_strength_var, width=5)
+        self._explorer_strength_entry.pack(side=tk.LEFT)
+        self._explorer_strength_entry.bind("<Return>", lambda e: self._on_explorer_strength_changed())
+        self._explorer_strength_entry.bind("<FocusOut>", lambda e: self._on_explorer_strength_changed())
+        ToolTip(self._explorer_strength_entry,
+                "Load strength — the strength the LoRA is meant to be used at. On Krea 2 and "
+                "MiniMax H3 this works as in Repair Studio: every block slider stays relative to "
+                "it and the saved file keeps its original scale (use it at this strength). On "
+                "Klein it sets every block slider to this value.")
         r += 1
 
         ttk.Label(setup_card, text="Prompt:").grid(row=r, column=0, sticky=tk.W, padx=(0, 10), pady=2)
@@ -16092,7 +16168,9 @@ class LoRATrainerGUI:
         self._explorer_gallery_frame.columnconfigure(1, weight=1)
 
         # Apply the persisted family (krea2 hides the DiT radio + ref Strength).
-        self._apply_explorer_family_ui(str(self.explorer_family_var.get()) == "krea2")
+        # "not Klein", like the click handler: a restored MiniMax H3 family used to fall through
+        # to the Klein layout and show the Distilled/Base radio (Peter, 16 Sep 2026).
+        self._apply_explorer_family_ui(str(self.explorer_family_var.get()) != "klein")
 
         self._add_youtube_help_button(outer, "explorer")
 
@@ -16113,6 +16191,53 @@ class LoRATrainerGUI:
         return (SliderState.default_krea2() if fam == "krea2"
                 else SliderState.default_h3() if fam == "minimax"
                 else SliderState.default_klein9b())
+
+    def _explorer_strength(self) -> float:
+        """The Strength box as a float, clamped to [0, 2] like Repair's (1.0 on anything
+        unparseable)."""
+        try:
+            return max(0.0, min(2.0, float(str(self.explorer_strength_var.get()).strip() or 1.0)))
+        except (TypeError, ValueError, AttributeError):
+            return 1.0
+
+    @staticmethod
+    def _handoff_family(fam) -> str:
+        """The family a Repair <-> Explorer handoff lands on: the same one. (Used to collapse
+        MiniMax H3 to Klein — an H3 LoRA on the Klein engine, review 16 Sep 2026.)"""
+        fam = str(fam or "")
+        return fam if fam in ("krea2", "minimax") else "klein"
+
+    def _on_explorer_strength_changed(self):
+        """Strength box edited with a LoRA loaded: on Krea 2 / H3 the baseline takes the new
+        load strength and re-renders, as Repair Studio does. Klein keeps the old contract —
+        the box fills the sliders at Load / Restart only, so a mid-session edit must not
+        overwrite explored tweaks."""
+        st = getattr(self, "_explorer_baseline_state", None)
+        if st is None or self._explorer_family() == "klein":
+            return
+        v = self._explorer_strength()
+        if abs(float(getattr(st, "primary_scale", 1.0)) - v) < 1e-9:
+            return
+        self._explorer_apply_strength(st)
+        try:
+            self._explorer_update_state_text(st)
+        except Exception:
+            pass
+        if self._explorer_engine is not None and not getattr(self, "_explorer_generating", False):
+            self._explorer_generate_baseline_and_roll()
+
+    def _explorer_apply_strength(self, state) -> None:
+        """Put the Strength box into a state. Krea 2 / H3: the LOAD strength (primary_scale —
+        the engine multiplies every slider by it, the bake never applies it; 16 Sep 2026, as in
+        Repair Studio). Klein: the old behaviour, every slider set to it (its engine has no
+        load scale)."""
+        v = self._explorer_strength()
+        if self._explorer_family() in ("krea2", "minimax"):
+            state.primary_scale = v
+            state.donor_scale = 1.0
+        else:
+            for _bid, _bs in state.blocks.items():
+                _bs.primary_strength = v
 
     def _explorer_anchor_block(self):
         """The structural-composition anchor block — never locked/disabled, only inverted/pushed.
@@ -16321,12 +16446,7 @@ class LoRATrainerGUI:
                 f"Loaded: {os.path.basename(path)} "
                 f"({n_active}/{len(self._explorer_baseline_state.blocks)} blocks). "
                 f"Click Re-roll to start exploring.")
-            try:
-                base_strength = float(self.explorer_strength_var.get())
-            except ValueError:
-                base_strength = 1.0
-            for bid, bs in self._explorer_baseline_state.blocks.items():
-                bs.primary_strength = base_strength
+            self._explorer_apply_strength(self._explorer_baseline_state)
             self._explorer_baseline_state.prompt = self.explorer_prompt_var.get()
             self._explorer_baseline_state.seed = int(self.explorer_seed_var.get() or 42)
             res = int(self.explorer_res_var.get() or 512)
@@ -16557,6 +16677,9 @@ class LoRATrainerGUI:
                 lines.append(f"{bid}: {en} @ {bs.primary_strength:+.2f}{lock}")
         if not lines:
             lines = ["All blocks at default (1.0)"]
+        ps = float(getattr(state, "primary_scale", 1.0))
+        if abs(ps - 1.0) > 1e-9:
+            lines.insert(0, f"Load strength {ps:g} (every block relative to it; the saved file keeps its scale)")
         self._explorer_state_text.configure(state="normal")
         self._explorer_state_text.delete("1.0", tk.END)
         self._explorer_state_text.insert("1.0", "\n".join(lines))
@@ -16751,12 +16874,7 @@ class LoRATrainerGUI:
         if choice:
             # Yes = reset to default values
             self._explorer_baseline_state = self._explorer_default_state()
-            try:
-                base_strength = float(self.explorer_strength_var.get())
-            except ValueError:
-                base_strength = 1.0
-            for bid, bs in self._explorer_baseline_state.blocks.items():
-                bs.primary_strength = base_strength
+            self._explorer_apply_strength(self._explorer_baseline_state)
             self._explorer_baseline_state.prompt = self.explorer_prompt_var.get()
             self._explorer_baseline_state.seed = int(self.explorer_seed_var.get() or 42)
             res = int(self.explorer_res_var.get() or 512)
@@ -16802,11 +16920,9 @@ class LoRATrainerGUI:
         if self._explorer_baseline_state is None or self._explorer_generating:
             return
 
-        # Find blocks that differ from default (strength != starting strength)
-        try:
-            base_strength = float(self.explorer_strength_var.get())
-        except ValueError:
-            base_strength = 1.0
+        # Find blocks that differ from default (strength != starting strength). On Krea 2 /
+        # H3 the load strength lives in primary_scale, so a slider's neutral is 1.0.
+        base_strength = self._explorer_strength() if self._explorer_family() == "klein" else 1.0
 
         tweaked = set()
         for bid, bs in self._explorer_baseline_state.blocks.items():
@@ -16923,13 +17039,16 @@ class LoRATrainerGUI:
 
         # Handoff inherits the Explorer's family — switch Repair Studio to match (rebuilds the
         # slider panel for the right block layout so the value-push loop below finds the block ids).
-        target_family = "krea2" if self._explorer_is_krea2() else "klein"
+        target_family = self._handoff_family(self._explorer_family())
         if hasattr(self, "repair_family_var") and self.repair_family_var.get() != target_family:
             self.repair_family_var.set(target_family)
             self._on_repair_family_changed()
 
-        # Set the LoRA path in Repair Studio
+        # Set the LoRA path in Repair Studio — and the load strength, which means the same
+        # thing in both tabs on Krea 2 / H3 (Repair reads its box at render).
         self.repair_primary_var.set(lora_path)
+        if target_family != "klein" and hasattr(self, "repair_primary_scale_var"):
+            self.repair_primary_scale_var.set(f"{float(getattr(baseline, 'primary_scale', 1.0)):g}")
 
         # Unload Explorer engine to free VRAM
         self._unload_explorer_models()
@@ -16993,9 +17112,13 @@ class LoRATrainerGUI:
             summary = save_repaired_lora(primary_path, self._explorer_baseline_state, out)
             _fmt_note = ("\n\nSaved natively in LyCORIS format — lossless, no conversion."
                          if summary.get('format_out') == 'lycoris' else "")
+            _ps = float(getattr(self._explorer_baseline_state, "primary_scale", 1.0))
+            _scale_note = (f"\n\nUse it at strength {_ps:g} — the file keeps its original scale, "
+                           "as the previews were rendered at that load strength."
+                           if abs(_ps - 1.0) > 1e-9 else "")
             messagebox.showinfo("Explored LoRA saved",
                                 f"Saved: {out}\n\nKeys: {summary['keys_in']} -> {summary['keys_out']}"
-                                + _fmt_note)
+                                + _fmt_note + _scale_note)
         except UnsupportedLoRAFormat as ex:
             messagebox.showerror("Unsupported LoRA format", str(ex))
         except Exception:
@@ -17533,7 +17656,7 @@ class LoRATrainerGUI:
             blocks = ["custom"]
             custom_blocks = selected
 
-        output_dir = self.prefs_vars["lora_output_dir"].get()
+        output_dir = self._current_output_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, output_name)
         # Never silently overwrite: the name is built from source+preset+rank only, so two
@@ -17755,7 +17878,7 @@ class LoRATrainerGUI:
         if not output_name.endswith(".safetensors"):
             output_name += ".safetensors"
 
-        output_dir = self.prefs_vars["lora_output_dir"].get()
+        output_dir = self._current_output_dir()
         os.makedirs(output_dir, exist_ok=True)
         output_path = os.path.join(output_dir, output_name)
         # Never silently overwrite (same rule as the Klein path).
@@ -18599,11 +18722,13 @@ class LoRATrainerGUI:
         out_card = self._start_section_card(
             outer, "Output Directories",
             "Paths stored as relative-to-repo when they live inside FizgigIndependent/ (portable across clones/moves), "
-            "absolute otherwise. Dataset TOMLs always live in FizgigIndependent/dataset/ — not configurable.",
+            "absolute otherwise. Dataset TOMLs always live in FizgigIndependent/dataset/ — not configurable. "
+            "The LoRA output folder is set on the Training tab, per model family.",
         )
         out_card.columnconfigure(1, weight=1)
         next_row = 0
-        next_row = self._add_pref_row(out_card, next_row, "LoRA output:", "lora_output_dir", "Where trained LoRAs are saved", is_dir=True)
+        # The LoRA output folder is on the Training tab (Output section), remembered per model
+        # family — no pref row (16 Sep 2026). The pref key stays as a legacy default only.
         next_row = self._add_pref_row(out_card, next_row, "Profiles:", "profiles_dir", "Where profiler HTML reports are saved", is_dir=True)
         next_row = self._add_pref_row(out_card, next_row, "Cache:", "cache_dir", "Cached latents and text encodings", is_dir=True)
 
@@ -20050,7 +20175,8 @@ class LoRATrainerGUI:
             else:
                 self._repair_h3_label.grid_remove()
                 self._repair_h3_row.grid_remove()
-                self._repair_scale_controls(False)
+                # The load-strength boxes are H3 AND Krea 2 (16 Sep 2026); Klein has none.
+                self._repair_scale_controls(fam == "krea2")
                 self._repair_h3_model_label.grid_remove()
                 self._repair_h3_model_combo.grid_remove()
                 self._repair_h3_base_label.grid_remove()
@@ -21427,7 +21553,7 @@ class LoRATrainerGUI:
         return out if out and os.path.isdir(out) else ""
 
     def _build_repair_scale_control(self, parent, var, who):
-        """'at strength' spinbox after a LoRA's Browse (MiniMax H3 only — shown / hidden by
+        """'at strength' box after a LoRA's Browse (MiniMax H3 and Krea 2 — shown / hidden by
         _apply_repair_family_ui). The strength the LoRA is meant to be used at; every block
         slider stays relative to it."""
         lbl = ttk.Label(parent, text="at strength")
@@ -21442,6 +21568,35 @@ class LoRATrainerGUI:
                       "keeps its original scale — use it at this strength, and it looks exactly "
                       "like the preview.")
         self._repair_scale_widgets.append((lbl, spin))
+
+    def _repair_state_for_explorer(self):
+        """The Repair state handed to the Explorer: the block sliders plus the primary's load
+        strength, which also lands in the Explorer's Strength box so what the Explorer shows
+        and what the user sees agree (16 Sep 2026)."""
+        s = self.repair_state.copy()
+        # The primary's load strength carries into the Explorer's Strength box (it means the
+        # same thing there on Krea 2 / H3); the donor's has nowhere to go — the Explorer works
+        # on the primary alone, so the copied state drops it.
+        ps = float(getattr(s, "primary_scale", 1.0))
+        if hasattr(self, "explorer_strength_var"):
+            self.explorer_strength_var.set(f"{ps:g}")
+        s.primary_scale = ps
+        s.donor_scale = 1.0
+        return s
+
+    def _repair_refresh_baseline_title(self):
+        """The baseline pane names the strength it renders at (H3 and Krea 2 carry one)."""
+        lbl = getattr(self, "_repair_baseline_title", None)
+        if lbl is None:
+            return
+        ps = float(getattr(self.repair_state, "primary_scale", 1.0))
+        txt = ("Baseline (LoRA at default 1.0)" if abs(ps - 1.0) < 1e-9
+               else f"Baseline (LoRA at {ps:g})")
+        try:
+            if lbl.cget("text") != txt:
+                lbl.configure(text=txt)
+        except Exception:
+            pass
 
     def _repair_scale_controls(self, show):
         for lbl, spin in getattr(self, "_repair_scale_widgets", ()):
@@ -21464,8 +21619,8 @@ class LoRATrainerGUI:
 
     def _on_repair_scale_changed(self):
         """A load strength edited: the state carries it (slider × scale in the engine), the
-        baseline is a different render now, so re-render — H3 only."""
-        if not self._repair_is_h3():
+        baseline is a different render now, so re-render — H3 and Krea 2."""
+        if not (self._repair_is_h3() or self._repair_family_is("krea2")):
             return
         ps, ds = self._repair_scale("primary"), self._repair_scale("donor")
         if (abs(getattr(self.repair_state, "primary_scale", 1.0) - ps) < 1e-9
@@ -24998,6 +25153,11 @@ class LoRATrainerGUI:
         self.repair_state.preview_width = res
         self.repair_state.preview_height = res
         h3_opts = None
+        if self._repair_family_is("krea2"):
+            # Krea 2 carries the load strengths too (16 Sep 2026): slider × scale in the engine.
+            self.repair_state.primary_scale = self._repair_scale("primary")
+            self.repair_state.donor_scale = self._repair_scale("donor")
+            self._repair_refresh_baseline_title()
         if self._repair_is_h3():
             # H3 renders a clip on its own canvas — the Clip row, not the square Res combo.
             # Dial renders at the dial fraction of that canvas (Confirm at the full size).
@@ -25008,6 +25168,7 @@ class LoRATrainerGUI:
             self.repair_state.preview_frames = h3_opts["frames"]
             self.repair_state.primary_scale = self._repair_scale("primary")
             self.repair_state.donor_scale = self._repair_scale("donor")
+            self._repair_refresh_baseline_title()
             self._repair_peek = None      # a slider move ends a library peek
             # The interactive render always wins the engine: if the library builder is
             # mid-render, abort its entry (it retries that block after we're done).
@@ -28939,7 +29100,7 @@ class LoRATrainerGUI:
 
         # Capture current state
         lora_path = self.repair_engine.primary_path
-        current_state = self.repair_state.copy()
+        current_state = self._repair_state_for_explorer()
         prompt = self.repair_prompt_var.get()
         seed = self.repair_seed_var.get()
         res = self.repair_res_var.get()
@@ -28960,11 +29121,11 @@ class LoRATrainerGUI:
 
         # Handoff inherits the Repair Studio's family — switch the Explorer to match (so it loads
         # the right engine + hides the DiT radio/ref-strength for krea2).
-        target_family = "krea2" if self.repair_family_var.get() == "krea2" else "klein"
+        target_family = self._handoff_family(self.repair_family_var.get())
         if self.explorer_family_var.get() != target_family:
             self.explorer_family_var.set(target_family)
             self.last_used["explorer_family"] = target_family
-            self._apply_explorer_family_ui(target_family == "krea2")
+            self._apply_explorer_family_ui(target_family != "klein")
 
         # Switch to Explorer tab
         self.notebook.select(self.explorer_tab)
@@ -29268,6 +29429,15 @@ class LoRATrainerGUI:
 
     # ---------------- Presets (built-in + user JSON) -----------------
 
+    # Krea 2 has no semantic block map, so its built-ins are Reset All plus the text-fusion
+    # boosts (EXPERIMENTAL, 15 Sep 2026): the four txtfusion blocks at x2 / x3, everything else
+    # untouched. Measured across several LoRAs: x3 lifted the detail metric ~72 -> ~77 and
+    # likeness 2-7 points on every LoRA except an overtrained one, composition unchanged.
+    _REPAIR_BUILTIN_PRESETS_KREA2 = {
+        "✨Reset All": "reset",
+        "✨Text fusion ×2 (experimental)": "txtfusion:2",
+        "✨Text fusion ×3 (experimental)": "txtfusion:3",
+    }
     _REPAIR_BUILTIN_PRESETS = {
         "✨Reset All": "reset",
         "✨Identity Only": "identity",
@@ -29286,6 +29456,12 @@ class LoRATrainerGUI:
         os.makedirs(d, exist_ok=True)
         return d
 
+    def _repair_family_is(self, fam: str) -> bool:
+        """The exact Repair Studio family (klein / krea2 / minimax) — unlike _repair_is_krea2,
+        which is true for every no-block-map family."""
+        var = getattr(self, "repair_family_var", None)
+        return var is not None and str(var.get()) == fam
+
     def _repair_is_krea2(self) -> bool:
         """Historical name — True for ANY no-block-map family (Krea 2 or MiniMax H3), which
         is what every caller actually means: no category presets, no master sliders."""
@@ -29293,8 +29469,11 @@ class LoRATrainerGUI:
                 and self.repair_family_var.get() in ("krea2", "minimax"))
 
     def _repair_preset_list(self) -> list:
-        if self._repair_is_krea2():
-            # No Krea 2 / H3 semantic block map yet — only Reset All is meaningful there.
+        if self._repair_family_is("krea2"):
+            # No Krea 2 semantic block map yet — Reset All plus the text-fusion boosts.
+            names = list(self._REPAIR_BUILTIN_PRESETS_KREA2.keys())
+        elif self._repair_is_krea2():
+            # MiniMax H3: no block map, no boosts — only Reset All is meaningful.
             names = ["✨Reset All"]
         else:
             names = list(self._REPAIR_BUILTIN_PRESETS.keys())
@@ -29344,6 +29523,14 @@ class LoRATrainerGUI:
         s.prompt = self.repair_state.prompt
         s.preview_width = self.repair_state.preview_width
         s.preview_height = self.repair_state.preview_height
+        if kind.startswith("txtfusion:") and self._repair_family_is("krea2"):
+            from fizgig.repair_studio.krea2_blocks import KREA2_TXTFUSION_IDS
+            mult = float(kind.split(":", 1)[1])
+            for bid in KREA2_TXTFUSION_IDS:
+                if bid in s.blocks:
+                    s.blocks[bid].primary_enabled = True
+                    s.blocks[bid].primary_strength = mult
+            return s
         if kind == "reset" or self._repair_is_krea2():
             return s
         if kind == "identity":
@@ -29401,8 +29588,10 @@ class LoRATrainerGUI:
         if not name:
             return
         from fizgig.repair_studio.state import SliderState
-        if name in self._REPAIR_BUILTIN_PRESETS:
-            state = self._repair_builtin_state(self._REPAIR_BUILTIN_PRESETS[name])
+        _builtins = (self._REPAIR_BUILTIN_PRESETS_KREA2 if self._repair_family_is("krea2")
+                     else self._REPAIR_BUILTIN_PRESETS)
+        if name in _builtins:
+            state = self._repair_builtin_state(_builtins[name])
             self._apply_repair_state_to_widgets(state)
             self._schedule_preview(force=True)
             return
@@ -29830,7 +30019,7 @@ class LoRATrainerGUI:
     def browse_file(self, setting_name, input_type):
         # Resume Training points at a saved state dir, which lives under the LoRA
         # output folder — open the Browse there so users don't hunt for it.
-        initial = self._pref_initialdir("lora_output_dir") if setting_name == "RESUME_TRAINING" else ""
+        initial = self._current_output_dir() if setting_name == "RESUME_TRAINING" else ""
         if input_type == "directory":
             path = filedialog.askdirectory(initialdir=initial)
         else:
@@ -31791,12 +31980,15 @@ class LoRATrainerGUI:
         if _hl is not None and abs(_hl - 1.0) > 1e-9 and not _ft_now:
             cmd += ["--highnoise_lr_scale", f"{_hl:g}"]
         # Per-category retirement (mixed visual+voice datasets). One category, one epoch —
-        # sent only when the epoch is set: the flag's presence means the run used it.
+        # sent only when the epoch is set AND the dataset is genuinely mixed (the row's own
+        # visibility rule): a value restored by Load Settings From Last Train from a mixed run
+        # used to retire the visuals of a photo-only run at that epoch, with the row hidden
+        # and nothing on screen to explain the frozen samples (#136).
         try:
             _n = int(str(self.settings.get("MIXED_STOP_EPOCH", "") or "").strip() or 0)
         except ValueError:
             _n = 0
-        if _n > 0:
+        if _n > 0 and self._minimax_dataset_mixed():
             _flag = ("visual" if "photo" in
                      str(self.settings.get("MIXED_STOP_CATEGORY", "")).lower() else "audio")
             # Under FT only "stop" exists (the anchor rides param-group LR machinery FT
