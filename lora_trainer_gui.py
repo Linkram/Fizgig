@@ -28105,8 +28105,9 @@ class LoRATrainerGUI:
         self._rms_mod_meta = {m["name"]: m for m in found}
         names = [ra.NONE_MOD] + list(self._rms_mod_meta)
         for row in self._rms_rows:
-            row["mod_combo"].configure(values=names)
-            row["b_combo"].configure(values=names)
+            for _cb in (row["mod_combo"], row["b_combo"]):
+                _cb.configure(values=names, width=self._rms_picker_width(names))
+                _cb._rms_all = list(names)
             for var in (row["mod_var"], row["b_var"]):
                 if var.get() not in names:
                     var.set(ra.NONE_MOD)
@@ -28129,9 +28130,9 @@ class LoRATrainerGUI:
         row["on_var"] = tk.BooleanVar(value=bool(saved.get("on", True)))
         ttk.Checkbutton(fr, variable=row["on_var"], command=lambda: self._rms_row_changed(row)).grid(row=0, column=0)
         row["mod_var"] = tk.StringVar(value=str(saved.get("mod", ra.NONE_MOD)))
-        row["mod_combo"] = ttk.Combobox(fr, textvariable=row["mod_var"], values=names, state="readonly", width=48)
+        row["mod_combo"] = ttk.Combobox(fr, textvariable=row["mod_var"], values=names, width=self._rms_picker_width(names))
         row["mod_combo"].grid(row=0, column=1, padx=(2, 6))
-        row["mod_combo"].bind("<<ComboboxSelected>>", lambda e: self._rms_row_changed(row))
+        self._rms_make_searchable(row["mod_combo"], lambda: self._rms_row_changed(row))
         row["value_var"] = tk.DoubleVar(value=float(saved.get("value", 1.0)))
         row["scale"] = ttk.Scale(fr, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=150, variable=row["value_var"],
                                  command=lambda v, rw=row: self._rms_row_moved(rw))
@@ -28153,9 +28154,9 @@ class LoRATrainerGUI:
                      "stronger pull; every copy costs its full tokens.")
         ttk.Label(fr, text="vs").grid(row=0, column=7, padx=(12, 2))
         row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
-        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, state="readonly", width=36)
+        row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, width=self._rms_picker_width(names))
         row["b_combo"].grid(row=0, column=8)
-        row["b_combo"].bind("<<ComboboxSelected>>", lambda e: self._rms_row_changed(row))
+        self._rms_make_searchable(row["b_combo"], lambda: self._rms_row_changed(row))
         _rms_tip(row["b_combo"], "Pick a second mod to turn the row into the Axis node: the slider runs "
                                 "A ◀ 0 ▶ B, its sign picks the side and its distance is the strength.")
         _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
@@ -28206,6 +28207,71 @@ class LoRATrainerGUI:
     def _rms_row_is_axis(self, row):
         from fizgig.minimax import refmod_apply as ra
         return row["b_var"].get() not in ("", ra.NONE_MOD)
+
+    @staticmethod
+    def _rms_picker_width(names):
+        """Both pickers as wide as the longest mod name in the list (Peter, 16 Sep 2026)."""
+        try:
+            return max(24, max(len(str(nm)) for nm in names) + 1)
+        except ValueError:
+            return 24
+
+    def _rms_make_searchable(self, combo, on_pick):
+        """A mod picker you can type into: letters narrow the list to the names containing
+        them (case-insensitive) — Down or the arrow then opens the narrowed list. Return, or
+        leaving the box, commits an exact match or the only remaining match and otherwise
+        puts the previous pick back, so a half-typed name never becomes a row's mod."""
+        combo._rms_all = list(combo.cget("values"))
+        combo._rms_last = combo.get()
+
+        def _all():
+            return list(getattr(combo, "_rms_all", None) or combo.cget("values"))
+
+        def _hits(typed):
+            t = typed.strip().lower()
+            return [nm for nm in _all() if t in nm.lower()] if t else _all()
+
+        def _popdown_open():
+            try:
+                pd = combo.tk.call("ttk::combobox::PopdownWindow", combo)
+                return bool(combo.tk.call("winfo", "ismapped", pd))
+            except tk.TclError:
+                return False
+
+        def _on_key(e):
+            if e.keysym in ("Up", "Down", "Return", "KP_Enter", "Escape", "Tab", "Left", "Right",
+                            "Home", "End", "Shift_L", "Shift_R", "Control_L", "Control_R"):
+                return
+            hits = _hits(combo.get())
+            combo.configure(values=hits or _all())
+
+        def _commit(e=None):
+            if e is not None and getattr(e, "type", None) is not None and str(e.type) == "10" and _popdown_open():
+                return   # focus went to the list itself — the pick comes back as a selection
+            typed = combo.get()
+            names = _all()
+            exact = next((nm for nm in names if nm.lower() == typed.strip().lower()), None)
+            if exact is None:
+                h = _hits(typed)
+                exact = h[0] if (typed.strip() and len(h) == 1) else None
+            combo.set(exact if exact is not None else combo._rms_last)
+            combo.configure(values=names)
+            if combo.get() != combo._rms_last:
+                combo._rms_last = combo.get()
+                on_pick()
+
+        def _selected(e):
+            combo.configure(values=_all())
+            if combo.get() != combo._rms_last:
+                combo._rms_last = combo.get()
+            on_pick()
+
+        combo.bind("<KeyRelease>", _on_key)
+        combo.bind("<Return>", _commit)
+        combo.bind("<KP_Enter>", _commit)
+        combo.bind("<FocusOut>", _commit)
+        combo.bind("<<ComboboxSelected>>", _selected)
+        combo._rms_handlers = (_on_key, _commit, _selected)   # reachable for headless checks
 
     def _rms_row_changed(self, row):
         self._rms_row_refresh(row)
