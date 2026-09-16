@@ -31,7 +31,6 @@ The numbers are the pack's own maths, so what you see in the Studio is what the 
 
 ## Also
 
-- A model family you have never set an Output folder for now starts at `output_loras` inside Fizgig instead of inheriting the folder the previous family was using — RefMod's ComfyUI folder no longer follows you to Krea 2.
-- Tooltips wrap instead of running off the screen.
+- **Fixed:** a model family you had never set an Output folder for inherited the folder the previous family was using. It now starts at `output_loras` inside Fizgig.
+- **Fixed:** tooltips wrap instead of running off the screen.
 - The window is a little wider for the new tab.
-- The RefMod card's dropdown labels count tokens the way the model does.
