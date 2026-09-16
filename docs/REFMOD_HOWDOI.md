@@ -83,18 +83,6 @@ Open **RefMod Studio**. Top to bottom:
 
 The numbers are the pack's own maths, so what you see in the Studio is what the nodes will do.
 
-## Can I bake two mods into one file?
-
-No, and the Studio no longer offers it. A file holds one reference block, and the model reads a block as one subject, so two mods written into one file come out as one of them. Two mods together are two loader slots in ComfyUI. The ComfyUI settings readout gives the values for both.
-
-## Why does my mod change the framing or the jewellery?
-
-More references, especially at 1 MP, pull the generation toward the photos: their framing, their earrings. That is the reference count, not the optimisation. Use the Strength (Retention) dial in the Studio, or fewer references, or the pack's usual habit of running stacked mods below 1.0.
-
-## Why is likeness low on a clip where she looks away?
-
-The likeness meter scores against frontal reference crops, so a turned head costs ten points or more on its own. Judge on frontal stretches, or prompt "facing the camera" for the comparison.
-
 ## Where is the file, and is it really standard?
 
 In the RefMod family's Output folder as `<name>.safetensors`. It is a standard RefMod: the pack's own file layout, loadable by its nodes with nothing special. Fizgig adds a few of its own keys to the header that the nodes ignore.
