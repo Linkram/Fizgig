@@ -1169,14 +1169,16 @@ REFMOD_BUILT_IN_PRESETS = {
         "DATASET_MEGAPIXELS": "0.25",
         "MINIMAX_CLIP_STILL": True,
     },
-    "✨ RefMod — style, high fidelity (Full at 0.25 MP, all refs, plain encode)": {
+    # High fidelity means it (Peter, 16 Sep 2026): 1 MP references, ~1 000 tokens a still, so 8 of
+    # them — the library's budget; the token readout warns anyone who takes it further.
+    "✨ RefMod — style, high fidelity (Full at 1 MP, 8 refs, plain encode)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
-        "MINIMAX_REFMOD_REFS": "all",
+        "MINIMAX_REFMOD_REFS": "8",
         "MINIMAX_REFMOD_STEPS": REFMOD_STEP_OPTIONS[0],
         "MINIMAX_REFMOD_CLIPS": REFMOD_CLIPS_OPTIONS[0],
         "MINIMAX_REFMOD_CONCEPT": "style",
-        "DATASET_MEGAPIXELS": "0.25",
+        "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
     },
 }
