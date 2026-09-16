@@ -27821,9 +27821,11 @@ class LoRATrainerGUI:
         # ── Card 2: Mods ───────────────────────────────────────────────────────────────
         mods = self._start_section_card(
             outer, "Mods",
-            "The Load H3 RefMods and Axis nodes. Each row is a mod at a strength with copies; "
-            "pick a second mod under 'vs' and the row becomes an A/B axis (left of centre is "
-            "A, right is B, distance is strength).")
+            "Which mods go into the render. Each row is one mod: the slider is how strongly it "
+            "applies, and copies is how many times it rides in the bundle (more copies pull harder, "
+            "each one costs its tokens). Pick a second mod under 'vs' and the row becomes a slider "
+            "between the two: left of centre leans to the first, right to the second, and the "
+            "distance from centre is how strongly. Untick a row to leave it out.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
@@ -27843,9 +27845,14 @@ class LoRATrainerGUI:
         # ── Card 3: Apply ──────────────────────────────────────────────────────────────
         apply_card = self._start_section_card(
             outer, "Apply",
-            "The Apply and Step Curve nodes. Retention scales every row; the frame curve runs "
-            "across the mod's OWN frames (an image mod has one frame, so it ignores it); the "
-            "step curve re-mixes the references as the denoise progresses.")
+            "How the mods are applied while the clip renders. Retention is a master strength over "
+            "every row: 1.0 uses the references in full, lower softens them (each is blended toward "
+            "a blurred copy of itself), 0 switches them off. Scramble seed shuffles which references "
+            "lead, so a different one leads each render. Frame curve fades a video mod's own frames "
+            "up or down along its length (a still mod has one frame and ignores it). Step curve "
+            "changes the reference strength as the picture forms: strong early locks composition "
+            "and identity and easing off late gives cleaner texture; strong late refines the identity "
+            "at the end. The graphs show both curves as you set them.")
         apply_card.columnconfigure(1, weight=1)
         r = 0
         ttk.Label(apply_card, text="Retention:").grid(row=r, column=0, sticky=tk.W, pady=2)
@@ -27927,9 +27934,11 @@ class LoRATrainerGUI:
         # ── Card 4: Preview ────────────────────────────────────────────────────────────
         prev = self._start_section_card(
             outer, "Preview",
-            "No mod is the base model at the same seed and prompt (rendered once per setup); "
-            "With mods is the bundle above. Click a still for the pop-out; a clip opens the "
-            "player with sound.")
+            "Render to see what the mods do. No mod is the base model alone at the same seed and "
+            "prompt, rendered once and kept; With mods is your rows applied, so the difference "
+            "between the two is the mods. Click a still to pop it out; a clip opens the player. "
+            "Render sweep steps one dial through its useful values and lines the results up, the "
+            "quickest way to see what a control does to this mod.")
         prev.columnconfigure(0, weight=1)
         prev.columnconfigure(1, weight=1)
         ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=0, column=0, pady=(2, 0))
@@ -27967,7 +27976,8 @@ class LoRATrainerGUI:
         # ── Card 5: Actions ────────────────────────────────────────────────────────────
         act = self._start_section_card(
             outer, "Actions",
-            "Take the result to ComfyUI: the exact node values, or a mod with the dial baked in.")
+            "Take the result to ComfyUI: copy the exact settings for the pack's nodes, or save a "
+            "new mod with the current strength and curves baked in so it loads plainly.")
         _ar = tk.Frame(act, bg=COLORS["bg_surface"])
         _ar.pack(fill=tk.X)
         ttk.Button(_ar, text="💾 Save preview…", command=self._rms_save_preview).pack(side=tk.LEFT)
