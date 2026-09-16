@@ -4300,8 +4300,9 @@ class LoRATrainerGUI:
                       "reference's canvas — the only setting that carries a face; the pooled "
                       "grids are small, stackable, concept-level mods. References: how many "
                       "stills stack into the mod. Steps: 0 is the plain encode, the same file "
-                      "the node pack's extractor makes. Each optimisation step rides a random 3 "
-                      "of the references, so the steps stay quick whatever the count. Target MP sizes the references; with "
+                      "the node pack's extractor makes. Each optimisation step rides one reference "
+                      "(random, from those with a large face in frame) on the NF4 base, so the steps "
+                      "stay quick whatever the count. Target MP sizes the references; with "
                       "Steps above 0 the optimiser's own stills are always cached at 0.25 MP "
                       "(a second, lighter pass), the measured recipe. Output: <name>.safetensors in the LoRA "
                       "output folder — copy it to ComfyUI/models/refmods/ and load it with "
@@ -31970,7 +31971,10 @@ class LoRATrainerGUI:
         ]
         _bs = str(self.settings.get("BLOCKS_SWAP", "auto") or "auto").strip()
         cmd += ["--blocks_to_swap", "auto" if _bs.lower().startswith("auto") else _bs]
-        cmd += ["--base_quant", minimax_base_quant(self.settings.get("MINIMAX_BASE_QUANT"))]
+        # NF4 always (Peter, 16 Sep 2026): 10.5 GB resident, so the step fits without recompute
+        # on 32 GB and without streaming on 16/24 GB; the Training tab's precision box is H3
+        # LoRA/FT's and does not apply here.
+        cmd += ["--base_quant", "nf4"]
         if self._refmod_ref_pass_needed():
             # With caching off the reference pass never runs, so only a '-refs' folder that
             # already exists (an earlier run's) can be used; otherwise the references come

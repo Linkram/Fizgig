@@ -36,15 +36,19 @@ def setup_parser():
     p.add_argument("--steps", type=int, default=200,
                    help="optimisation steps against the frozen base (0 = encode only, the "
                         "node extractor's own result)")
-    p.add_argument("--ref_subset", type=int, default=3,
-                   help="references each optimisation step rides, picked at random in saved order "
-                        "(default 3 — several times faster than all of them, which is 0)")
+    p.add_argument("--ref_subset", type=int, default=1,
+                   help="references each optimisation step rides, picked at random from the ones "
+                        "with a large face in frame (default 1 — one reference beside the still "
+                        "keeps the step small enough to skip recompute on a 32 GB card; 0 = all)")
     p.add_argument("--lr", type=float, default=1e-3, help="latent-space AdamW rate (default 1e-3, measured)")
     p.add_argument("--pull", type=float, default=2.0,
                    help="weight of the L2 pull toward the initial encode (default 2.0, measured)")
     p.add_argument("--max_refs", type=int, default=16, help="references stacked into the mod (default 16, measured)")
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--base_quant", default="auto", help="auto / int8 / nf4 / hqq")
+    p.add_argument("--base_quant", default="nf4",
+                   help="nf4 (default: the base at 10.5 GB fits beside the step without recompute on "
+                        "32 GB and without streaming on 16/24 GB; the mod's gradient is not the place "
+                        "the extra bits show) / int8 / hqq / auto")
     p.add_argument("--blocks_to_swap", default="auto")
     p.add_argument("--vae", default=None, help="H3 video VAE (previews decode with it)")
     p.add_argument("--text_encoder", default=None, help="Qwen3-VL-32B (preview prompts)")

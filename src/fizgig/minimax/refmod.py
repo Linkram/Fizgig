@@ -666,7 +666,7 @@ def run_refmod(*, dataset_config: str, output_dir: str, output_name: str, dit_pa
                turbo_lora_path: Optional[str] = None, turbo_lora_strength: float = 1.0,
                description: str = "", init_from: Optional[str] = None,
                sigma_range=DEFAULT_SIGMA_RANGE, exclude_refs: bool = False,
-               ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 3) -> str:
+               ref_cache_dirs: Optional[List[str]] = None, ref_subset: int = 1) -> str:
     """Make the mod, optimise it, write it. Returns the output path.
 
     One file: <output_dir>/<output_name>.safetensors. Steps = 0 writes the plain encode (the
