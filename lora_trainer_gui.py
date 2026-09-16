@@ -135,9 +135,10 @@ class _GUIWriter:
 
 class ToolTip:
     """Simple tooltip class for tkinter widgets"""
-    def __init__(self, widget, text):
+    def __init__(self, widget, text, size=9):
         self.widget = widget
         self.text = text
+        self.size = size
         self.tooltip_window = None
         widget.bind("<Enter>", self.show_tooltip)
         widget.bind("<Leave>", self.hide_tooltip)
@@ -157,7 +158,7 @@ class ToolTip:
         label = tk.Label(tw, text=self.text, justify=tk.LEFT,
                         background=COLORS["bg_surface"], foreground=COLORS["text_primary"],
                         relief=tk.SOLID, borderwidth=1,
-                        font=(FONT_FAMILY, 9), padx=8, pady=6)
+                        font=(FONT_FAMILY, self.size), padx=8, pady=6)
         label.pack()
 
     def hide_tooltip(self, event=None):
@@ -450,6 +451,11 @@ for _old, _new in _ARCH_ALIASES.items():
 
 # Aliases are readable, not offerable: the dropdown lists current names only.
 ARCHITECTURE_LIST = [k for k in ARCHITECTURES if k not in _ARCH_ALIASES]
+
+
+def _rms_tip(widget, text):
+    """RefMod Studio tooltips one point larger (Peter, 16 Sep 2026)."""
+    return ToolTip(widget, text, size=10)
 
 
 def _canon_arch(name):
@@ -3666,7 +3672,7 @@ class LoRATrainerGUI:
         desc_label = None
         if description:
             desc_label = tk.Label(card, text=description,
-                                  font=(FONT_FAMILY, 10),
+                                  font=(FONT_FAMILY, getattr(self, "_card_desc_size", None) or 10),
                                   fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                                   wraplength=760, justify=tk.LEFT)
             desc_label.pack(anchor=tk.W, padx=20, pady=(0, 10))
@@ -27652,6 +27658,7 @@ class LoRATrainerGUI:
 
     def create_refmod_studio_tab(self):
         """RefMod Studio: mods → apply → preview → actions (Start-tab styled)."""
+        self._card_desc_size = 11   # this tab's help text one point larger (Peter, 16 Sep 2026)
         import sys
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
         from fizgig.minimax import refmod_apply as ra
@@ -27701,7 +27708,7 @@ class LoRATrainerGUI:
                            state="readonly", width=44)
         _bc.grid(row=r, column=1, sticky=tk.W, pady=2)
         _bc.bind("<<ComboboxSelected>>", lambda e: self._rms_persist())
-        ToolTip(_bc, "Same tiers as Repair Studio: int8 on big cards, streamed blocks for "
+        _rms_tip(_bc, "Same tiers as Repair Studio: int8 on big cards, streamed blocks for "
                      "long clips, NF4 for the smallest footprint. Applies at the next Load.")
         r += 1
         ttk.Label(setup, text="Prompt:").grid(row=r, column=0, sticky=tk.NW, pady=2)
@@ -27717,7 +27724,7 @@ class LoRATrainerGUI:
         self.rms_prompt_text.bind("<KeyRelease>", lambda e: self._rms_persist())
         _hb = ttk.Button(_pf, text="+ mod hints", width=12, command=self._rms_add_hints)
         _hb.grid(row=0, column=1, sticky=tk.N, padx=(6, 0))
-        ToolTip(_hb, "Append every active mod's 'concept_type: description' to the prompt — "
+        _rms_tip(_hb, "Append every active mod's 'concept_type: description' to the prompt — "
                      "the Loader node's prompt_hint output, meant to be pasted into the CLIP prompt.")
         r += 1
         _sr = tk.Frame(setup, bg=COLORS["bg_surface"])
@@ -27736,7 +27743,7 @@ class LoRATrainerGUI:
                            state="readonly", width=17)
         _fc.pack(side=tk.LEFT)
         _fc.bind("<<ComboboxSelected>>", lambda e: self._rms_settings_changed())
-        ToolTip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
+        _rms_tip(_fc, "A still is the fast loop (a few seconds at 6 steps). Clips render with "
                      "sound and open in the player. Sweeps always render stills.")
         ttk.Label(_sr, text="W:").pack(side=tk.LEFT, padx=(14, 2))
         self.rms_width_var = tk.StringVar(value=str(saved.get("width", "768")))
@@ -27760,17 +27767,17 @@ class LoRATrainerGUI:
         _tue = ttk.Entry(_sr, textvariable=self.rms_turbo_var, width=5)
         _tue.pack(side=tk.LEFT)
         _tue.bind("<FocusOut>", lambda e: self._rms_settings_changed())
-        ToolTip(_tue, "Turbo LoRA strength for the render: 6 steps at 0.75 is the training-preview "
+        _rms_tip(_tue, "Turbo LoRA strength for the render: 6 steps at 0.75 is the training-preview "
                       "regime; 4 at 1.0 is the fast dial. 0 = Turbo off (20-step quality, slow).")
         self.rms_sound_var = tk.BooleanVar(value=bool(saved.get("sound", True)))
         self._rms_sound_chk = ttk.Checkbutton(_sr, text="Sound", variable=self.rms_sound_var,
                                               command=self._rms_persist)
         self._rms_sound_chk.pack(side=tk.LEFT, padx=(14, 0))
-        ToolTip(self._rms_sound_chk, "Decode the clip's soundtrack (needs the audio VAE in Preferences).")
+        _rms_tip(self._rms_sound_chk, "Decode the clip's soundtrack (needs the audio VAE in Preferences).")
         self.rms_early_var = tk.BooleanVar(value=bool(saved.get("early", True)))
         _ec = ttk.Checkbutton(_sr, text="Show early", variable=self.rms_early_var, command=self._rms_persist)
         _ec.pack(side=tk.LEFT, padx=(8, 0))
-        ToolTip(_ec, "Put up the pass-2 estimate while the remaining passes run.")
+        _rms_tip(_ec, "Put up the pass-2 estimate while the remaining passes run.")
         r += 1
         _br = tk.Frame(setup, bg=COLORS["bg_surface"])
         _br.grid(row=r, column=0, columnspan=2, sticky=tk.EW, pady=(8, 2))
@@ -27778,15 +27785,15 @@ class LoRATrainerGUI:
         self._rms_load_btn.pack(side=tk.LEFT)
         self._rms_render_btn = ttk.Button(_br, text="▶ Render", width=12, command=self._rms_render)
         self._rms_render_btn.pack(side=tk.LEFT, padx=(6, 0))
-        ToolTip(self._rms_render_btn, "Render No mod (once per setup, cached) and With mods at the "
+        _rms_tip(self._rms_render_btn, "Render No mod (once per setup, cached) and With mods at the "
                                       "current rows / retention / curves. Loads the base first if needed.")
         self._rms_cancel_btn = ttk.Button(_br, text="Cancel", width=8, command=self._rms_cancel, state="disabled")
         self._rms_cancel_btn.pack(side=tk.LEFT, padx=(6, 0))
         _ub = ttk.Button(_br, text="Unload", width=8, command=self._rms_unload)
         _ub.pack(side=tk.LEFT, padx=(6, 0))
-        ToolTip(_ub, "Free the base from VRAM (it also unloads when you leave the tab).")
+        _rms_tip(_ub, "Free the base from VRAM (it also unloads when you leave the tab).")
         self.rms_status_var = tk.StringVar(value="Ready — pick a RefMod folder below, then Load base.")
-        tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 9),
+        tk.Label(_br, textvariable=self.rms_status_var, font=(FONT_FAMILY, 10),
                  fg=COLORS["text_secondary"], bg=COLORS["bg_surface"], anchor=tk.W
                  ).pack(side=tk.LEFT, padx=(14, 0), fill=tk.X, expand=True)
         self._rms_progress = ttk.Progressbar(_br, mode="indeterminate", length=160)
@@ -27811,7 +27818,7 @@ class LoRATrainerGUI:
         ttk.Button(_fr, text="Browse…", width=9, command=self._rms_browse_folder).grid(row=0, column=2)
         _rb = ttk.Button(_fr, text="↻", width=3, command=self._rms_rescan)
         _rb.grid(row=0, column=3, padx=(4, 0))
-        ToolTip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
+        _rms_tip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
                      "(Fizgig writes mods to the LoRA output folder; ComfyUI reads models/refmods).")
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
@@ -27821,10 +27828,10 @@ class LoRATrainerGUI:
         self._rms_add_btn = ttk.Button(_ft, text="+ Add row", width=10, command=lambda: self._rms_add_row())
         self._rms_add_btn.pack(side=tk.LEFT)
         self.rms_tokens_var = tk.StringVar(value="Tokens: 0 / 5 120")
-        self._rms_tokens_lbl = tk.Label(_ft, textvariable=self.rms_tokens_var, font=(FONT_FAMILY, 9, "bold"),
+        self._rms_tokens_lbl = tk.Label(_ft, textvariable=self.rms_tokens_var, font=(FONT_FAMILY, 10, "bold"),
                                         fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
         self._rms_tokens_lbl.pack(side=tk.LEFT, padx=(16, 0))
-        ToolTip(self._rms_tokens_lbl, "Reference tokens the DiT attends to on every step: each mod's "
+        _rms_tip(self._rms_tokens_lbl, "Reference tokens the DiT attends to on every step: each mod's "
                                       "T × (H/2) × (W/2), times its copies. The pack caps a mod at 5 120; "
                                       "a bundle well over that slows every step and starves the prompt.")
 
@@ -27852,7 +27859,7 @@ class LoRATrainerGUI:
             _b = ttk.Button(_rr, text=f"{name} {val:g}", width=12,
                             command=lambda v=val: self._rms_set_retention(v))
             _b.pack(side=tk.LEFT, padx=(0, 4))
-        ToolTip(_rs, "A master multiplier on every row's strength: 1.0 keeps the references as "
+        _rms_tip(_rs, "A master multiplier on every row's strength: 1.0 keeps the references as "
                      "stored; 0.4 ('attribute transfer') keeps the look and frees the scene; "
                      "0 injects nothing.")
         r += 1
@@ -27866,7 +27873,7 @@ class LoRATrainerGUI:
         ttk.Button(_scr, text="🎲", width=3, command=self._rms_random_scramble).pack(side=tk.LEFT, padx=(4, 0))
         ttk.Button(_scr, text="Off", width=4, command=lambda: (self.rms_scramble_var.set("-1"), self._rms_persist())
                    ).pack(side=tk.LEFT, padx=(4, 0))
-        ToolTip(_sce, "-1 = off. A seed ≥ 0 shuffles the bundle and keeps a random 50–100% of it — "
+        _rms_tip(_sce, "-1 = off. A seed ≥ 0 shuffles the bundle and keeps a random 50–100% of it — "
                       "which reference sits first changes what 'pops'. Needs more than one entry.")
         r += 1
         # curves: two rows of combos + one canvas
@@ -27886,7 +27893,7 @@ class LoRATrainerGUI:
         self.rms_sc_on_var = tk.BooleanVar(value=bool(saved.get("step_on", False)))
         _son = ttk.Checkbutton(_scr2, text="On", variable=self.rms_sc_on_var, command=self._rms_curve_changed)
         _son.pack(side=tk.LEFT, padx=(0, 6))
-        ToolTip(_son, "The Step Curve node: off = not connected. concept_at_end = full references "
+        _rms_tip(_son, "The Step Curve node: off = not connected. concept_at_end = full references "
                       "in the early (structure) steps, released toward the last (texture) steps.")
         self.rms_sc_dir_var = tk.StringVar(value=str(sc[0]) if sc[0] in ra.CURVE_DIRECTIONS else ra.DEFAULT_STEP_CURVE[0])
         self.rms_sc_shape_var = tk.StringVar(value=str(sc[1]) if sc[1] in ra.CURVE_SHAPES else ra.DEFAULT_STEP_CURVE[1])
@@ -27909,7 +27916,7 @@ class LoRATrainerGUI:
         ttk.Button(_pr, text="Delete", width=7, command=self._rms_curve_preset_delete).pack(side=tk.LEFT, padx=(4, 0))
         _ib = ttk.Button(_pr, text="Import ComfyUI graph preset…", command=self._rms_import_graph_preset)
         _ib.pack(side=tk.LEFT, padx=(12, 0))
-        ToolTip(_ib, "Read one of the pack's models/refmods/graph_presets/*.png files "
+        _rms_tip(_ib, "Read one of the pack's models/refmods/graph_presets/*.png files "
                      "(direction / shape / value in its text chunk) into the frame curve.")
 
         # ── Card 4: Preview ────────────────────────────────────────────────────────────
@@ -27920,8 +27927,8 @@ class LoRATrainerGUI:
             "player with sound.")
         prev.columnconfigure(0, weight=1)
         prev.columnconfigure(1, weight=1)
-        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 9, "bold")).grid(row=0, column=0, pady=(2, 0))
-        self._rms_tweaked_title = ttk.Label(prev, text="With mods", font=(FONT_FAMILY, 9, "bold"))
+        ttk.Label(prev, text="No mod (base, same seed)", font=(FONT_FAMILY, 10, "bold")).grid(row=0, column=0, pady=(2, 0))
+        self._rms_tweaked_title = ttk.Label(prev, text="With mods", font=(FONT_FAMILY, 10, "bold"))
         self._rms_tweaked_title.grid(row=0, column=1, pady=(2, 0))
         self._rms_holders, self._rms_labels = {}, {}
         for col, side in ((0, "baseline"), (1, "tweaked")):
@@ -27941,14 +27948,14 @@ class LoRATrainerGUI:
         _swc.pack(side=tk.LEFT, padx=(4, 4))
         self._rms_sweep_btn = ttk.Button(_sw, text="Render sweep", width=13, command=self._rms_sweep)
         self._rms_sweep_btn.pack(side=tk.LEFT)
-        ToolTip(self._rms_sweep_btn, "Render the current setup as a strip of stills with ONE dial "
+        _rms_tip(self._rms_sweep_btn, "Render the current setup as a strip of stills with ONE dial "
                                      "stepped through its useful values — the fastest way to see what a "
                                      "control does to this mod. Click a chip for the full size.")
         ttk.Button(_sw, text="💾 Save strip…", width=13, command=self._rms_save_strip).pack(side=tk.LEFT, padx=(6, 0))
         self._rms_sweep_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
         self._rms_sweep_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W)
         ttk.Label(prev, text="History (last 12 renders — hover for the settings, click to view):",
-                  font=(FONT_FAMILY, 9), foreground=COLORS["text_secondary"]).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+                  font=(FONT_FAMILY, 10), foreground=COLORS["text_secondary"]).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
         self._rms_history_frame = tk.Frame(prev, bg=COLORS["bg_surface"])
         self._rms_history_frame.grid(row=5, column=0, columnspan=2, sticky=tk.W)
 
@@ -27963,11 +27970,11 @@ class LoRATrainerGUI:
         ttk.Button(_ar, text="📂 Load setup…", command=self._rms_setup_load).pack(side=tk.LEFT, padx=(6, 0))
         _rb2 = ttk.Button(_ar, text="📋 ComfyUI settings", command=self._rms_show_readout)
         _rb2.pack(side=tk.LEFT, padx=(14, 0))
-        ToolTip(_rb2, "The Load H3 RefMods / Axis / Apply / Step Curve widget values that reproduce "
+        _rms_tip(_rb2, "The Load H3 RefMods / Axis / Apply / Step Curve widget values that reproduce "
                       "this render in the node pack, ready to copy.")
         _bk = ttk.Button(_ar, text="🧪 Bake as new RefMod…", command=self._rms_bake)
         _bk.pack(side=tk.LEFT, padx=(6, 0))
-        ToolTip(_bk, "Write a copy of one row's mod with its strength × retention and the frame "
+        _rms_tip(_bk, "Write a copy of one row's mod with its strength × retention and the frame "
                      "curve folded into the latent — loads at 1.0 in any loader. Copies, scramble and "
                      "the step curve are runtime-only and stay in the readout.")
         self._add_youtube_help_button(outer, "refmod_studio")
@@ -27979,14 +27986,16 @@ class LoRATrainerGUI:
         self._rms_rescan(quiet=True)
         self._rms_draw_curves()
         self._rms_refresh_tokens()
+        self._card_desc_size = None
 
     # ----- small helpers ----------------------------------------------------------------------
+
     def _rms_curve_combos(self, parent, dvar, svar, vvar):
         from fizgig.minimax import refmod_apply as ra
         _d = ttk.Combobox(parent, textvariable=dvar, values=list(ra.CURVE_DIRECTIONS), state="readonly", width=18)
         _d.pack(side=tk.LEFT)
         _d.bind("<<ComboboxSelected>>", lambda e: self._rms_curve_changed())
-        ToolTip(_d, "Where the concept shows in the OUTPUT (the mirror of the strength envelope over "
+        _rms_tip(_d, "Where the concept shows in the OUTPUT (the mirror of the strength envelope over "
                     "the reference's timeline): concept_at_end locks the reference early and releases "
                     "it late; concept_at_start the reverse; middle / ends peak and trough.")
         _s = ttk.Combobox(parent, textvariable=svar, values=list(ra.CURVE_SHAPES), state="readonly", width=12)
@@ -27996,7 +28005,7 @@ class LoRATrainerGUI:
         _v = ttk.Scale(parent, from_=0.0, to=1.0, orient=tk.HORIZONTAL, length=110, variable=vvar,
                        command=lambda v: self._rms_curve_changed())
         _v.pack(side=tk.LEFT)
-        lbl = tk.Label(parent, text=f"{vvar.get():.2f}", width=5, font=(FONT_FAMILY, 9),
+        lbl = tk.Label(parent, text=f"{vvar.get():.2f}", width=5, font=(FONT_FAMILY, 10),
                        fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
         lbl.pack(side=tk.LEFT)
         vvar.trace_add("write", lambda *a: lbl.configure(text=f"{vvar.get():.2f}"))
@@ -28132,7 +28141,7 @@ class LoRATrainerGUI:
         _ve.grid(row=0, column=3, padx=(4, 8))
         _ve.bind("<Return>", lambda e, rw=row: self._rms_row_typed(rw))
         _ve.bind("<FocusOut>", lambda e, rw=row: self._rms_row_typed(rw))
-        row["axis_lbl"] = tk.Label(fr, text="strength", font=(FONT_FAMILY, 8), fg=COLORS["text_secondary"], bg=bg, width=11)
+        row["axis_lbl"] = tk.Label(fr, text="strength", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, width=11)
         row["axis_lbl"].grid(row=0, column=4)
         ttk.Label(fr, text="copies:").grid(row=0, column=5, padx=(8, 2))
         row["copies_var"] = tk.StringVar(value=str(int(saved.get("copies", 1))))
@@ -28140,18 +28149,18 @@ class LoRATrainerGUI:
                           command=lambda rw=row: self._rms_row_changed(rw))
         _cs.grid(row=0, column=6)
         _cs.bind("<FocusOut>", lambda e, rw=row: self._rms_row_changed(rw))
-        ToolTip(_cs, "The same reference repeated in the bundle — 2–3 is the pack's sweet spot for a "
+        _rms_tip(_cs, "The same reference repeated in the bundle — 2–3 is the pack's sweet spot for a "
                      "stronger pull; every copy costs its full tokens.")
         ttk.Label(fr, text="vs").grid(row=0, column=7, padx=(12, 2))
         row["b_var"] = tk.StringVar(value=str(saved.get("b", ra.NONE_MOD)))
         row["b_combo"] = ttk.Combobox(fr, textvariable=row["b_var"], values=names, state="readonly", width=20)
         row["b_combo"].grid(row=0, column=8)
         row["b_combo"].bind("<<ComboboxSelected>>", lambda e: self._rms_row_changed(row))
-        ToolTip(row["b_combo"], "Pick a second mod to turn the row into the Axis node: the slider runs "
+        _rms_tip(row["b_combo"], "Pick a second mod to turn the row into the Axis node: the slider runs "
                                 "A ◀ 0 ▶ B, its sign picks the side and its distance is the strength.")
         _x = ttk.Button(fr, text="✕", width=2, command=lambda rw=row: self._rms_remove_row(rw))
         _x.grid(row=0, column=9, padx=(10, 0))
-        row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 8), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
+        row["info"] = tk.Label(fr, text="", font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=bg, anchor=tk.W)
         row["info"].grid(row=1, column=1, columnspan=9, sticky=tk.W, pady=(0, 2))
         self._rms_rows.append(row)
         for var in (row["mod_var"], row["b_var"]):
@@ -28910,7 +28919,7 @@ class LoRATrainerGUI:
         for i, h in enumerate(self._rms_history):
             b = tk.Label(self._rms_history_frame, image=self._rms_thumb(h["clip"]["middle"], 96), bg=COLORS["bg_surface"], cursor="hand2")
             b.grid(row=0, column=i, padx=2, pady=2)
-            ToolTip(b, h["label"])
+            _rms_tip(b, h["label"])
             b.bind("<Button-1>", lambda e, hh=h: self._rms_history_view(hh))
 
     def _rms_history_view(self, h):
@@ -28991,8 +29000,8 @@ class LoRATrainerGUI:
         lbl = tk.Label(cell, image=self._rms_thumb(clip["middle"], 160), bg=COLORS["bg_surface"], cursor="hand2")
         lbl.pack()
         lbl.bind("<Button-1>", lambda e, c=clip, j=job: self._rms_popout(c["middle"], j["label"]))
-        tk.Label(cell, text=job["label"], font=(FONT_FAMILY, 8), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack()
-        ToolTip(lbl, self._rms_describe_job(job))
+        tk.Label(cell, text=job["label"], font=(FONT_FAMILY, 9), fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack()
+        _rms_tip(lbl, self._rms_describe_job(job))
         self.rms_status_var.set(f"Sweep: {i + 1} of {n} done…")
 
     def _rms_save_strip(self):
