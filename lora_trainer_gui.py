@@ -1113,10 +1113,13 @@ REFMOD_BUILT_IN_PRESETS = {
     # (portraits 70 vs 60 for 8), and 200 optimisation steps add ~5 on top. A companion LoRA
     # in the same file was tried in eleven configurations and never lifted likeness beyond
     # noise while dropping portraits ~10 (pose drift) — removed 14 Sep 2026.
-    "✨ RefMod — Fizgig recipe (Full reference, 16 refs, optimised)": {
+    "✨ RefMod — Fizgig recipe (Full reference, 16 refs at 1 MP, optimised)": {
         **MINIMAX_BUILT_IN_PRESETS[_MM_FAST_KEY],
         "MINIMAX_REFMOD_GRID": REFMOD_GRID_OPTIONS[0],
         **REFMOD_DEFAULTS,
+        # 1 MP references (the file's pixels); the optimiser's stills are cached at 0.25 MP
+        # regardless (Peter, 16 Sep 2026)
+        "DATASET_MEGAPIXELS": "1.0",
         "MINIMAX_CLIP_STILL": True,
     },
     # Style (16 Sep 2026): a look, not a person — plain encode of EVERY still (the optimiser's
