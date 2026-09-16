@@ -4322,8 +4322,8 @@ class LoRATrainerGUI:
                 model_card,
                 text=("Steps 0 writes the plain encode (no captions needed). Steps above 0 optimise the "
                       "mod against H3: level on shots like your photos, well ahead on looks they never "
-                      "showed, cleaner skin in both. Output: <name>.safetensors in the LoRA output folder "
-                      "→ copy to ComfyUI/models/refmods/."),
+                      "showed, cleaner skin in both. Output: <name>.safetensors in this family's Output "
+                      "folder above — point it at ComfyUI/models/refmods and the mod is ready to load."),
                 font=(FONT_FAMILY, 9, "italic"), fg=COLORS["text_explain"],
                 bg=COLORS["bg_surface"], wraplength=760, justify=tk.LEFT)
             self._refmod_std_hint = None
@@ -27702,9 +27702,10 @@ class LoRATrainerGUI:
         # ── Card 1: Setup ──────────────────────────────────────────────────────────────
         setup = self._start_section_card(
             outer, "Setup",
-            "The folder your mods live in (ComfyUI reads models/refmods; Fizgig writes to the LoRA "
-            "output folder), and the model they run on — its path, the VAE, the text encoder and the "
-            "Turbo LoRA come from Preferences. Load once per session.")
+            "The folder your mods live in — ComfyUI reads models/refmods, and Fizgig writes new mods "
+            "to the RefMod family's Output folder on the Training tab, so point that at the same "
+            "place. The model they run on, its VAE, text encoder and Turbo LoRA come from "
+            "Preferences. Load once per session.")
         setup.columnconfigure(1, weight=1)
         # The mods folder first — it is the one thing every row below depends on.
         _fr = tk.Frame(setup, bg=COLORS["bg_surface"])
@@ -27720,7 +27721,7 @@ class LoRATrainerGUI:
         _rb = ttk.Button(_fr, text="↻", width=3, command=self._rms_rescan)
         _rb.grid(row=0, column=3, padx=(4, 0))
         _rms_tip(_rb, "Re-scan the folder for .safetensors files with a refmod_meta header "
-                     "(Fizgig writes mods to the LoRA output folder; ComfyUI reads models/refmods).")
+                     "(new mods land in the RefMod family's Output folder; ComfyUI reads models/refmods).")
         r = 1
         ttk.Label(setup, text="Base:").grid(row=r, column=0, sticky=tk.W, pady=2)
         self.rms_base_var = tk.StringVar(value=str(saved.get("base", REPAIR_H3_BASE_OPTIONS[0])))
