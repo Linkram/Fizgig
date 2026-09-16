@@ -27847,6 +27847,11 @@ class LoRATrainerGUI:
                                     "two together, each at its own strength — the pack's loader with two slots "
                                     "filled. Bake still writes one mod per file.")
         self._rms_add_btn.pack(side=tk.LEFT)
+        # A mod made a moment ago on the Training tab: refresh the pickers without a relaunch.
+        _rf = ttk.Button(_ft, text="↻ Refresh list (find a mod you just made)", command=self._rms_rescan)
+        _rf.pack(side=tk.LEFT, padx=(8, 0))
+        _rms_tip(_rf, "Re-scans the mods folder set in Setup and updates every picker — the way to see a "
+                      "mod you have just made without restarting the app.")
         self.rms_tokens_var = tk.StringVar(value="Tokens: 0 / 5 120")
         self._rms_tokens_lbl = tk.Label(_ft, textvariable=self.rms_tokens_var, font=(FONT_FAMILY, 10, "bold"),
                                         fg=COLORS["text_secondary"], bg=COLORS["bg_surface"])
