@@ -1113,7 +1113,7 @@ REFMOD_TOKEN_CAP_OPTIONS = ["off (every clip frame kept)", "5,120 (the pack's de
                             "16,384"]
 # Audio mod (16 Sep 2026): the pack's audio RefMod, a plain encode of the folder's sound through
 # the H3 audio VAE, written as a second file <name>_audio.safetensors. Off by default.
-REFMOD_AUDIO_OPTIONS = ["off (visual mod only)", "from the folder's clips and audio files"]
+REFMOD_AUDIO_OPTIONS = ["off: the visual mod only", "on: the visual mod plus an audio mod of the folder's sound"]
 REFMOD_AUDIO_CONCEPT_OPTIONS = ["voice", "singing", "music_style", "sound_fx", "ambience"]
 REFMOD_AUDIO_SECONDS_OPTIONS = ["10", "20", "30", "60"]
 REFMOD_DEFAULTS = {
@@ -1130,8 +1130,8 @@ REFMOD_DEFAULTS = {
 
 
 def refmod_audio_on(label) -> bool:
-    """'from the folder…' -> True; 'off …', blank or anything else -> False."""
-    return str(label or "").strip().lower().startswith("from")
+    """'on: …' -> True; 'off: …', blank or anything else -> False."""
+    return str(label or "").strip().lower().startswith("on")
 
 
 def refmod_token_cap_value(label) -> str:
@@ -4420,7 +4420,7 @@ class LoRATrainerGUI:
             tk.Label(self._refmod_frame3, text="Audio mod:", font=(FONT_FAMILY, 10),
                      fg=COLORS["text_secondary"], bg=COLORS["bg_surface"]).pack(side=tk.LEFT, padx=(0, 8))
             self.entries["MINIMAX_REFMOD_AUDIO"] = ttk.Combobox(
-                self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=36)
+                self._refmod_frame3, values=list(REFMOD_AUDIO_OPTIONS), state="readonly", width=56)
             _au = str(self.settings.get("MINIMAX_REFMOD_AUDIO", REFMOD_DEFAULTS["MINIMAX_REFMOD_AUDIO"]))
             self.entries["MINIMAX_REFMOD_AUDIO"].set(_au if _au in REFMOD_AUDIO_OPTIONS else REFMOD_AUDIO_OPTIONS[0])
             self.entries["MINIMAX_REFMOD_AUDIO"].pack(side=tk.LEFT)
