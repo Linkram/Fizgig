@@ -27827,15 +27827,13 @@ class LoRATrainerGUI:
         # ── Card 2: Mods ───────────────────────────────────────────────────────────────
         mods = self._start_section_card(
             outer, "Mods",
-            "Which mods go into the render. Nothing on this tab edits a mod file: the rows and "
-            "dials below are what you would set on the ComfyUI nodes at generation time, and the "
-            "files stay as made (to write one out with a setting baked in, see Actions at the "
-            "bottom). Each row is one mod: Strength is how strongly it applies (0 off, 1 as stored), "
-            "Copies is how many times it rides in the bundle (more copies pull harder, each costs its "
-            "tokens). One mod is one row. The button below adds a second row so you can see what two "
-            "mods look like together — a character and a style, say — each at its own strength, the "
-            "way two loader slots run them in ComfyUI. That is for trying things: Bake writes one mod "
-            "per file. Untick a row to leave it out.")
+            "Which mods go into the render. One mod is one row; untick a row to leave it out.\n"
+            "\u2022  Strength \u2014 how strongly the mod applies: 0 off, 1 as stored.\n"
+            "\u2022  Copies \u2014 how many times it rides in the bundle; more copies pull harder, each costs its tokens.\n"
+            "\u2022  A second row \u2014 the button below adds one, to see what two mods look like together "
+            "(a character and a style, say), each at its own strength, the way two loader slots run them in ComfyUI.\n"
+            "Nothing here edits a mod file: these are the settings you would put on the ComfyUI nodes, and the files "
+            "stay as made. Bake, in Actions at the bottom, is the one thing that writes a file \u2014 one mod per file.")
         mods.columnconfigure(0, weight=1)
         self._rms_rows_frame = tk.Frame(mods, bg=COLORS["bg_surface"])
         self._rms_rows_frame.grid(row=1, column=0, sticky=tk.EW)
@@ -28129,15 +28127,15 @@ class LoRATrainerGUI:
         # ── Card 5: Actions ────────────────────────────────────────────────────────────
         act = self._start_section_card(
             outer, "Actions",
-            "Take the result to ComfyUI. ComfyUI settings copies the exact values to type into the "
-            "pack's nodes, so the same render comes out there with the mod files as they are — with "
-            "two mods stacked, that is two loader slots. Bake as new RefMod is the only thing here that "
-            "writes a file: it takes one row's mod and folds that row's Strength, the master Strength, "
-            "its Copies and the Fade-across-the-clip curve into the latent itself, so the new file gives "
-            "this look when loaded plainly at 1.0 with no curve. One mod per file — a file is a single "
-            "reference block, and the model reads a block as one subject, so two mods in one file come "
-            "out as one of them. Shuffle and Change-during-the-render act at render time and cannot be "
-            "baked. Save preview keeps the picture; Save and Load setup keep this whole tab.")
+            "Take the result to ComfyUI.\n"
+            "\u2022  ComfyUI settings \u2014 copies the exact values to type into the pack's nodes, so the same "
+            "render comes out there with the mod files as they are. Two mods here are two loader slots there.\n"
+            "\u2022  Bake as new RefMod \u2014 the only thing here that writes a file. One row's mod with its Strength, "
+            "the master Strength, its Copies and the Fade-across-the-clip curve folded in, so it loads plainly "
+            "at 1.0 with no curve. One mod per file: a file is a single reference block and the model reads "
+            "it as one subject. Shuffle and Change-during-the-render act at render time and cannot be baked.\n"
+            "\u2022  Save preview \u2014 keeps the picture.\n"
+            "\u2022  Save / Load setup \u2014 keeps this whole tab.")
         _ar = tk.Frame(act, bg=COLORS["bg_surface"])
         _ar.pack(fill=tk.X)
         ttk.Button(_ar, text="💾 Save preview…", command=self._rms_save_preview).pack(side=tk.LEFT)
