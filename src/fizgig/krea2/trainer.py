@@ -2466,10 +2466,23 @@ def train_krea2(
         # LoRA training: the shared catalog, so the Optimizer Type / Args the user picked
         # applies (and its family-appropriate LR warnings fire).
         params = list(network.get_trainable_params())
-        from fizgig.training.optimizers import create_optimizer
+        from fizgig.training.optimizers import create_optimizer, family_param_groups
+        # Automagic keeps one rate per param GROUP: split the LoRA by family so each finds its
+        # own, instead of one compromise rate for all 264 modules (see family_param_groups).
+        _opt_params, _fam_counts = params, {}
+        if str(optimizer_type or "").lower() == "automagic3":
+            _groups, _fam_counts = family_param_groups(network, learning_rate)
+            if _groups:
+                _opt_params = _groups
         optimizer, optimizer_label = create_optimizer(
-            optimizer_type, params, learning_rate, optimizer_args)
-    from fizgig.training.optimizers import optimizer_lr as _optimizer_lr, owns_its_rate as _owns_its_rate
+            optimizer_type, _opt_params, learning_rate, optimizer_args)
+        if _fam_counts and getattr(optimizer, "param_groups", None) and len(optimizer.param_groups) > 1:
+            logger.info("[optimizer] per-family rates: "
+                        + ", ".join(f"{g['family']} ({_fam_counts.get(g['family'], 0)} modules)"
+                                    for g in optimizer.param_groups)
+                        + " — each votes its own learning rate")
+    from fizgig.training.optimizers import (group_rates as _group_rates, optimizer_lr as _optimizer_lr,
+                                            owns_its_rate as _owns_its_rate)
     _automagic = _owns_its_rate(optimizer)
     if _automagic:
         logger.info("[optimizer] Automagic v3 owns the learning rate from here: %.2e is its start; the "
@@ -3190,7 +3203,8 @@ def train_krea2(
         # offset is 0 on fresh and LoRA runs, so nothing changes there).
         logger.info(f"epoch {epoch + 1 + ft_epoch_offset}/{max_train_epochs + ft_epoch_offset}  avr_loss={loss_recorder.moving_average:.4f}  step={global_step}"
                     + _rate
-                    + (f"  lr={optimizer.param_groups[0]['lr']:.3e}" if (scheduler is not None and optimizer is not None) else ""))
+                    + (f"  lr={optimizer.param_groups[0]['lr']:.3e}" if (scheduler is not None and optimizer is not None) else "")
+                    + (f"  {_group_rates(optimizer)}" if _automagic else ""))
         if rotator is not None and torch.cuda.is_available():
             # Per-window peak, reset at each rotation — the H3 twin of this line is what
             # calibrated that family's window planner, and _K2FT_OVERHEAD_GB here is still

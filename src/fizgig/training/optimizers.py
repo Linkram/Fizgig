@@ -83,6 +83,64 @@ def optimizer_lr(optimizer) -> float:
     return float(optimizer.param_groups[0]["lr"])
 
 
+# Krea 2's LoRA covers 264 Linears whose families converge at very different speeds. An
+# optimizer that keeps one rate per param GROUP (Automagic v3) finds a compromise nobody wants
+# when handed all of them as one group — and txtfusion is measured to be under-trained by our
+# recipe, so it is exactly the minority that gets outvoted. These patterns split the network
+# into families, each of which then finds its own rate.
+KREA2_LORA_FAMILIES = (
+    ("txtfusion", ("txtfusion",)),                  # layerwise + refiner blocks + the projector
+    ("attn",      ("_attn_",)),                     # wq/wk/wv/wo/gate on the 28 stream blocks
+    ("mlp",       ("_mlp_",)),                      # up/gate/down on the same blocks
+)
+KREA2_LORA_FAMILY_OTHER = "io"                      # first/last, tmlp, tproj, txtmlp — 7 singletons
+
+
+def family_of(lora_name: str) -> str:
+    """Which Krea 2 family a LoRA module belongs to. txtfusion wins over attn/mlp because its
+    own blocks carry attn_/mlp_ names too."""
+    n = str(lora_name or "")
+    for fam, needles in KREA2_LORA_FAMILIES:
+        if any(x in n for x in needles):
+            return fam
+    return KREA2_LORA_FAMILY_OTHER
+
+
+def family_param_groups(network, lr: float):
+    """-> ([{"params": [...], "lr": lr, "family": name}, ...], {name: n_modules}) or (None, {})
+    when the network exposes no named modules (then the caller keeps its flat list)."""
+    loras = list(getattr(network, "unet_loras", None) or [])
+    if not loras:
+        return None, {}
+    buckets, counts = {}, {}
+    for mod in loras:
+        fam = family_of(getattr(mod, "lora_name", ""))
+        ps = [p for p in mod.parameters() if p.requires_grad]
+        if not ps:
+            continue
+        buckets.setdefault(fam, []).extend(ps)
+        counts[fam] = counts.get(fam, 0) + 1
+    if len(buckets) < 2:
+        return None, {}
+    order = [f for f, _ in KREA2_LORA_FAMILIES] + [KREA2_LORA_FAMILY_OTHER]
+    groups = [{"params": buckets[f], "lr": float(lr), "family": f} for f in order if f in buckets]
+    return groups, counts
+
+
+def group_rates(optimizer) -> str:
+    """"attn 1.8e-04  mlp 2.4e-04  …" — the per-group rates for a log line, or "" when the
+    optimizer keeps one rate."""
+    fn = getattr(optimizer, "get_learning_rates", None)
+    if not callable(fn) or optimizer is None or len(optimizer.param_groups) < 2:
+        return ""
+    try:
+        rates = fn()
+    except Exception:
+        return ""
+    return "  ".join(f"{g.get('family', i)} {r:.2e}"
+                     for i, (g, r) in enumerate(zip(optimizer.param_groups, rates)))
+
+
 def owns_its_rate(optimizer) -> bool:
     """True for an optimizer that sets its own learning rate (Automagic v3): schedulers and
     adaptive watchers that write the group rate have no effect on it and should stand down."""
