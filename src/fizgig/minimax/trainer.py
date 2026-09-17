@@ -575,18 +575,7 @@ def adapter_param_count(dit_path: str, include_patterns, network_type: str = "lo
     return total
 
 
-def optimizer_lr(optimizer) -> float:
-    """The rate the optimizer is actually applying: Automagic v3 keeps it in its state (the
-    group's "lr" is only the start); everyone else keeps it on the group."""
-    if optimizer is None:
-        return 0.0
-    fn = getattr(optimizer, "get_avg_learning_rate", None)
-    if callable(fn):
-        try:
-            return float(fn())
-        except Exception:
-            pass
-    return float(optimizer.param_groups[0]["lr"])
+from fizgig.training.optimizers import optimizer_lr  # noqa: E402  (shared with the Krea 2 trainer)
 
 
 def drop_grad(p) -> None:

@@ -4580,6 +4580,15 @@ class LoRATrainerGUI:
         )
         adaptive_cb.grid(row=2, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(4, 0))
         self._adaptive_cb = adaptive_cb
+        # Shown while automagic3 is the optimizer (Krea 2): the rate is its to set.
+        self._automagic_note = tk.Label(
+            training_content,
+            text=("Adaptive LR, per-image adaptive LR and the look warm-up are off: automagic3 sets its "
+                  "own learning rate, so they would have nothing to move. Detection still runs."),
+            font=(FONT_FAMILY, 9, "italic"), fg=COLORS["warning"], bg=COLORS["bg_surface"],
+            wraplength=760, justify=tk.LEFT)
+        self._automagic_note.grid(row=2, column=2, sticky=tk.W, padx=(12, 5), pady=(4, 0))
+        self._automagic_note.grid_remove()
 
         adaptive_frame = ttk.Frame(training_content)
         adaptive_frame.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=(20, 5), pady=(0, 2))
@@ -4829,7 +4838,7 @@ class LoRATrainerGUI:
         self._krea2_perimage_batch_note.grid_remove()
         try:
             self.dataset_batch_size_var.trace_add(
-                "write", lambda *_a: self._refresh_perimage_toggle_state())
+                "write", lambda *_a: self._refresh_automagic_gating())    # the batch rule, then Automagic's
         except Exception:
             pass
         self._refresh_perimage_toggle_state()
@@ -6221,6 +6230,7 @@ class LoRATrainerGUI:
             return self._apply_preset_values_inner(preset)
         finally:
             getattr(self, "_refmod_audio_opts_refresh", lambda: None)()
+            getattr(self, "_refresh_automagic_gating", lambda: None)()
 
     def _apply_preset_values_inner(self, preset):
         # A preset or Load-Settings-From-Last-Train snapshot written before the Training mode
@@ -8487,6 +8497,10 @@ class LoRATrainerGUI:
         combo["values"] = choices
         if combo.get() not in choices:
             combo.set("adamw8bit" if "adamw8bit" in choices else choices[0])
+        if not getattr(self, "_automagic_bound", False):
+            combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_automagic_gating(), add="+")
+            self._automagic_bound = True
+        self._refresh_automagic_gating()
 
     def _apply_training_arch_visibility(self, is_krea2: bool):
         """Hide Training-tab controls not yet wired into the Krea 2 native trainer; re-show for Klein.
@@ -9850,6 +9864,52 @@ class LoRATrainerGUI:
         else:
             self.scaled_check.config(state=tk.DISABLED)
             self.scaled_var.set(False)
+
+    def _refresh_automagic_gating(self, *args):
+        """Under Krea 2 with automagic3 picked: Adaptive LR, per-image adaptive LR and the look
+        warm-up are forced off and greyed (they set or scale a rate Automagic owns); the note says
+        why. Anything else: the batch-size rule alone decides, as before."""
+        combo = self.entries.get("OPTIMIZER_TYPE") if hasattr(self, "entries") else None
+        try:
+            on = bool(combo is not None and self._is_krea2_arch()
+                      and str(combo.get()).strip().lower() == "automagic3")
+        except tk.TclError:
+            on = False
+        cb = getattr(self, "_adaptive_cb", None)
+        if cb is not None:
+            try:
+                if on:
+                    if self.adaptive_lr_var.get():
+                        self.adaptive_lr_var.set(False)
+                        self._on_adaptive_lr_toggle()       # un-grey the Learning Rate box
+                    cb.configure(state=tk.DISABLED)
+                else:
+                    cb.configure(state=tk.NORMAL)
+            except tk.TclError:
+                pass
+        try:
+            self._refresh_perimage_toggle_state()           # the batch-size rule first
+        except Exception:
+            pass
+        if on:
+            for var, w in ((getattr(self, "krea2_per_image_lr_var", None), getattr(self, "_krea2_perimglr_cb", None)),
+                           (getattr(self, "krea2_warmup_look_var", None), getattr(self, "_krea2_warmuplook_cb", None))):
+                if var is not None:
+                    var.set(False)
+                if w is not None:
+                    try:
+                        w.configure(state=tk.DISABLED)
+                    except tk.TclError:
+                        pass
+        note = getattr(self, "_automagic_note", None)
+        if note is not None:
+            try:
+                if on:
+                    note.grid()
+                else:
+                    note.grid_remove()
+            except tk.TclError:
+                pass
 
     def _refresh_perimage_toggle_state(self, *args):
         """Grey out the four per-image watch toggles whenever Batch Size > 1.
@@ -30920,9 +30980,10 @@ class LoRATrainerGUI:
         # stale value in a disabled box block Start.
         if not (hasattr(self, 'adaptive_lr_var') and self.adaptive_lr_var.get()):
             _check_num("Learning Rate", self.entries["LEARNING_RATE"].get(), float, 0)
-            if (config.get("is_minimax") and not config.get("is_refmod")
-                    and str(self.entries.get("OPTIMIZER_TYPE").get() if self.entries.get("OPTIMIZER_TYPE") else "").strip().lower() == "automagic3"
-                    and not (getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())):
+            if (((config.get("is_minimax") and not config.get("is_refmod")
+                  and not (getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get()))
+                 or config.get("is_krea2"))
+                    and str(self.entries.get("OPTIMIZER_TYPE").get() if self.entries.get("OPTIMIZER_TYPE") else "").strip().lower() == "automagic3"):
                 try:
                     _lr_v = float(self.entries["LEARNING_RATE"].get())
                 except (TypeError, ValueError):

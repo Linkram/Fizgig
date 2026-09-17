@@ -2469,6 +2469,17 @@ def train_krea2(
         from fizgig.training.optimizers import create_optimizer
         optimizer, optimizer_label = create_optimizer(
             optimizer_type, params, learning_rate, optimizer_args)
+    from fizgig.training.optimizers import optimizer_lr as _optimizer_lr, owns_its_rate as _owns_its_rate
+    _automagic = _owns_its_rate(optimizer)
+    if _automagic:
+        logger.info("[optimizer] Automagic v3 owns the learning rate from here: %.2e is its start; the "
+                    "LR scheduler and the adaptive watcher stand down (they set a group rate it does "
+                    "not read); its own trust-region clip bounds each step.", learning_rate)
+        if per_image_lr or warmup_look_outliers:
+            logger.info("[loss_watch] per-image adaptive LR and the look warm-up are ignored — they scale a "
+                        "rate Automagic v3 owns (detection still runs)")
+            per_image_lr = False
+            warmup_look_outliers = False
 
     collator = _Krea2Collator(shared_epoch, group)
     # Bucket-grouped ordering (OFF by default — measured, and it buys nothing today).
@@ -2499,6 +2510,9 @@ def train_krea2(
                         collate_fn=collator, num_workers=0)
 
     os.makedirs(output_dir, exist_ok=True)
+    if adaptive_lr and _automagic:
+        logger.info("[adaptive_lr] ignored — Automagic v3 sets its own rate")
+        adaptive_lr = False
     adaptive = AdaptiveLR(adaptive_lr_min, adaptive_lr_max) if adaptive_lr else None
     if adaptive:
         # The Learning Rate box is IGNORED while adaptive is on: start at the GEOMETRIC
@@ -2618,6 +2632,8 @@ def train_krea2(
     if adaptive:
         if lr_scheduler and lr_scheduler != "constant":
             logger.info(f"[lr_scheduler] '{lr_scheduler}' ignored — adaptive LR is enabled and owns the LR.")
+    elif lr_scheduler and lr_scheduler != "constant" and _automagic:
+        logger.info(f"[lr_scheduler] '{lr_scheduler}' ignored — Automagic v3 sets its own rate.")
     elif lr_scheduler and lr_scheduler != "constant":
         scheduler = _rebuild_scheduler(optimizer, _sched_position(global_step))
         logger.info(f"[lr_scheduler] {lr_scheduler} — warmup {int(lr_warmup_steps or 0)} / "

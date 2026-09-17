@@ -69,6 +69,26 @@ def available_optimizers() -> list[str]:
     return out
 
 
+def optimizer_lr(optimizer) -> float:
+    """The rate the optimizer is actually applying: Automagic v3 keeps it in its state (the
+    group's "lr" is only the start); everyone else keeps it on the group."""
+    if optimizer is None:
+        return 0.0
+    fn = getattr(optimizer, "get_avg_learning_rate", None)
+    if callable(fn):
+        try:
+            return float(fn())
+        except Exception:
+            pass
+    return float(optimizer.param_groups[0]["lr"])
+
+
+def owns_its_rate(optimizer) -> bool:
+    """True for an optimizer that sets its own learning rate (Automagic v3): schedulers and
+    adaptive watchers that write the group rate have no effect on it and should stand down."""
+    return optimizer is not None and optimizer.__class__.__name__ == "Automagic3"
+
+
 def describe(name: str) -> str:
     return _CATALOG.get(name.lower(), (None, "custom optimizer"))[1]
 
