@@ -174,7 +174,17 @@ def glob_images(directory: str, base: str = "*", caption_extension: Optional[str
     if caption_extension is not None:
         caption_paths = glob.glob(os.path.join(glob.escape(directory), "*" + caption_extension))
         caption_bases = {os.path.splitext(os.path.basename(p))[0] for p in caption_paths}
+        skipped = sorted(os.path.basename(p) for p in img_paths
+                         if os.path.splitext(os.path.basename(p))[0] not in caption_bases)
         img_paths = [p for p in img_paths if os.path.splitext(os.path.basename(p))[0] in caption_bases]
+        if skipped:
+            # Say so, loudly: a clip or photo with no caption is left out of the run, and a
+            # dataset can lose all its clips this way without anyone noticing (a Reddit user's
+            # Gizmo segments, 17 Sep 2026). Files renamed after captioning are the usual cause.
+            shown = ", ".join(skipped[:8]) + (f", … {len(skipped) - 8} more" if len(skipped) > 8 else "")
+            logger.warning(f"[dataset] {len(skipped)} file(s) in {directory} have no {caption_extension} "
+                           f"caption and are LEFT OUT of training: {shown} — caption them (the Captions "
+                           f"tab does clips from their middle frame) or move them out of the folder")
 
     img_paths.sort()
     return img_paths

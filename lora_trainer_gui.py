@@ -31205,6 +31205,25 @@ class LoRATrainerGUI:
                     f"No caption files (*{caption_ext}) found in {image_dir}. "
                     f"Use the Captions tab to generate them first."
                 )
+            else:
+                # Some captions but not all: every photo or clip without one is silently left
+                # out of the run, and a whole folder of clips can vanish that way (files renamed
+                # after captioning — Gizmo's numbered segments, say). Name them and refuse.
+                from fizgig.dataset.image_dataset import IMAGE_EXTENSIONS as _IMG_EXT
+                _media_ext = set(e.lower() for e in _IMG_EXT)
+                if config.get("is_minimax"):
+                    _media_ext |= set(self.TRAINING_VIDEO_EXTENSIONS)
+                _cap_stems = {os.path.splitext(os.path.basename(p))[0] for p in caption_files}
+                _uncaptioned = sorted(f for f in os.listdir(image_dir)
+                                      if os.path.splitext(f)[1].lower() in _media_ext
+                                      and os.path.splitext(f)[0] not in _cap_stems)
+                if _uncaptioned:
+                    _shown = ", ".join(_uncaptioned[:6]) + (f" … and {len(_uncaptioned) - 6} more" if len(_uncaptioned) > 6 else "")
+                    errors.append(
+                        f"{len(_uncaptioned)} file(s) in the training folder have no {caption_ext} caption and "
+                        f"would be left out of the run: {_shown}. Caption them on the Captions tab (clips are "
+                        f"captioned from their middle frame), or move them out of the folder."
+                    )
 
         if errors:
             error_message = "Please fix the following issues:\n\n" + "\n".join(f"• {e}" for e in errors)
