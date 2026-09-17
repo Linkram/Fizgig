@@ -2474,6 +2474,20 @@ def train_krea2(
             _groups, _fam_counts = family_param_groups(network, learning_rate)
             if _groups:
                 _opt_params = _groups
+            # A LONGER sign window than the optimizer's own default of 8 (Peter, 17 Sep 2026).
+            # A down-vote needs PERFECT alternation across the window: at 8 that is one window
+            # in 128 under pure noise, which Krea 2 produces plenty of — batch one, logit-normal
+            # timesteps across the full range, bucketed resolutions, so consecutive steps are
+            # genuinely different problems and a flipped sign says nothing about step size. At
+            # 16 it takes fifteen consecutive flips and noise essentially never fires it, while a
+            # real trend still votes up. Measured here at 8: the rate crawled 1e-6 -> 4.3e-6 in
+            # a whole epoch and settled below the recipe's floor. Explicit polarity_history in
+            # Optimizer Args still wins.
+            if "polarity_history" not in (optimizer_args or ""):
+                optimizer_args = ((optimizer_args or "") + " polarity_history=16").strip()
+                logger.info("[optimizer] Automagic v3: sign window 16 (this family's default — the "
+                            "8-step window reads Krea 2's per-step gradient noise as overshoot). "
+                            "Set polarity_history in Optimizer Args to override.")
         optimizer, optimizer_label = create_optimizer(
             optimizer_type, _opt_params, learning_rate, optimizer_args)
         if _fam_counts and getattr(optimizer, "param_groups", None) and len(optimizer.param_groups) > 1:
