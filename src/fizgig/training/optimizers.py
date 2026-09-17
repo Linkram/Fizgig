@@ -43,6 +43,12 @@ _CATALOG = {
     "ademamix8bit":       ("bitsandbytes", "AdEMAMix — second slow EMA, aimed at long runs"),
     "pagedademamix8bit":  ("bitsandbytes", "AdEMAMix8bit with CPU paging"),
     "lion8bit":           ("bitsandbytes", "Lion — sign updates; use ~1/10 the AdamW LR"),
+    # Ostris's Automagic v3, vendored (fizgig/training/automagic3.py, MIT). One learning rate per
+    # parameter group, nudged up while update signs hold steady and down while they alternate;
+    # the LR given is only its START (1e-6 is its own default). MiniMax H3 LoRA experiment,
+    # 17 Sep 2026 — unmeasured against the AdamW recipe until an A/B says otherwise.
+    "automagic3":         (None,           "Automagic v3 (Ostris) — sets its own learning rate from the update signs; "
+                                            "the LR box is its start, 1e-6 recommended. Experiment"),
 }
 
 DEFAULT_OPTIMIZER = "adamw8bit"
@@ -95,6 +101,10 @@ def _warn_lr(name: str, lr: float) -> None:
     if name == "lion8bit" and lr > 5e-5:
         logger.warning("[optimizer] Lion applies the SIGN of the update, so it needs roughly a "
                        "TENTH of an AdamW LR. %.2e will likely overbake — try %.2e.", lr, lr / 10)
+    elif name == "automagic3" and lr > 1e-3:
+        logger.warning("[optimizer] Automagic v3 starts at the LR you give and finds its own rate — "
+                       "%.2e is a high start (its default is 1e-6); the controller will walk it down, "
+                       "but the first steps run at %.2e.", lr, lr)
     elif name != "lion8bit" and lr > 1e-2:
         logger.warning("[optimizer] LR %.2e is very high for %s.", lr, name)
 
@@ -154,6 +164,12 @@ def create_optimizer(name: str, params, lr: float, args_str: str = "",
             # on CUDA and floating point, which LoRA factors are.
             kwargs.setdefault("fused", torch.cuda.is_available())
             opt = torch.optim.AdamW(params, lr=lr, **kwargs)
+        elif key == "automagic3":
+            from fizgig.training.automagic3 import Automagic3
+            # NON-fused: the MiniMax H3 loop clips, masks and snapshots grads between backward
+            # and step, and a fused optimizer would update inside backward, ahead of all of it.
+            kwargs.setdefault("fused", False)
+            opt = Automagic3(params, lr=lr, **kwargs)
         elif "." in name:
             module_path, cls_name = name.rsplit(".", 1)
             opt = getattr(importlib.import_module(module_path), cls_name)(params, lr=lr, **kwargs)

@@ -575,6 +575,29 @@ def adapter_param_count(dit_path: str, include_patterns, network_type: str = "lo
     return total
 
 
+def optimizer_lr(optimizer) -> float:
+    """The rate the optimizer is actually applying: Automagic v3 keeps it in its state (the
+    group's "lr" is only the start); everyone else keeps it on the group."""
+    if optimizer is None:
+        return 0.0
+    fn = getattr(optimizer, "get_avg_learning_rate", None)
+    if callable(fn):
+        try:
+            return float(fn())
+        except Exception:
+            pass
+    return float(optimizer.param_groups[0]["lr"])
+
+
+def drop_grad(p) -> None:
+    """Take this step's gradient away from `p` for every optimizer we run: `.grad`, and the
+    accumulation buffer Automagic v3 (non-fused, low-precision params) moves it into from its
+    post-accumulate hook — without this the masked tensor would still step."""
+    p.grad = None
+    if hasattr(p, "_accum_grad"):
+        del p._accum_grad
+
+
 def adapter_vram_gb(params: int, optimizer_type: str = "adamw8bit") -> float:
     """GB the adapter holds for the WHOLE run: bf16 weights + optimizer state.
 
@@ -1680,7 +1703,7 @@ class AdaptiveLR:
 
         patience_up = 2
         patience_down = 2 if (self.stability_triggered or epoch == 1 or epoch >= 4) else 1
-        cur_lr = optimizer.param_groups[0]["lr"]
+        cur_lr = optimizer_lr(optimizer)
         new_lr = cur_lr
         cur_wn = self._weight_norm(network)
         weight_growth = None
@@ -4097,10 +4120,12 @@ def train_minimax(
         opt_params = None
         if finetune_fused_backward:
             _attach_fused(params)
+            _automagic = False
             optimizer, optimizer_label = None, "adafactor (rotation, fused backward)"
             logger.info("[h3-ft] optimizer-in-backward: each gradient is consumed and freed "
                         "as it lands (grad clipping and accumulation are off)")
         else:
+            _automagic = False
             optimizer, optimizer_label = _make_ft_optimizer(params)
         logger.info(f"optimizer: {optimizer_label} @ lr={learning_rate:.3e}")
     else:
@@ -4108,9 +4133,18 @@ def train_minimax(
         # structured tensors and the update degrades to lr*m/eps — measured at ~100x the
         # configured LR, which presented as melted anatomy at epoch 1. The floor caps that. It
         # is passed here and nowhere else: Krea 2 has never shown the failure.
+        _automagic = str(optimizer_type or "").lower() == "automagic3"
         optimizer, optimizer_label = create_optimizer(optimizer_type, opt_params, learning_rate,
                                                       optimizer_args, eps_floor_8bit=True)
         logger.info(f"optimizer: {optimizer_label} @ lr={learning_rate:.3e}")
+        if _automagic and optimizer is not None and optimizer.__class__.__name__ == "Automagic3":
+            logger.info("[optimizer] Automagic v3 owns the learning rate from here: %.2e is its start, and "
+                        "the per-step multipliers (adapter ramp, band, phase) are not applied — the "
+                        "controller sets the rate from the update signs. Its own trust-region clip "
+                        "bounds each step; max_grad_norm has no effect on low-precision LoRA params "
+                        "under it.", learning_rate)
+        elif _automagic:
+            _automagic = False        # fell back to AdamW (construction failed, logged above)
 
     limiter = None
     if block_limit and float(block_limit) > 0:
@@ -5218,18 +5252,18 @@ def train_minimax(
         # the limiter were on (it ships retired).
         if _photo_mask_params and _window_photo_only[0]:
             for _p in _photo_mask_params:
-                _p.grad = None
+                drop_grad(_p)
         _window_photo_only[0] = True
         # Voice routing, same rule: a voice-only window drops the out-of-zone params' grads
         # (mixed windows mask nothing — conservative, exact at the default accumulation of 1).
         if _audio_mask_params and _window_voice_only[0]:
             for _p in _audio_mask_params:
-                _p.grad = None
+                drop_grad(_p)
         _window_voice_only[0] = True
         # Clip routing, same rule again: a clip-only window drops the out-of-range grads.
         if _clip_mask_params and _window_clip_only[0]:
             for _p in _clip_mask_params:
-                _p.grad = None
+                drop_grad(_p)
         _window_clip_only[0] = True
         if max_grad_norm and max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
@@ -5240,7 +5274,7 @@ def train_minimax(
         # `or _hn_active or _retire_active` is not decoration: warmup is retired for this
         # family and the ramp is OFF in the Fast preset, so without them this block never
         # runs for the preset most people use and the settings would silently do nothing.
-        if warmup_steps or ramp is not None or _p1_epochs or _hn_active or _retire_active:
+        if (warmup_steps or ramp is not None or _p1_epochs or _hn_active or _retire_active) and not _automagic:
             _wf = (min(1.0, (global_step + 1) / warmup_steps) if warmup_steps else 1.0)
             _rm = ramp.mult if ramp is not None else 1.0
             for _g in optimizer.param_groups:
@@ -5546,7 +5580,7 @@ def train_minimax(
         # LoRA-specific by construction — FT's movement signal is the per-window write-back log.
         if rotator is None:
             try:
-                _lr_now = optimizer.param_groups[0]["lr"]
+                _lr_now = optimizer_lr(optimizer)
                 _drift = max((float(l.lora_up.weight.detach().abs().max())
                               for l in network.unet_loras if hasattr(l, "lora_up")), default=0.0)
                 _bound = 3.0 * global_step * _lr_now

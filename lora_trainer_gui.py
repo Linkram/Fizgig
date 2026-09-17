@@ -2148,6 +2148,9 @@ class LoRATrainerGUI:
         # fizgig.training.optimizers, which offers a different set — filtered to what's actually
         # installed — so the dropdown is re-populated when the Base Model selector changes.
         self.optimizer_types = ["adamw", "adamw8bit", "bitsandbytes.optim.AdEMAMix8bit", "bitsandbytes.optim.PagedAdEMAMix8bit"]
+        # MiniMax H3 LoRA (17 Sep 2026): the recipe's AdamW, or Ostris's Automagic v3 as an
+        # experiment. Nothing else — every other name in the catalogue was measured against.
+        self.minimax_optimizer_types = ["adamw", "automagic3"]
         try:
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
             from fizgig.training.optimizers import available_optimizers
@@ -8199,6 +8202,10 @@ class LoRATrainerGUI:
     }
 
     def _on_minimax_ft_toggle(self):
+        try:
+            self._refresh_minimax_optimizer_row()
+        except Exception:
+            pass
         """Recipe pushed on the way ON only, so re-showing the tab never stomps tuned values.
 
         The likeness tickbox needs NO bridging here: --photo_blocks (and --audio_blocks)
@@ -8446,6 +8453,31 @@ class LoRATrainerGUI:
             "reverse.")
         self._mixed_stop_hint.config(text=self._MIXED_STOP_HINT_FT)
 
+    def _refresh_minimax_optimizer_row(self):
+        """Under MiniMax H3: the Optimizer Type row shows for LoRA training with two choices,
+        adamw8bit (the recipe) and automagic3 (experiment); hidden under fine-tune and RefMod."""
+        combo = self.entries.get("OPTIMIZER_TYPE")
+        if combo is None or not self._is_minimax_arch():
+            return
+        _ft = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
+        if _ft or self._is_refmod_arch():
+            self.hide_row("OPTIMIZER_TYPE")
+            return
+        choices = list(self.minimax_optimizer_types)
+        combo["values"] = choices
+        if combo.get() not in choices:
+            combo.set("adamw")
+        self.show_row("OPTIMIZER_TYPE")
+        if not getattr(self, "_minimax_optimizer_tip", None):
+            self._minimax_optimizer_tip = ToolTip(
+                combo,
+                "adamw (full-precision state) is the measured recipe. automagic3 is Ostris's Automagic v3, an experiment: "
+                "it sets its own learning rate from the update signs (up while they hold steady, down "
+                "while they alternate), one rate for the whole LoRA. The Learning Rate box is only its "
+                "START — put 1e-6 there, its own default; 2e-4 is an AdamW number. The adapter ramp and "
+                "the band multipliers are not applied under it. Unmeasured against the recipe; judge it "
+                "with the same A/B you would give a new preset.")
+
     def _refresh_optimizer_choices(self, is_krea2: bool):
         """Point the Optimizer Type dropdown at the selected family's catalog."""
         combo = self.entries.get("OPTIMIZER_TYPE")
@@ -8673,8 +8705,9 @@ class LoRATrainerGUI:
                     self._on_adaptive_lr_toggle()      # un-grey the Learning Rate box
                 except Exception:
                     pass
-            # Optimizer locked to adamw (the likeness finding) — hide the dropdown row.
-            self.hide_row("OPTIMIZER_TYPE")
+            # The optimizer row under MiniMax H3: AdamW (the likeness finding) or Automagic v3,
+            # LoRA path only — hidden under fine-tune (its own rotation optimizer) and RefMod.
+            self._refresh_minimax_optimizer_row()
         else:
             self.show_row("OPTIMIZER_TYPE")
 
@@ -30887,6 +30920,16 @@ class LoRATrainerGUI:
         # stale value in a disabled box block Start.
         if not (hasattr(self, 'adaptive_lr_var') and self.adaptive_lr_var.get()):
             _check_num("Learning Rate", self.entries["LEARNING_RATE"].get(), float, 0)
+            if (config.get("is_minimax") and not config.get("is_refmod")
+                    and str(self.entries.get("OPTIMIZER_TYPE").get() if self.entries.get("OPTIMIZER_TYPE") else "").strip().lower() == "automagic3"
+                    and not (getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())):
+                try:
+                    _lr_v = float(self.entries["LEARNING_RATE"].get())
+                except (TypeError, ValueError):
+                    _lr_v = 0.0
+                if _lr_v > 1e-3:
+                    errors.append(f"Automagic v3 starts at the Learning Rate you give and finds its own rate: "
+                                  f"{_lr_v:g} is an AdamW number. Use 1e-6 (its default) or at most 0.001.")
         _check_num("Network Dim (Rank)", self.entries["NETWORK_DIM"].get(), int, 1)
         _check_num("Network Alpha", self.entries["NETWORK_ALPHA"].get(), float, 0)
         if self._network_type_is_lokr():
@@ -33110,9 +33153,12 @@ class LoRATrainerGUI:
             except ValueError:
                 pass
         # Optimizer LOCKED to adamw (Peter, 9 Aug): full-precision state was the single biggest
-        # likeness change measured on H3 — 8-bit state costs fine detail for 1.9 GB. The dropdown
-        # is hidden under this family; whatever the shared setting holds is overridden here.
-        cmd += ["--optimizer_type", "adamw"]
+        # likeness change measured on H3 — 8-bit state costs fine detail for 1.9 GB. One exception
+        # since 17 Sep 2026: the LoRA path may pick Automagic v3 from the dropdown (an experiment);
+        # anything else the shared setting holds is overridden here, and fine-tune never picks.
+        _opt_pick = str(self.settings.get("OPTIMIZER_TYPE", "") or "").strip().lower()
+        _ft_pick = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
+        cmd += ["--optimizer_type", "automagic3" if (_opt_pick == "automagic3" and not _ft_pick) else "adamw"]
         _opt_args = str(self.settings.get("OPTIMIZER_ARGS", "") or "").strip()
         if _opt_args:
             cmd += ["--optimizer_args", _opt_args]
