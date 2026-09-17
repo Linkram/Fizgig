@@ -130,8 +130,8 @@ Three built-in presets ship; **Fast** applies the moment you pick the family:
 
 | Preset | Settings |
 |---|---|
-| **✨ MiniMax H3 Fast** | LoRA dim/alpha **8, 50 epochs, flat 2e-4**, **0.25 MP**, Training Structure **Likeness and Style**, `adamw`. Reaches likeness in a few hundred steps, and the lower rank tends to come out more flexible |
-| **✨ MiniMax H3 (Lower LR - slower)** | The same at **rank 16, 60 epochs, flat 1e-4** — more suitable for larger datasets with longer trains |
+| **✨ MiniMax H3 Fast** | LoRA dim/alpha **8, 50 epochs, Automagic v3 from 1e-6**, **0.25 MP**, Training Structure **Likeness and Style**, `adamw`. Reaches likeness in a few hundred steps, and the lower rank tends to come out more flexible |
+| **✨ MiniMax H3 (rank 16, 60 epochs)** | The same at **rank 16, 60 epochs** — more suitable for larger datasets with longer trains |
 | **✨ MiniMax H3 Style** | The Fast preset's settings with Training mode set to **Ultra quality** — style needs the whole of the model that matters, not just the identity blocks. No sharp-face clip stills |
 
 <p align="center"><img src="assets/optimised_likeness.png" alt="Optimised Likeness Learning — the default-on Training-tab checkbox" width="713"></p>
@@ -147,7 +147,7 @@ loads Ultra quality, and the dropdown switches either. In every mode the LoRA le
 alone, and blocks 0-5 are trained by nobody but you: they deform anatomy and pull the dataset's
 colour into the render.
 
-**Optimizer.** The recipe uses full-precision AdamW, which measured as the single biggest likeness gain on H3, and the Optimizer Type row under MiniMax H3 offers one alternative as an experiment: **automagic3**, Ostris's Automagic v3 (from AI-Toolkit, MIT). Krea 2's Optimizer Type row lists it too, with the same rules: the scheduler and Adaptive LR stand down while it owns the rate. It sets its own learning rate from the update signs, one rate for the whole LoRA, rising while the signs hold steady and falling while they alternate; the Learning Rate box is only its start, so put 1e-6 there rather than an AdamW number. The adapter ramp and band multipliers are not applied under it. It has not been measured against the recipe here: treat it the way you would a new preset and A/B it on the same set.
+**Optimizer.** The two character presets run **automagic3**, Ostris's Automagic v3 (from AI-Toolkit, MIT), started at 1e-6. The Style preset and the Optimizer Type dropdown keep full-precision **adamw**, which measured as the single biggest likeness gain on H3 and is still the right choice when you want a rate that does not move. Krea 2's Optimizer Type row lists it too, with the same rules: the scheduler and Adaptive LR stand down while it owns the rate. It sets its own learning rate from the update signs, one rate for the whole LoRA, rising while the signs hold steady and falling while they alternate, which in practice warms up over the first couple of epochs and then anneals a few percent an epoch. The Learning Rate box is only its start, so leave it at 1e-6 rather than an AdamW number, and the adapter ramp and band multipliers are not applied while it owns the rate. A style set is the case to keep on adamw: its images all share the look being learned, so the signs agree for longer and the controller pushes harder than you want.
 
 **0.25 MP is the default, and it holds up** — four times cheaper per step than 1 MP, and the extra resolution has not paid for itself in testing. Raise it if a specific dataset asks for it.
 

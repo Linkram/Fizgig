@@ -963,12 +963,16 @@ MINIMAX_BUILT_IN_PRESETS = {
     # were standard LoRA at dim/alpha 16, and LoKR moves ~7-10x further per unit LR — which made
     # the same Learning Rate box mean two very different things depending on the Network Type
     # sitting above it. LoKR stays one dropdown away for anyone who wants it.
-    "✨ MiniMax H3 (Lower LR - slower)": {
+    "✨ MiniMax H3 (rank 16, 60 epochs)": {
         "NETWORK_DIM": 16, "NETWORK_ALPHA": 16,
         "NETWORK_TYPE": "LoRA (standard)", "LOKR_FACTOR": 8,
-        # Flat 1e-4 (Peter, 17 Aug). With the ramp off this IS the rate — and rank 16 wants
-        # half of what the rank-8 Fast preset runs at (which keeps its flat 2e-4).
-        "LEARNING_RATE": 1e-4,
+        # 1e-6 is Automagic's STARTING rate, not the rate (Peter, 17 Sep 2026). The controller
+        # reads the update signs and sets the rate itself: measured on this family it climbs
+        # over the first two epochs, peaks, then anneals a couple of percent an epoch, landing
+        # near 1e-4 by epoch 16 — and Peter's A/B put it ahead of the flat 2e-4 recipe it
+        # replaces. It also retires the rank/LR coupling this preset used to exist for: rank 16
+        # no longer needs half of rank 8's rate, because neither of them is given one.
+        "LEARNING_RATE": 1e-6,
         # Ships OFF (Peter, 17 Aug — reversing 11 Aug): the slow build spent the early epochs
         # crawling and the flat 2e-4 runs have been the ones delivering. The ramp stays a
         # dropdown away for anyone who wants the held-ratio start.
@@ -978,12 +982,13 @@ MINIMAX_BUILT_IN_PRESETS = {
         "MINIMAX_CAPTION_DROPOUT": "0.05 (default)",
         "MAX_TRAIN_EPOCHS": 60, "SAVE_EVERY_N_EPOCHS": 1, "SEED": 42,
         "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
-        # adamw, NOT adamw8bit — the single biggest likeness change measured on H3 (2026-08-06).
-        # Every other knob had been swept with likeness stuck around 40-50%; full-precision
-        # optimizer state moved it night-and-day on the same dataset. The 8-bit optimizer stores
-        # the second moment blockwise-quantized, and on this model that is evidently costing the
-        # fine detail. Costs ~1.2 GB of fp32 state against a 21 GB resident base.
-        "OPTIMIZER_TYPE": "adamw",
+        # Automagic v3 (Peter, 17 Sep 2026), vendored from AI-Toolkit. It replaces the flat
+        # adamw that held this family since 6 Aug — which was itself the single biggest likeness
+        # change measured here, full-precision state against adamw8bit's quantized second moment,
+        # and remains the Style preset's optimizer. Automagic keeps fp32 state too, so the reason
+        # adamw8bit lost still holds; what it adds is the rate. The Style preset stays on adamw:
+        # a style wants the measured flat rate, not a controller free to push.
+        "OPTIMIZER_TYPE": "automagic3",
         "GRADIENT_ACCUMULATION": 1, "MAX_GRAD_NORM": 1.0,
         # Back to 0.25 MP (Peter, 11 Aug). The 1.0 default lasted a day: it came from the theory
         # that 496px trains below H3's 768 short-edge canvas and must therefore starve detail —
@@ -1052,10 +1057,11 @@ MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"] = {
     **MINIMAX_BUILT_IN_PRESETS[_MM_DEFAULTS_KEY],
     "NETWORK_DIM": 8, "NETWORK_ALPHA": 8,
     "MAX_TRAIN_EPOCHS": 50,
-    "LEARNING_RATE": 2e-4,
-    # Flat, not ramped. The ramp exists to stop a full-size stride landing on a near-zero
-    # adapter; at rank 8 there are half as many directions to move, and the measured run that
-    # this preset reproduces had no ramp at all.
+    # Automagic's start, not the rate (see the rank-16 preset above): the controller takes it
+    # from here. The old flat 2e-4 lives on in the Style preset.
+    "LEARNING_RATE": 1e-6,
+    # Flat, not ramped — and under Automagic the ramp would do nothing anyway: the per-step
+    # multipliers are not applied while the controller owns the rate.
     "MINIMAX_ADAPTER_RAMP": "Off",
     "ADAPTIVE_LR": False,
 }
@@ -1067,11 +1073,16 @@ MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"] = {
 # matters" recipe that won on likeness and audio, and the measured reason to hold 0-5 out —
 # they deform anatomy and pull the dataset's colour into every render — applies to a style
 # just as much. The mode is a dropdown, so a user who wants the Fast version of Style just
-# switches it. LR matches Fast's 2e-4 — Peter's real style runs (20 Aug) found the halved 1e-4
-# unnecessary; drop it manually for an extra-gentle run if a style ever fries.
+# switches it.
+#
+# ADAMW AND A FLAT 2e-4, deliberately (Peter, 17 Sep 2026), where the character presets moved to
+# Automagic v3: the controller pushes the rate up while the update signs agree, and on a style
+# set — where every image shares the look being learned, so the signs agree for longer — that is
+# exactly the run you do not want driven harder. The measured flat rate stays.
 MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Style (LoRA 8)"] = {
     **MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"],
     "LEARNING_RATE": 2e-4,
+    "OPTIMIZER_TYPE": "adamw",
     "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_ULTRA,
     # Style is about the look, not the face: no extra sharp-face stills from the clips.
     "MINIMAX_CLIP_STILL": False,
