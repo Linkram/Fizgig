@@ -27,7 +27,7 @@ Style also moves to **Automagic v3**, so all three presets now let the optimizer
 
 ## A style LoRA trained on stills, and the motion is untouched
 
-The clearest thing to come out of this pass is a pair of clips, below: the **first with the style LoRA off**, the **second with it at 1.0**. Same prompt, same seed, same resolution, nothing else changed. The LoRA was trained on **341 stills** of an animated show — no video in the dataset at all.
+The clearest thing to come out of this pass is a pair of clips, below: the **first with the style LoRA off**, the **second with it at 1.0**. Same prompt, same seed, same resolution, nothing else changed. The LoRA was trained on **341 stills** of an animated show — no video in the dataset at all. They were captioned on the Captions tab with a `zwxem style` trigger word, and the run used the **Style preset with nothing changed**: rank 8, 50 epochs, Automagic from 1e-6, Default mode, 0.25 target megapixels. That is the whole recipe.
 
 The look changes completely, from 3D game-cinematic rendering to drawn, cel-shaded animation. The motion does not change at all. Same beats, same timing, same camera moves, same staging: the character turns to camera and raises his hand, drops and turns away, the car goes up, the aftermath settles through the smoke. Shot for shot.
 
