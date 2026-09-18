@@ -682,7 +682,7 @@ MINIMAX_MODE_FAST = "Default"
 # "More", not "All": blocks 0-5 are trained by NEITHER mode — they deform anatomy and pull
 # the dataset's colour into every render — so a name promising all 50 would be a lie.
 MINIMAX_MODE_ULTRA = "More Blocks"
-MINIMAX_MODE_OFF = "Off · hand-pick the blocks below"
+MINIMAX_MODE_OFF = "Off · hand-pick the blocks in Other Options"
 MINIMAX_LIKENESS_MODE_OPTIONS = [MINIMAX_MODE_FAST, MINIMAX_MODE_ULTRA, MINIMAX_MODE_OFF]
 
 
@@ -7892,7 +7892,8 @@ class LoRATrainerGUI:
                   f"chasing. Every step type trains {MINIMAX_FULL_MODEL_BLOCKS}, at 44 blocks "
                   f"in the backward instead of 30. Blocks 0-5 stay out either way; they deform "
                   f"anatomy and colour."),
-        "off": "The blocks are yours to pick below, for experiments.",
+        "off": ("The blocks are yours to pick, for experiments: Blocks to Train, in the "
+                "Other Options section further down this tab."),
     }
 
     def _minimax_adapter_pref_key(self):
