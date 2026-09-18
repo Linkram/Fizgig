@@ -5309,11 +5309,13 @@ class LoRATrainerGUI:
             self._minimax_likeness_frame, values=MINIMAX_LIKENESS_MODE_OPTIONS,
             textvariable=self.entries["MINIMAX_LIKENESS_MODE"], state="readonly", width=34)
         self._minimax_likeness_combo.pack(side=tk.LEFT)
-        # Amber, not the usual explain grey: this is the one control where picking the
-        # heavier-sounding option makes the result worse, so the description has to be read.
+        # Amber and a point up on the usual hint, not the explain grey: this is the one control
+        # where picking the heavier-sounding option makes the result worse, so the description
+        # has to be read rather than skimmed past.
         self._minimax_likeness_hint = ttk.Label(
             training_content, text="",
-            foreground=COLORS["warning"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["warning"], font=(FONT_FAMILY, HINT_FONT[1] + 1, "italic"),
+            justify=tk.LEFT, wraplength=720)
         self._minimax_likeness_hint.grid(row=40, column=0, columnspan=2, sticky=tk.W,
                                          padx=5, pady=(0, 4))
         self._MINIMAX_LIKENESS_HINT_FT = (
