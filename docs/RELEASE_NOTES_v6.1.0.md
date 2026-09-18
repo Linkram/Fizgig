@@ -1,6 +1,6 @@
 # Fizgig v6.1.0
 
-RefMods for MiniMax H3, made with the model in the loop, and RefMod Studio to test them. Make them from photos, from clips prepared with Gizmo, and with sound, in one file; tune them against H3 itself; write prompts against numbered references; try them side by side with the base before ComfyUI. This release follows 6.0.0 and 6.0.1 closely, so the whole RefMod story is here in one place. It works with the current [ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod) pack; if you installed a copy of it from elsewhere, switch to the original.
+RefMods for MiniMax H3, made with the model in the loop, and RefMod Studio to test them. Make them from photos, from clips prepared with Gizmo, and with sound, in one file; tune them against H3 itself; write prompts against numbered references; try them side by side with the base before ComfyUI. This release follows 6.0.0 and 6.0.1 closely, so the whole RefMod story is here in one place. It also changes how MiniMax H3 LoRAs train: the learning rate is no longer yours to pick. It works with the current [ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod) pack; if you installed a copy of it from elsewhere, switch to the original.
 
 A RefMod is your reference photos saved as one small file that the [ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod) nodes (by **@Luisacaotica**, with a mod library and guide from **@malcolmrey**) load like a LoRA and feed to H3's reference path. No training run, a file in minutes, and the basic kind needs no captions. Fizgig makes them, and adds the one thing no other maker has: it can tune the file against H3 itself. The full guide is [RefMods — how do I…?](https://github.com/shootthesound/Fizgig/blob/master/docs/REFMOD_HOWDOI.md).
 
@@ -41,8 +41,20 @@ A tab, in the order you work:
 
 The numbers are the pack's own maths, so what you see in the Studio is what the nodes will do. The IDLE/BUSY light follows the Studio's work like the other studios.
 
+## A learning rate that sets itself
+
+MiniMax H3 LoRA runs now train on **Automagic v3**, **@ostris**'s self-adjusting optimizer, brought in from [AI-Toolkit](https://github.com/ostris/ai-toolkit) under the MIT licence. Both character presets use it and there is nothing to configure: it reads the direction of its own updates and moves the rate itself, up while they hold steady, down while they alternate. In A/B against the flat rate it replaces it reached likeness sooner and finished ahead, which is why it is the default rather than an option.
+
+- **Leave the Learning Rate box at 1e-6.** Under Automagic that box is a starting point, not the rate. An AdamW number like 2e-4 is far too hot as a start, and Fizgig refuses to launch with one rather than letting you find out twenty minutes in.
+- **The Style preset stays on `adamw` at a flat 2e-4.** A style set's images all share the look being learned, so the update signs agree for longer and a self-adjusting rate pushes harder than a style wants. Character presets get the new optimizer; style keeps the measured one.
+- **Krea 2 can use it too**, from the Optimizer Type row. It is a choice there rather than the default: on Krea 2 it matched the standard recipe rather than beating it, and took longer to get there. Two things are tuned for that family when you do pick it. Each family of layers finds **its own rate** instead of one compromise for all 264 of them, and the **sign window is 16 steps** rather than 8, so a run of ordinary gradient noise no longer reads as overshoot and drags the rate down.
+- **While it owns the rate, other rate controls stand down** and say so in the console: the scheduler, Adaptive LR, per-image adaptive LR and the look-outlier warm-up. The adapter ramp and band multipliers are not applied either. Nothing silently fights it.
+- Klein is unchanged and keeps its own optimizer list.
+
 ## Also
 
+- **The H3 preset formerly called "Lower LR - slower" is now "MiniMax H3 (rank 16, 60 epochs)"**, which is what actually distinguishes it now that neither character preset is given a fixed rate.
+- Attribution moved to where it belongs: the app's own text names what each control does, and the third-party credits live in the README and [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 - **A live Progress card on the Training tab**, by **@mabseyuk**: completion, epoch and step, speed, loss, ETA and preview status, read from the trainers' own output. Under the RefMod family it speaks RefMod: making, optimising with the step count, saved.
 - **Fixed:** RefMod Studio reused a No-mod clip rendered without sound after Sound was switched on. Spotted by **@mabseyuk**.
 - The RefMod card's rows fit at the window's minimum width, and the token readout beside References says what the references cost at generation rather than reading as a cap.
