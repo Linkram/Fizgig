@@ -27,7 +27,7 @@ Style also moves to **Automagic v3**, so all three presets now let the optimizer
 
 ## A style LoRA trained on stills, and the motion is untouched
 
-The clearest thing to come out of this pass is a pair of clips, below: the **first with the style LoRA off**, the **second with it at 1.0**. Same prompt, same seed, same resolution, nothing else changed. The LoRA was trained on **341 stills** of an animated show — no video in the dataset at all. They were captioned on the Captions tab with a `zwxem style` trigger word with the Style captioning preset for Qwen, and the run used the **Style preset with nothing changed**: rank 8, 50 epochs, Automagic from 1e-6, Default mode, 0.25 target megapixels. That is the whole recipe.
+The clearest thing to come out of this pass is a pair of clips, below: the **first with the style LoRA off**, the **second with it at 1.0**. Same prompt, same seed, same resolution, nothing else changed. The LoRA was trained on **341 stills** of an animated show — no video in the dataset at all. They were captioned on the Captions tab and the run used the **Style preset with nothing changed** — the full settings are below, with the prompt.
 
 
 https://github.com/user-attachments/assets/b344b90d-a4cd-4ec3-a4bc-c0495b95269b
@@ -47,7 +47,30 @@ That is the point of training on Default. A style LoRA built entirely from still
 One thing worth flagging, because it went the other way from what you would fear. The prompt asks for a car speeding through the background of the first shot, and it was the **LoRA'd version that actually moved it** — same seed, same prompt. That is one sample, and it is not a claim that training on stills improves motion. It is simply a pointed illustration that training on stills did not take motion away.
 
 <details>
-<summary><b>The prompt, in full</b></summary>
+<summary><b>The whole recipe, and the prompt</b></summary>
+
+**Dataset** — 341 stills of an animated show. No video.
+
+**Captions** — the Captions tab, Qwen with its **Style** captioning preset, and a `zwxem style` trigger word.
+
+**Training** — the **MiniMax H3 Style** preset with nothing changed:
+
+| | |
+|---|---|
+| Training mode | Default |
+| Optimizer | automagic3, from 1e-6 |
+| Network | LoRA, rank 8, alpha 8 |
+| Epochs | 50, saving every epoch |
+| Target megapixels | 0.25 |
+| Weight averaging | EMA 0.98 |
+| Training adapter | on |
+| Text token refiner | not trained |
+| TREAD token routing | on |
+| Caption dropout | 0.05 |
+| Low-noise share | 60% |
+| Seed | 42 |
+
+**Prompt**
 
 ```
 integrated_multimodal_description:
