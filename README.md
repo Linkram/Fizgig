@@ -132,7 +132,7 @@ Three built-in presets ship; **Fast** applies the moment you pick the family:
 |---|---|
 | **✨ MiniMax H3 Fast** | LoRA dim/alpha **8, 50 epochs, Automagic v3 from 1e-6**, **0.25 MP**, Training Structure **Likeness and Style**. Reaches likeness in a few hundred steps, and the lower rank tends to come out more flexible |
 | **✨ MiniMax H3 (rank 16, 60 epochs)** | The same at **rank 16, 60 epochs** — more suitable for larger datasets with longer trains |
-| **✨ MiniMax H3 Style** | The Fast preset's settings with Training mode set to **Ultra quality** — style needs the whole of the model that matters, not just the identity blocks. No sharp-face clip stills. Keeps `adamw` at a flat **2e-4** rather than Automagic: a style set's images all share the look being learned, so a self-adjusting rate pushes harder than you want |
+| **✨ MiniMax H3 Style** | The Fast preset's settings, minus the clips' sharp-face stills — style is about the look, not the face |
 
 <p align="center"><img src="assets/optimised_likeness.png" alt="Optimised Likeness Learning — the default-on Training-tab checkbox" width="713"></p>
 

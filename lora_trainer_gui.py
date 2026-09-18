@@ -1069,21 +1069,20 @@ MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"] = {
 # --- MiniMax H3 Style -------------------------------------------------------------------------
 # Style needs most of the model, not the identity window — the 19 Aug ablation found a style
 # LoRA's deltas matter nearly everywhere. Until 11 Sep 2026 that meant Off + a hand-picked
-# 0-3, 6-47. It now loads ULTRA (6-49, every step type): the same "whole of the model that
-# matters" recipe that won on likeness and audio, and the measured reason to hold 0-5 out —
-# they deform anatomy and pull the dataset's colour into every render — applies to a style
-# just as much. The mode is a dropdown, so a user who wants the Fast version of Style just
-# switches it.
+# 0-3, 6-47, and from then until 18 Sep it loaded Ultra.
 #
-# ADAMW AND A FLAT 2e-4, deliberately (Peter, 17 Sep 2026), where the character presets moved to
-# Automagic v3: the controller pushes the rate up while the update signs agree, and on a style
-# set — where every image shares the look being learned, so the signs agree for longer — that is
-# exactly the run you do not want driven harder. The measured flat rate stays.
+# FAST, and AUTOMAGIC, both by Peter's call on 18 Sep 2026 — this preset now differs from Fast
+# only in leaving the clips' sharp-face stills out. It replaces two deliberate choices made the
+# day before, that Style hold Ultra and hold adamw at a flat 2e-4 in case a self-adjusting rate
+# drove a style set too hard. It goes the other way now. The mode is a dropdown either way, so
+# whichever a user wants is one switch.
 MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Style (LoRA 8)"] = {
     **MINIMAX_BUILT_IN_PRESETS["✨ MiniMax H3 Fast (LoRA 8, 50 epochs)"],
-    "LEARNING_RATE": 2e-4,
-    "OPTIMIZER_TYPE": "adamw",
-    "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_ULTRA,
+    # 1e-6 is Automagic's STARTING rate, not the rate — the same entry point the character
+    # presets use. An AdamW number like 2e-4 would be far too hot as a start.
+    "LEARNING_RATE": 1e-6,
+    "OPTIMIZER_TYPE": "automagic3",
+    "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
     # Style is about the look, not the face: no extra sharp-face stills from the clips.
     "MINIMAX_CLIP_STILL": False,
 }
