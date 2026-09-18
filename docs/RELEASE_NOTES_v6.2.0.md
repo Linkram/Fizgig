@@ -21,7 +21,7 @@ Including **Style**, which was the last one on the heavier mode and has moved wi
 
 On a likeness run, the new Default recipe reached **73 by epoch 8**. Earlier H3 runs on this trainer took until epoch 15 and epoch 21 to reach 72 and 74. So it arrives at about the same place, in roughly a third to a half of the epochs, with quicker steps on the way. It then held between 71 and 73 for five more epochs rather than starting to degrade, so there is a wide window to pick a checkpoint from rather than one epoch to catch.
 
-**More Blocks is not a likeness upgrade, Default is king for that.** It has one job: training a **motion**. Loosening the model's movement priors is a cost only when you want to keep them, and if movement is the thing you are teaching, those are exactly the priors you are replacing. The fact is however that the regular Default mode may be more than enough for your movement training — this needs more testing to confirm.
+**More Blocks is not a likeness upgrade, Default is king for that.** Where it may earn its place is **training a motion concept specifically**, since it reaches more of the model than Default does. Even there, the regular Default mode may well be more than enough for your movement training — this needs more testing to confirm. Unless you have a reason to reach further, use Default.
 
 Style also moves to **Automagic v3**, so all three presets now let the optimizer set its own rate from 1e-6.
 
