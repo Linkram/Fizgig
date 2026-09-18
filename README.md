@@ -147,7 +147,7 @@ loads Ultra quality, and the dropdown switches either. In every mode the LoRA le
 alone, and blocks 0-5 are trained by nobody but you: they deform anatomy and pull the dataset's
 colour into the render.
 
-**Optimizer.** The two character presets run **automagic3**, Ostris's Automagic v3 (from AI-Toolkit, MIT), started at 1e-6. The Style preset and the Optimizer Type dropdown keep full-precision **adamw**, which measured as the single biggest likeness gain on H3 and is still the right choice when you want a rate that does not move. Krea 2's Optimizer Type row lists it too, with the same rules: the scheduler and Adaptive LR stand down while it owns the rate. It sets its own learning rate from the update signs, one rate for the whole LoRA, rising while the signs hold steady and falling while they alternate, which in practice warms up over the first couple of epochs and then anneals a few percent an epoch. The Learning Rate box is only its start, so leave it at 1e-6 rather than an AdamW number, and the adapter ramp and band multipliers are not applied while it owns the rate. A style set is the case to keep on adamw: its images all share the look being learned, so the signs agree for longer and the controller pushes harder than you want.
+**Optimizer.** The two character presets run **automagic3**, the Automagic v3 optimizer (MIT — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), started at 1e-6. The Style preset and the Optimizer Type dropdown keep full-precision **adamw**, which measured as the single biggest likeness gain on H3 and is still the right choice when you want a rate that does not move. Krea 2's Optimizer Type row lists it too, with the same rules: the scheduler and Adaptive LR stand down while it owns the rate. It sets its own learning rate from the update signs, one rate for the whole LoRA, rising while the signs hold steady and falling while they alternate, which in practice warms up over the first couple of epochs and then anneals a few percent an epoch. The Learning Rate box is only its start, so leave it at 1e-6 rather than an AdamW number, and the adapter ramp and band multipliers are not applied while it owns the rate. A style set is the case to keep on adamw: its images all share the look being learned, so the signs agree for longer and the controller pushes harder than you want.
 
 **0.25 MP is the default, and it holds up** — four times cheaper per step than 1 MP, and the extra resolution has not paid for itself in testing. Raise it if a specific dataset asks for it.
 
@@ -831,6 +831,8 @@ If Fizgig saves you time or helps you make better LoRAs, consider supporting dev
 ## License
 
 Fizgig is open source under the **[Apache License 2.0](LICENSE)** — free to use, modify, and redistribute, including commercially, with attribution and no warranty. Third-party components under compatible permissive licenses (and other terms where noted) are listed in **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
+
+The **Automagic v3 optimizer**, the Krea 2 **MMDiT backbone and flow-matching sampler**, and the MiniMax H3 **training adapter** all come from **[@ostris](https://github.com/ostris)** — the first two from [AI-Toolkit](https://github.com/ostris/ai-toolkit) under the MIT licence, the adapter downloaded as a model rather than bundled.
 
 Copyright © 2026 Peter Neill.
 
