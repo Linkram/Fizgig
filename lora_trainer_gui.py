@@ -1010,8 +1010,9 @@ MINIMAX_BUILT_IN_PRESETS = {
         # The text token refiner is not a LoRA target (10 Sep): see the Other Options tick.
         "MINIMAX_TRAIN_REFINER": False,
         # Training mode ships FAST: photos and clips on the identity blocks (20-49), voice on
-        # the audio zone (34-49). Ultra quality (6-49 everywhere) is the slower, better one and
-        # what the Style preset loads. Either can be picked within any preset.
+        # the audio zone (34-49). EVERY H3 preset is on Fast since 18 Sep — Style was the last
+        # holdout on Ultra. Ultra quality (6-49 everywhere) is the slower one and stays a
+        # dropdown away in any preset.
         "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
         # Training adapter ships ON (Peter, 2 Sep): measured on the same dataset/seed it hit
         # 50% likeness seven epochs sooner and peaked higher (61 vs 57). Every H3 preset
