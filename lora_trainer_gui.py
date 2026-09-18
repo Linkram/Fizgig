@@ -664,8 +664,8 @@ MINIMAX_FULL_MODEL_BLOCKS = "6-49"
 
 # Training mode (was the Optimised Likeness Learning tickbox until 10 Sep 2026). Two measured
 # recipes and an escape hatch:
-#   fast  — photos and clips 20-49, voice 34-49. The backward stops at the window, so steps are
-#           the quickest of the three. Good on both picture and sound.
+#   fast  — photos, clips AND voice all on 20-49 (the voice zone was 34-49 until 18 Sep 2026).
+#           The backward stops at the window, so steps are the quickest of the three.
 #   ultra — 6-49 for every step type. Better likeness AND better audio by eye and ear, and it
 #           holds the dataset's global traits out of the LoRA far longer (the greyscale test:
 #           monochrome previews from epoch 2 on a full-model run, epoch 49 on 6-49, never on
@@ -714,11 +714,19 @@ def minimax_likeness_mode(raw):
     return "fast"
 
 
-# Voice routing — the block set audio-only steps train. 34-49 per the block map (audio core
-# 38-48 peak 41-42, shoulder 34-37) and Peter's A/B (24 Aug): audio-only trained at 34-49 is
-# clean; at 20-49 the audio training corrupted the visual blocks. Clips still train the full
-# model (pending the same test for video).
-MINIMAX_AUDIO_BLOCKS = "34-49"
+# Voice routing — the block set audio-only steps train. SAME AS THE PICTURE since 18 Sep 2026
+# (Peter): there is no separate audio zone any more.
+#
+# It was 34-49, from the block map (audio core 38-48, peak 41-42, shoulder 34-37) and an A/B on
+# 24 Aug where audio trained at 20-49 corrupted the visual blocks. That corruption was real, and
+# the two fixes that landed after it have removed the cause: the training adapter de-distills
+# the base while the LoRA learns (5.2.0), and the text token refiner is no longer trained
+# (5.6.1). The refiner was the leak. With both in place the audio gradients no longer damage the
+# picture, so narrowing them only cost the voice the blocks it could have used.
+#
+# Defined as the likeness set rather than repeating "20-49", so the two cannot drift apart
+# silently. Split them again only on a fresh A/B.
+MINIMAX_AUDIO_BLOCKS = MINIMAX_LIKENESS_BLOCKS
 
 # Base Precision — the label the user sees, and the --base_quant value it sends. Auto plans the
 # quantisation and the block-swap count together (see plan_base_quant in minimax/trainer.py);
@@ -1021,8 +1029,8 @@ MINIMAX_BUILT_IN_PRESETS = {
         "MINIMAX_TRAIN_ADALN": False,
         # The text token refiner is not a LoRA target (10 Sep): see the Other Options tick.
         "MINIMAX_TRAIN_REFINER": False,
-        # Training mode ships FAST: photos and clips on the identity blocks (20-49), voice on
-        # the audio zone (34-49). EVERY H3 preset is on Fast since 18 Sep — Style was the last
+        # Training mode ships FAST: photos, clips and voice all on the identity blocks
+        # (20-49). EVERY H3 preset is on Fast since 18 Sep — Style was the last
         # holdout. More Blocks (6-49 everywhere) is the slower one and stays a dropdown away in
         # any preset.
         "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
@@ -2056,7 +2064,7 @@ class LoRATrainerGUI:
             # pruned build they were taking ~45% of all weight movement to do it.
             "MINIMAX_TRAIN_ADALN": False,
             "MINIMAX_TRAIN_REFINER": False,
-            # Training mode — Fast by default (photos and clips 20-49, voice 34-49): the
+            # Training mode — Fast by default (photos, clips and voice all 20-49): the
             # measured recipe for the character/voice work H3 is for, and the quickest steps.
             "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
             "MINIMAX_TRAINING_ADAPTER": True,
@@ -5311,7 +5319,7 @@ class LoRATrainerGUI:
         self._MINIMAX_LIKENESS_HINT_FT = (
             f"Under fine-tune the mode drives the rotation cycle instead of masking steps: on "
             f"Default, photos and clips train the identity blocks ({MINIMAX_LIKENESS_BLOCKS}) and "
-            f"voice the audio zone ({MINIMAX_AUDIO_BLOCKS}). Blocks to Train is adapter-only; the "
+            f"voice the same ({MINIMAX_AUDIO_BLOCKS}). Blocks to Train is adapter-only; the "
             f"fine-tune has its own block field. See the MiniMax section of the README.")
         # Clips are confined with the photos on Default — LoRA and FT alike. It was a sub-tick
         # (29 Aug, on by default; LoRA too since 2 Sep) until Peter retired the choice on
@@ -7866,15 +7874,15 @@ class LoRATrainerGUI:
                             "are in neither: they deform anatomy and pull the dataset's colour "
                             "into the render.")
     _MINIMAX_BLOCKS_HINT_LOCKED = (f"Owned by the Training mode above: photos and clips "
-                                   f"{MINIMAX_LIKENESS_BLOCKS}, voice {MINIMAX_AUDIO_BLOCKS}. "
+                                   f"{MINIMAX_LIKENESS_BLOCKS}, and voice the same. "
                                    "Set the mode to Off to hand-pick.")
     _MINIMAX_BLOCKS_HINT_ULTRA = (f"Owned by the Training mode above: every step type trains "
                                   f"{MINIMAX_FULL_MODEL_BLOCKS}. Set the mode to Off to hand-pick.")
     # The Training mode hint, one per setting.
     _MINIMAX_MODE_HINTS = {
-        "fast": (f"High quality, versatile, best at preserving model priors. Photos and clips "
-                 f"train blocks {MINIMAX_LIKENESS_BLOCKS}, voice {MINIMAX_AUDIO_BLOCKS}, and the "
-                 f"backward stops at the window so the steps are quicker too."),
+        "fast": (f"High quality, versatile, best at preserving model priors. Photos, clips and "
+                 f"voice all train blocks {MINIMAX_LIKENESS_BLOCKS}, and the backward stops at "
+                 f"the window so the steps are quicker too."),
         "ultra": (f"Less preservation of model priors, high quality. Can affect movement "
                   f"ability. Every step type trains {MINIMAX_FULL_MODEL_BLOCKS}, which can help "
                   f"face likeness, at 44 blocks in the backward instead of 30. Blocks 0-5 stay "
@@ -33033,7 +33041,7 @@ class LoRATrainerGUI:
         if _blocks.lower() != "all" and not _mft_cmd_on:
             cmd += ["--train_blocks", _blocks]
         # Training mode. FAST masks per step type: photos and clips to the identity blocks,
-        # voice to the audio zone (below), and the launch dict left MINIMAX_BLOCKS at "all" so
+        # voice the same (below), and the launch dict left MINIMAX_BLOCKS at "all" so
         # the two never fight. The masks TRAVEL under fine-tune too: the trainer honours the same
         # semantics there (cycle-tighten on photo-only data, per-parameter freezing on mixed).
         # ULTRA is one range for every step type: in LoRA mode the launch dict put 6-49 in
@@ -33051,9 +33059,9 @@ class LoRATrainerGUI:
             cmd += ["--photo_blocks", MINIMAX_FULL_MODEL_BLOCKS,
                     "--clip_blocks", MINIMAX_FULL_MODEL_BLOCKS,
                     "--audio_blocks", MINIMAX_FULL_MODEL_BLOCKS]
-        # Voice routing — audio steps train only the measured voice zone (34-49): outside it
-        # they corrupt the visual blocks (A/B, 24 Aug). Under FT it always travels (the
-        # trainer also tightens the cycle to the union of what the dataset trains); in LoRA
+        # Voice routing — audio steps train the same blocks as the picture since 18 Sep 2026.
+        # The flag still travels because the trainer needs to know the routing exists: under FT
+        # it tightens the rotation cycle to the union of what the dataset trains, and in LoRA
         # mode it is part of Optimised Likeness Learning. Harmless without audio files.
         if (_ft_now or _mode == "fast") and not (_mode == "ultra" and _ft_now):
             cmd += ["--audio_blocks", MINIMAX_AUDIO_BLOCKS]

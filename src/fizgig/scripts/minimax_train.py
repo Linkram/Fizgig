@@ -177,10 +177,13 @@ def setup_parser() -> argparse.ArgumentParser:
                         "with --train_blocks.")
     p.add_argument("--audio_blocks", default=None, metavar="SPEC",
                    help="Voice routing: audio-only training steps update only these DiT "
-                        "blocks, and the backward stops at the first of them. '34-49' is the "
-                        "measured voice zone (core 38-48 + shoulder) — audio gradients outside "
-                        "it measurably corrupt the visual blocks (A/B, 24 Aug). Applies under "
-                        "the rotation fine-tune, and in LoRA mode alongside --photo_blocks.")
+                        "blocks, and the backward stops at the first of them. The GUI passes the "
+                        "same spec it gives --photo_blocks, so voice trains what the picture "
+                        "trains. It was narrowed to the voice zone '34-49' until 18 Sep 2026, "
+                        "because audio gradients beyond it corrupted the visual blocks; the "
+                        "training adapter and leaving the text token refiner untrained removed "
+                        "that. Applies under the rotation fine-tune, and in LoRA mode alongside "
+                        "--photo_blocks.")
     p.add_argument("--clip_blocks", default=None, metavar="SPEC",
                    help="Confine VIDEO CLIP training steps to these DiT blocks (LoRA and "
                         "fine-tune alike); the backward stops at the first of them. Optimised "

@@ -372,7 +372,7 @@ def plan_ft_modality_routing(n_blocks, photo_blocks, audio_blocks,
 
     cycle_subset: sorted block list the rotation cycle should span, or None for the full
     model — the UNION of what each modality present in the dataset needs (photos -> the
-    likeness set when given, voice -> the audio zone, clips -> clip_blocks when given,
+    likeness set when given, voice -> audio_blocks when given, clips -> clip_blocks when given,
     full model otherwise). clip_blocks landed 29 Aug from a field result: an overnight
     video run confined to the likeness blocks worked, so "clips -> full model" is now the
     fallback, not the law — the GUI's "Restrict video to likeness blocks" tickbox passes
@@ -2486,10 +2486,13 @@ def train_minimax(
                                      # confined this way trained perfectly well. Unset = clips
                                      # train the whole model, the original behaviour.
     audio_blocks: str = None,        # Voice routing: audio-only steps update only these blocks
-                                     # (+refiners). The 34-49 recipe (voice core 38-48 + shoulder,
-                                     # RESEARCH_h3_block_map.md): audio gradients outside it
-                                     # measurably corrupt the visual blocks (A/B, 24 Aug —
-                                     # audio-only @34-49 clean, @20-49 damaged visuals).
+                                     # (+refiners). The GUI now passes the SAME spec it gives
+                                     # photo_blocks (18 Sep 2026). It was narrowed to 34-49 (voice
+                                     # core 38-48 + shoulder) because audio gradients outside it
+                                     # measurably corrupted the visual blocks (A/B, 24 Aug); the
+                                     # training adapter and leaving the text token refiner
+                                     # untrained removed that leak, so the voice gets the whole
+                                     # likeness window. Any spec still works here.
     train_adaln: bool = True,        # False = drop adaln_proj from the targets (pruned only)
     train_token_refiner: bool = False,  # True = the text token refiner's Linears join the LoRA
                                      # targets. Off by default (10 Sep 2026): the refiner is the
@@ -3203,13 +3206,12 @@ def train_minimax(
                                    "no blocks")
         # Modality routing. Each modality trains only where it belongs: photos -> the
         # likeness set when ticked (photo gradients into the front trunk are pure prior
-        # damage), voice -> the audio zone (audio gradients OUTSIDE 34-49 measurably
-        # corrupt the visual blocks — A/B, 24 Aug), clips -> full model for now. Two
+        # damage), voice -> audio_blocks, clips -> full model for now. Two
         # mechanisms compose:
         #   cycle tighten — the rotation cycle spans the UNION of what the modalities
         #       present in the dataset need, so a photos+voice dataset never spends an
-        #       epoch on the front trunk and an audio-only dataset tightens to 34-49
-        #       automatically (the validated A/B config, no Blocks typing required);
+        #       epoch on the front trunk and an audio-only dataset tightens to whatever
+        #       audio_blocks says, automatically, with no Blocks typing required;
         #   per-batch freeze — a modality whose set is narrower than the span keeps its
         #       hands off the rest via requires_grad, rebuilt per window in
         #       _ft_rebind_optimizer (component windows span every block, so a window
@@ -3261,8 +3263,7 @@ def train_minimax(
                         photo_blocks)
         if _ft_route["voice"] is not None:
             logger.info("[h3-ft] voice routing: audio batches freeze every block "
-                        "outside %s (the voice zone — audio gradients beyond it "
-                        "corrupt the visual blocks).", audio_blocks)
+                        "outside %s.", audio_blocks)
         if _ft_route["clip"] is not None:
             logger.info("[h3-ft] video routing: clip batches freeze every block "
                         "outside %s (Restrict video to likeness blocks).", clip_blocks)
@@ -4036,8 +4037,7 @@ def train_minimax(
                         "(+refiners, %d of %d tensors frozen on clips)",
                         format_block_spec(sorted(_cb_allowed)),
                         len(_clip_mask_params), len(params))
-    # Voice routing, LoRA mode: audio-only steps update only audio_blocks (the measured
-    # voice zone — audio gradients outside it corrupt the visual blocks). Same mechanism
+    # Voice routing, LoRA mode: audio-only steps update only audio_blocks. Same mechanism
     # as the photo mask, keyed on voice-only optimizer windows.
     _audio_mask_params = []
     if audio_blocks and rotator is None:
@@ -5421,7 +5421,7 @@ def train_minimax(
             # Modality routing (FT): freeze the blocks this batch's modality must not touch
             # for the span of its forward+backward — a component window spans every block,
             # so this per-parameter freeze is the only way to express "photos stay inside
-            # 20-49, voice stays inside 34-49, clips inside clip_blocks when restricted".
+            # 20-49, voice inside audio_blocks, clips inside clip_blocks when restricted".
             # The fused per-tensor hooks never fire for a no-grad param; restored right
             # after the backward (any exception here is fatal to the run anyway).
             _frz = []

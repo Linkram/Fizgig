@@ -430,7 +430,7 @@ python src/fizgig/scripts/minimax_train.py \
   --shift 0.666667 \
   --ema_decay 0.98 \
   --caption_dropout 0.05 \
-  --photo_blocks 20-49 --clip_blocks 20-49 --audio_blocks 34-49 \
+  --photo_blocks 20-49 --clip_blocks 20-49 --audio_blocks 20-49 \
   --no_train_adaln \
   --training_adapter_path /models/minimax_h3_training_adapter_v1.safetensors \
   --tread_ratio 0.5 --tread_start 2 --tread_end 47 \
@@ -451,7 +451,7 @@ Two things are on with no flag at all: under `--photo_blocks` / `--clip_blocks` 
 
 **The recipe**
 
-- `--photo_blocks 20-49 --clip_blocks 20-49 --audio_blocks 34-49` — Optimised Likeness Learning: photos and clips train the identity blocks, voice the audio zone. Leave them out to train the whole model (style and scene LoRAs; the GUI's Style preset does).
+- `--photo_blocks 20-49 --clip_blocks 20-49 --audio_blocks 20-49` — Optimised Likeness Learning: photos, clips and voice all train the identity blocks. Voice was narrowed to `34-49` until 18 Sep 2026; the training adapter and leaving the text token refiner untrained removed the reason for it. Leave all three out to train the whole model.
 - `--training_adapter_path` — the training adapter, frozen at 1.0 for every training step, off for previews and absent from the saved LoRA. Use the fl2va or ref2va file to match `--dit`.
 - `--ema_decay 0.98` — weight averaging: checkpoints and previews come from a smoothed average of the weights. `0` turns it off.
 - `--shift 0.666667` — the GUI's **Likeness and Style** training structure, most of the run on nearly-clean images. Unset = the model's own movement-first schedule. `--highnoise_lr_scale` scales the LR of the noisy-half steps and is best left at 1.
