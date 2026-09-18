@@ -53,22 +53,7 @@ One thing worth flagging, because it went the other way from what you would fear
 
 **Captions** — the Captions tab, Qwen with its **Style** captioning preset, and a `zwxem style` trigger word.
 
-**Training** — the **MiniMax H3 Style** preset with nothing changed:
-
-| | |
-|---|---|
-| Training mode | Default |
-| Optimizer | automagic3, from 1e-6 |
-| Network | LoRA, rank 8, alpha 8 |
-| Epochs | 50, saving every epoch |
-| Target megapixels | 0.25 |
-| Weight averaging | EMA 0.98 |
-| Training adapter | on |
-| Text token refiner | not trained |
-| TREAD token routing | on |
-| Caption dropout | 0.05 |
-| Low-noise share | 60% |
-| Seed | 42 |
+**Training** — the **MiniMax H3 Style** preset, nothing changed. The clips use the **epoch 4** checkpoint.
 
 **Prompt**
 
