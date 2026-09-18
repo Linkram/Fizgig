@@ -4356,16 +4356,16 @@ class LoRATrainerGUI:
                 self._minimax_base_frame.pack_forget()
                 self._minimax_base_hint.pack_forget()
 
-            # Previews track likeness honestly but are not the place to compare quality — say
-            # so where the family is chosen, along with the Pause/Resume route that makes
-            # judging in ComfyUI practical on one GPU.
+            # This used to carry a warning that previews tracked likeness but not quality, and
+            # to judge quality in ComfyUI instead. That was true of the old preview path and
+            # stopped being true when the visual (10 Aug) and audio (17 Aug) regimes were fixed
+            # — the previews are the real thing now, so the warning went on 18 Sep 2026. What
+            # is left is the shape of what you get, which is still worth saying here.
             self._minimax_sample_note = tk.Label(
                 model_card,
-                text=("⏱ Previews track LIKENESS, not quality. Judge quality in ComfyUI — Pause "
-                      "frees the GPU, so you can check an epoch there and Resume.\n"
-                      "Defaults are 768×768 56-frame clips with sound; Sample length has "
-                      "stills and other lengths. 📖 Full write-ups in the README."),
-                font=(FONT_FAMILY, 9), fg=COLORS["warning"], bg=COLORS["bg_surface"],
+                text=("Previews default to 768×768 56-frame clips with sound; Sample length "
+                      "has stills and other lengths. 📖 Full write-ups in the README."),
+                font=(FONT_FAMILY, 9), fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
                 wraplength=760, justify=tk.LEFT,
             )
             self._minimax_sample_note.pack(anchor=tk.W, pady=(10, 0))
