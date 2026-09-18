@@ -4022,7 +4022,7 @@ class LoRATrainerGUI:
                 ("minimax_turbo_lora",
                  "Turbo LoRA (~780 MB) — fast 6-step in-training previews"),
                 ("minimax_training_adapter",
-                 "Training adapter (~155 MB) — faster, higher likeness (Ostris)"))
+                 "Training adapter (~155 MB) — faster, higher likeness"))
                 if not str(self.prefs.get(key, "") or "").strip()]
             if not missing:
                 return
@@ -5318,15 +5318,14 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_TRAINING_ADAPTER"] = tk.BooleanVar(
             value=bool(self.settings.get("MINIMAX_TRAINING_ADAPTER", True)))
         self._minimax_adapter_cb = ttk.Checkbutton(
-            training_content, text="Training adapter (Ostris) — de-distills the base while your LoRA learns",
+            training_content, text="Training adapter — de-distills the base while your LoRA learns",
             variable=self.entries["MINIMAX_TRAINING_ADAPTER"])
         self._minimax_adapter_cb.grid(row=42, column=0, columnspan=2, sticky=tk.W,
                                       padx=5, pady=(8, 0))
         self._minimax_adapter_hint = ttk.Label(
             training_content,
-            text="Loads Ostris's training adapter (ostris/minimax_h3_training_adapter) frozen at "
-                 "1.0 under your LoRA for every training step, and switches it off for previews "
-                 "and in your saved file.",
+            text="Loads the MiniMax H3 training adapter frozen at 1.0 under your LoRA for every "
+                 "training step, and switches it off for previews and in your saved file.",
             foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_adapter_hint.grid(row=43, column=0, columnspan=2, sticky=tk.W,
                                         padx=5, pady=(0, 4))
@@ -8492,7 +8491,7 @@ class LoRATrainerGUI:
         if not getattr(self, "_minimax_optimizer_tip", None):
             self._minimax_optimizer_tip = ToolTip(
                 combo,
-                "adamw (full-precision state) is the measured recipe. automagic3 is Ostris's Automagic v3, an experiment: "
+                "adamw (full-precision state) is the measured recipe. automagic3 is Automagic v3 (MIT), an experiment: "
                 "it sets its own learning rate from the update signs (up while they hold steady, down "
                 "while they alternate), one rate for the whole LoRA. The Learning Rate box is only its "
                 "START — put 1e-6 there, its own default; 2e-4 is an AdamW number. The adapter ramp and "
@@ -19004,7 +19003,7 @@ class LoRATrainerGUI:
         )
         mr = self._add_pref_row(
             mm_card, mr, "Training adapter (fl2va):", "minimax_training_adapter",
-            "OPTIONAL — Ostris's training adapter for the standard fl2va base, switched on by the "
+            "OPTIONAL — the training adapter for the standard fl2va base, switched on by the "
             "'Training adapter' tickbox on the Training tab. A frozen LoRA that de-distills the base "
             "while yours learns: in our A/B it reached 50% likeness seven epochs sooner and peaked "
             "higher. On for every training step, off for previews, never in your saved LoRA. The "

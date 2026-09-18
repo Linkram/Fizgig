@@ -42,6 +42,11 @@ functional flow-matching sampler (`src/fizgig/krea2/sampling.py`) are ported
 from ai-toolkit's `extensions_built_in/diffusion_models/{krea2,flux2}/src`,
 then adapted for Fizgig.
 
+The Automagic v3 optimizer (`src/fizgig/training/automagic3.py`) is kept
+byte-for-byte as upstream's `toolkit/optimizers/automagic3.py`, under a Fizgig
+header describing how it is constructed. Offered as an optimizer choice on the
+MiniMax H3 and Krea 2 LoRA paths.
+
 ```
 MIT License
 

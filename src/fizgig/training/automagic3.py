@@ -1,17 +1,15 @@
 """Automagic v3 — Ostris's self-adjusting optimizer, vendored from AI-Toolkit
 (https://github.com/ostris/ai-toolkit, toolkit/optimizers/automagic3.py, main of 17 Sep 2026).
 
-Copyright (c) Ostris. MIT License: permission is hereby granted, free of charge, to any person
-obtaining a copy of this software and associated documentation files, to deal in the Software
-without restriction, subject to the copyright notice and this permission notice being included
-in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT
-WARRANTY OF ANY KIND.
+Copyright (c) 2024 Ostris, LLC. Brought in under the MIT License — the full licence text ships
+verbatim in THIRD_PARTY_NOTICES.md (the "ai-toolkit" entry), which is what MIT requires. Nothing
+about this is surfaced in the app's own text.
 
 Fizgig keeps this file byte-for-byte as upstream below this header (so it can be refreshed by
 copying the file again). How Fizgig uses it: `create_optimizer("automagic3", …)` in
 fizgig/training/optimizers.py builds it NON-fused (fused=False), because the MiniMax H3 loop
 clips, masks and snapshots gradients between backward and step, which a fused optimizer would
-bypass. Offered on the MiniMax H3 LoRA path only, as an experiment (17 Sep 2026).
+bypass. Offered as an Optimizer Type on the MiniMax H3 and Krea 2 LoRA paths (17 Sep 2026).
 """
 """
 NOTE: This is experimental and under active development; expect breaking changes and bugs. Feedback welcome.
