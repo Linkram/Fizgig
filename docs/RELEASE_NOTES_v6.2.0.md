@@ -27,11 +27,53 @@ Style also moves to **Automagic v3**, so all three presets now let the optimizer
 
 ## A style LoRA trained on stills, and the motion is untouched
 
-The clearest thing to come out of this pass is a pair of clips, below: the **first with the style LoRA off**, the **second with it at 1.0**. Same prompt, same seed, same resolution, nothing else changed. The LoRA was trained on **341 stills** of an animated show — no video in the dataset at all. They were captioned on the Captions tab with a `zwxem style` trigger word, and the run used the **Style preset with nothing changed**: rank 8, 50 epochs, Automagic from 1e-6, Default mode, 0.25 target megapixels. That is the whole recipe.
+The clearest thing to come out of this pass is a pair of clips, below: the **first with the style LoRA off**, the **second with it at 1.0**. Same prompt, same seed, same resolution, nothing else changed. The LoRA was trained on **341 stills** of an animated show — no video in the dataset at all. They were captioned on the Captions tab with a `zwxem style` trigger word with the Style captioning preset for Qwen, and the run used the **Style preset with nothing changed**: rank 8, 50 epochs, Automagic from 1e-6, Default mode, 0.25 target megapixels. That is the whole recipe.
+
+
+https://github.com/user-attachments/assets/b344b90d-a4cd-4ec3-a4bc-c0495b95269b
+
+
+
+
+
+https://github.com/user-attachments/assets/666fcc76-47f6-4534-853b-e3b922142daf
+
+
 
 The look changes completely, from 3D game-cinematic rendering to drawn, cel-shaded animation. The motion does not change at all. Same beats, same timing, same camera moves, same staging: the character turns to camera and raises his hand, drops and turns away, the car goes up, the aftermath settles through the smoke. Shot for shot.
 
 That is the point of training on Default. A style LoRA built entirely from still images had no business knowing how anything moves, and it did not need to — because the blocks it trained left the model's own movement alone.
+
+One thing worth flagging, because it went the other way from what you would fear. The prompt asks for a car speeding through the background of the first shot, and it was the **LoRA'd version that actually moved it** — same seed, same prompt. That is one sample, and it is not a claim that training on stills improves motion. It is simply a pointed illustration that training on stills did not take motion away.
+
+<details>
+<summary><b>The prompt, in full</b></summary>
+
+```
+integrated_multimodal_description:
+
+[Shot 1] zwxem style, a medium shot frames a man with dark hair and a serious, intense
+expression in a dynamic pose at the centre of the frame, in a dimly lit industrial environment
+whose background is blurry and indistinct. He wears a dark, formal-looking jacket with gold trim
+over a white shirt. The whole scene is bathed in a pervasive purple light. The camera performs an
+arc shot around him with large amplitude at normal speed, keeping the man in the centre of the
+frame as the blurred background slides past behind him. His right arm rises, gripping a steampunk
+style grenade. He hurls the grenade with a fast overarm throw toward a fast moving car that speeds
+through the blurred background, his jacket swinging with the motion.
+
+[Shot 2] At 00:06.000, the camera cuts to a wide shot of the fast moving car in the same
+purple-lit industrial environment as the grenade from Shot 1 strikes it and the car explodes, a
+fireball bursting outward, orange flame flaring against the purple light, metal panels and dark
+debris spinning through the air as the camera shakes strongly.
+
+overall_soundscape: A low industrial hum fills the space under the rising roar of a car engine.
+The fabric snaps with the throw, and a metallic clink is followed by a heavy explosion,
+shattering glass and debris clattering onto concrete.
+
+non_diegetic_music: N/A
+```
+
+</details>
 
 ## Voice trains the same blocks as the picture
 
@@ -44,3 +86,4 @@ So voice now trains **20-49**, the same blocks as photos and clips. Narrowing it
 - **Off** mode now points at **Blocks to Train in the Other Options section**, which is where it actually lives rather than "below".
 - The preset formerly called "Lower LR - slower" is **MiniMax H3 (rank 16, 60 epochs)**, which is what actually distinguishes it now that neither character preset is given a fixed rate.
 - The README and the CLI reference describe the modes by what they are for rather than which is faster.
+
