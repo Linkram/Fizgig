@@ -679,7 +679,9 @@ MINIMAX_FULL_MODEL_BLOCKS = "6-49"
 # both quicker AND better on it. What actually separates the two is how much of the base model
 # they leave alone, so the names say that now.
 MINIMAX_MODE_FAST = "Default"
-MINIMAX_MODE_ULTRA = "All Blocks"
+# "More", not "All": blocks 0-5 are trained by NEITHER mode — they deform anatomy and pull
+# the dataset's colour into every render — so a name promising all 50 would be a lie.
+MINIMAX_MODE_ULTRA = "More Blocks"
 MINIMAX_MODE_OFF = "Off · hand-pick the blocks below"
 MINIMAX_LIKENESS_MODE_OPTIONS = [MINIMAX_MODE_FAST, MINIMAX_MODE_ULTRA, MINIMAX_MODE_OFF]
 
@@ -701,11 +703,11 @@ def minimax_likeness_mode(raw):
     """Dropdown label -> "fast" | "ultra" | "off". Anything unrecognised is fast (the default).
 
     Matches on the label rather than a prefix because the names no longer start with the mode:
-    "All Blocks" is ultra. The pre-18-Sep labels ("Fast · …", "Ultra quality · …") still resolve,
+    "More Blocks" is ultra. The pre-18-Sep labels ("Fast · …", "Ultra quality · …") still resolve,
     so a saved preset or a queued run written before the rename picks the same mode it did then.
     """
     s = str(raw or "").split("·")[0].strip().lower()
-    if s in ("all blocks", "ultra", "ultra quality"):
+    if s in ("more blocks", "all blocks", "ultra", "ultra quality"):
         return "ultra"
     if s.startswith("off"):
         return "off"
@@ -1021,7 +1023,7 @@ MINIMAX_BUILT_IN_PRESETS = {
         "MINIMAX_TRAIN_REFINER": False,
         # Training mode ships FAST: photos and clips on the identity blocks (20-49), voice on
         # the audio zone (34-49). EVERY H3 preset is on Fast since 18 Sep — Style was the last
-        # holdout. All Blocks (6-49 everywhere) is the slower one and stays a dropdown away in
+        # holdout. More Blocks (6-49 everywhere) is the slower one and stays a dropdown away in
         # any preset.
         "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
         # Training adapter ships ON (Peter, 2 Sep): measured on the same dataset/seed it hit
@@ -7859,7 +7861,7 @@ class LoRATrainerGUI:
     # handler can swap them without duplicating the strings inline.
     _MINIMAX_BLOCKS_HINT = ("Train a subset of the 50 blocks. Type ranges and singles, "
                             "comma-separated, like 3-12, 22, 31-33. Measured answers: "
-                            f"{MINIMAX_FULL_MODEL_BLOCKS} for the whole model (what All Blocks "
+                            f"{MINIMAX_FULL_MODEL_BLOCKS} for the whole model (what More Blocks "
                             f"runs) and {MINIMAX_LIKENESS_BLOCKS} for likeness (Default). Blocks 0-5 "
                             "are in neither: they deform anatomy and pull the dataset's colour "
                             "into the render.")
