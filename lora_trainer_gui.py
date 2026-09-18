@@ -673,8 +673,13 @@ MINIMAX_FULL_MODEL_BLOCKS = "6-49"
 #   off   — the blocks are yours to pick below, for experiments.
 # The mode is chosen WITHIN a preset: every preset loads with one selected and the dropdown
 # switches it. Character presets load Fast; Style loads Ultra (11 Sep 2026).
-MINIMAX_MODE_FAST = "Fast · good quality, quickest steps"
-MINIMAX_MODE_ULTRA = "Ultra quality · slower steps"
+# Renamed 18 Sep 2026 (Peter). The old names sold these on SPEED — "Fast" against "Ultra
+# quality" — which had people reaching for Ultra expecting a better result and getting a worse
+# one. Fast is not a compromise: it is the versatile recipe, and Peter measured styles training
+# both quicker AND better on it. What actually separates the two is how much of the base model
+# they leave alone, so the names say that now.
+MINIMAX_MODE_FAST = "Default"
+MINIMAX_MODE_ULTRA = "All Blocks"
 MINIMAX_MODE_OFF = "Off · hand-pick the blocks below"
 MINIMAX_LIKENESS_MODE_OPTIONS = [MINIMAX_MODE_FAST, MINIMAX_MODE_ULTRA, MINIMAX_MODE_OFF]
 
@@ -693,9 +698,14 @@ def minimax_mode_from_settings(d):
 
 
 def minimax_likeness_mode(raw):
-    """Dropdown label -> "fast" | "ultra" | "off". Anything unrecognised is fast (the default)."""
+    """Dropdown label -> "fast" | "ultra" | "off". Anything unrecognised is fast (the default).
+
+    Matches on the label rather than a prefix because the names no longer start with the mode:
+    "All Blocks" is ultra. The pre-18-Sep labels ("Fast · …", "Ultra quality · …") still resolve,
+    so a saved preset or a queued run written before the rename picks the same mode it did then.
+    """
     s = str(raw or "").split("·")[0].strip().lower()
-    if s.startswith("ultra"):
+    if s in ("all blocks", "ultra", "ultra quality"):
         return "ultra"
     if s.startswith("off"):
         return "off"
@@ -1011,8 +1021,8 @@ MINIMAX_BUILT_IN_PRESETS = {
         "MINIMAX_TRAIN_REFINER": False,
         # Training mode ships FAST: photos and clips on the identity blocks (20-49), voice on
         # the audio zone (34-49). EVERY H3 preset is on Fast since 18 Sep — Style was the last
-        # holdout on Ultra. Ultra quality (6-49 everywhere) is the slower one and stays a
-        # dropdown away in any preset.
+        # holdout. All Blocks (6-49 everywhere) is the slower one and stays a dropdown away in
+        # any preset.
         "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
         # Training adapter ships ON (Peter, 2 Sep): measured on the same dataset/seed it hit
         # 50% likeness seven epochs sooner and peaked higher (61 vs 57). Every H3 preset
@@ -5289,17 +5299,19 @@ class LoRATrainerGUI:
             self._minimax_likeness_frame, values=MINIMAX_LIKENESS_MODE_OPTIONS,
             textvariable=self.entries["MINIMAX_LIKENESS_MODE"], state="readonly", width=34)
         self._minimax_likeness_combo.pack(side=tk.LEFT)
+        # Amber, not the usual explain grey: this is the one control where picking the
+        # heavier-sounding option makes the result worse, so the description has to be read.
         self._minimax_likeness_hint = ttk.Label(
             training_content, text="",
-            foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
+            foreground=COLORS["warning"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_likeness_hint.grid(row=40, column=0, columnspan=2, sticky=tk.W,
                                          padx=5, pady=(0, 4))
         self._MINIMAX_LIKENESS_HINT_FT = (
-            f"Under fine-tune the mode drives the rotation cycle instead of masking steps: in "
-            f"Fast, photos and clips train the identity blocks ({MINIMAX_LIKENESS_BLOCKS}) and "
+            f"Under fine-tune the mode drives the rotation cycle instead of masking steps: on "
+            f"Default, photos and clips train the identity blocks ({MINIMAX_LIKENESS_BLOCKS}) and "
             f"voice the audio zone ({MINIMAX_AUDIO_BLOCKS}). Blocks to Train is adapter-only; the "
             f"fine-tune has its own block field. See the MiniMax section of the README.")
-        # Clips are confined with the photos in Fast — LoRA and FT alike. It was a sub-tick
+        # Clips are confined with the photos on Default — LoRA and FT alike. It was a sub-tick
         # (29 Aug, on by default; LoRA too since 2 Sep) until Peter retired the choice on
         # 7 Sep: a confined video run trains just as well and is far lighter. Emitted as
         # --clip_blocks. trace, not command=: preset loads set the var programmatically and
@@ -7847,8 +7859,8 @@ class LoRATrainerGUI:
     # handler can swap them without duplicating the strings inline.
     _MINIMAX_BLOCKS_HINT = ("Train a subset of the 50 blocks. Type ranges and singles, "
                             "comma-separated, like 3-12, 22, 31-33. Measured answers: "
-                            f"{MINIMAX_FULL_MODEL_BLOCKS} for the whole model (what Ultra quality "
-                            f"runs) and {MINIMAX_LIKENESS_BLOCKS} for likeness (Fast). Blocks 0-5 "
+                            f"{MINIMAX_FULL_MODEL_BLOCKS} for the whole model (what All Blocks "
+                            f"runs) and {MINIMAX_LIKENESS_BLOCKS} for likeness (Default). Blocks 0-5 "
                             "are in neither: they deform anatomy and pull the dataset's colour "
                             "into the render.")
     _MINIMAX_BLOCKS_HINT_LOCKED = (f"Owned by the Training mode above: photos and clips "
@@ -7858,14 +7870,13 @@ class LoRATrainerGUI:
                                   f"{MINIMAX_FULL_MODEL_BLOCKS}. Set the mode to Off to hand-pick.")
     # The Training mode hint, one per setting.
     _MINIMAX_MODE_HINTS = {
-        "fast": (f"Photos and clips train blocks {MINIMAX_LIKENESS_BLOCKS}, voice "
-                 f"{MINIMAX_AUDIO_BLOCKS}. The backward stops at the window, so this is the "
-                 "quickest mode, and it is good on both picture and sound."),
-        "ultra": (f"Every step type trains {MINIMAX_FULL_MODEL_BLOCKS} — better likeness and "
-                  "better audio, and the dataset's own quirks stay out of the LoRA far longer. "
-                  "The mode for style and scene work too, which needs more of the model than "
-                  "the identity blocks. Slower per step: the backward covers 44 blocks instead of "
-                  "30. Blocks 0-5 stay out either way; they deform anatomy and colour."),
+        "fast": (f"High quality, versatile, best at preserving model priors. Photos and clips "
+                 f"train blocks {MINIMAX_LIKENESS_BLOCKS}, voice {MINIMAX_AUDIO_BLOCKS}, and the "
+                 f"backward stops at the window so the steps are quicker too."),
+        "ultra": (f"Less preservation of model priors, high quality. Can affect movement "
+                  f"ability. Every step type trains {MINIMAX_FULL_MODEL_BLOCKS}, which can help "
+                  f"face likeness, at 44 blocks in the backward instead of 30. Blocks 0-5 stay "
+                  f"out either way; they deform anatomy and colour."),
         "off": "The blocks are yours to pick below, for experiments.",
     }
 
