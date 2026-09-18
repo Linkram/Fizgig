@@ -7885,13 +7885,12 @@ class LoRATrainerGUI:
         "fast": (f"High quality, versatile, best at preserving model priors. Photos, clips and "
                  f"voice all train blocks {MINIMAX_LIKENESS_BLOCKS}, and the backward stops at "
                  f"the window so the steps are quicker too."),
-        "ultra": (f"Less preservation of model priors, high quality. Can affect movement "
-                  f"ability — which is the point if movement is what you are training, so this "
-                  f"is the one to pick for a motion LoRA: the priors it loosens are the ones "
-                  f"you are replacing. Also worth trying when face likeness is what you are "
-                  f"chasing. Every step type trains {MINIMAX_FULL_MODEL_BLOCKS}, at 44 blocks "
-                  f"in the backward instead of 30. Blocks 0-5 stay out either way; they deform "
-                  f"anatomy and colour."),
+        "ultra": (f"For training MOTION. Can affect movement ability, which is the point when "
+                  f"movement is the thing you are teaching: the priors it loosens are the ones "
+                  f"you are replacing. It is not a likeness upgrade — Default reaches higher "
+                  f"likeness, sooner, with quicker steps. Every step type trains "
+                  f"{MINIMAX_FULL_MODEL_BLOCKS}, at 44 blocks in the backward instead of 30. "
+                  f"Blocks 0-5 stay out either way; they deform anatomy and colour."),
         "off": ("The blocks are yours to pick, for experiments: Blocks to Train, in the "
                 "Other Options section further down this tab."),
     }
