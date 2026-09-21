@@ -4703,7 +4703,8 @@ class LoRATrainerGUI:
         self.entries["LOKR_FACTOR"].pack(side=tk.LEFT)
         self._lokr_factor_hint = tk.Label(
             self._lokr_factor_rowf,
-            text="8 is the sweet spot · 4 = stronger, bigger files · above 8: just use LoRA",
+            text="8 is the sweet spot · 4 = four times the parameters: stronger, a bigger file, "
+                 "and ~5 GB more VRAM with adamw (use adamw8bit) · above 8: just use LoRA",
             font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             justify=tk.LEFT)
         self._lokr_factor_hint.pack(side=tk.LEFT, padx=(10, 0))
