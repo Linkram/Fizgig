@@ -103,7 +103,7 @@ COLORS = {
 
 # Typography
 FONT_FAMILY = "Segoe UI"
-HINT_FONT = (FONT_FAMILY, 10, "italic")
+HINT_FONT = (FONT_FAMILY, 10, "italic")   # the explain text under Training-tab controls (Peter, 11 Sep: one point up from 9)
 
 # Row-list popups (Problem Images, Look Consistency Filter) show this many rows per page.
 # Tk draws nothing past 32,767 px inside a canvas-embedded frame, so a list of every image
@@ -113,7 +113,7 @@ ROW_WINDOW_PAGE_SIZE = 200
 PROBLEM_VERDICT_ORDER = ("excluded", "stuck", "suspect", "watch", "warmup", "exhausted",
                          "learning", "mid", "easy")
 PROBLEM_VERDICTS = ("excluded", "stuck", "suspect", "watch")      # "Problems only"
-PROBLEM_FILTER_OPTIONS = ("All", "Problems only") + PROBLEM_VERDICT_ORDER   # the explain text under Training-tab controls (Peter, 11 Sep: one point up from 9)
+PROBLEM_FILTER_OPTIONS = ("All", "Problems only") + PROBLEM_VERDICT_ORDER
 FONT_MONO = "Consolas"
 
 # Legacy color constants (for backwards compatibility during transition)

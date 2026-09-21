@@ -87,6 +87,9 @@ def check_not_conda():
     print("substituted text. Leave conda, then run the installer again:")
     print("    conda deactivate")
     print("    python3 install_fizgig.py      (Windows: py install_fizgig.py)")
+    print("If 'python3' is still conda's after that (conda on your PATH for good), run the")
+    print("system interpreter by its full path instead, e.g. /usr/bin/python3 install_fizgig.py")
+    print("(Windows: a python.org install, then py install_fizgig.py).")
     print("To go ahead inside conda anyway, set FIZGIG_ALLOW_CONDA=1.")
     return False
 
