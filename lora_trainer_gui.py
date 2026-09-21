@@ -12377,15 +12377,15 @@ class LoRATrainerGUI:
         # picture-and-sound preview is now the honest default heartbeat. Without the audio
         # VAE set it degrades to a silent clip with a console note; Still stays in the
         # dropdown for anyone who wants seconds-per-preview.
+        # Every clip length carries its sound (Peter, 21 Sep 2026). The silent clip entries
+        # that pre-dated the audio decoder sat beside these for a month and were one word
+        # apart — a saved silent pick quietly cost the mp4s. Saved labels are mapped by
+        # frame count in _sample_frames_label, so an old choice lands on the sound entry.
         self.sample_frames_var = tk.StringVar(
-            value=self.last_used.get("sample_frames", "56 frames with sound (~2.3s)"))
+            value=self._sample_frames_label(self.last_used.get("sample_frames", "")))
         self.sample_frames_combo = ttk.Combobox(
             prompt_card, textvariable=self.sample_frames_var, state="readonly", width=34,
-            values=["Still (1 frame)", "22 frames (~1s)", "56 frames (~2.3s)",
-                    "124 frames (~5s — trained minimum)", "141 frames (~6s)",
-                    "22 frames with sound (~1s)",
-                    "56 frames with sound (~2.3s)",
-                    "124 frames with sound (~5s)"])
+            values=list(self.SAMPLE_FRAMES_OPTIONS))
         self.sample_frames_combo.grid(row=8, column=1, columnspan=2, sticky=tk.W, pady=4)
         self.sample_frames_var.trace_add("write", lambda *a: self._save_last_used_paths())
         self._sample_frames_hint = tk.Label(prompt_card,
@@ -12681,6 +12681,27 @@ class LoRATrainerGUI:
             return os.path.exists(self._paused_sidecar_path())
         except Exception:
             return False
+
+    SAMPLE_FRAMES_OPTIONS = ("Still (1 frame)", "22 frames with sound (~1s)",
+                             "56 frames with sound (~2.3s)", "124 frames with sound (~5s)")
+
+    @classmethod
+    def _sample_frames_label(cls, saved) -> str:
+        """The Sample-length entry for a saved label: itself when offered, else the sound entry
+        with the same frame count (a retired silent label), 141 → 124, anything odd → 56."""
+        saved = str(saved or "").strip()
+        if saved in cls.SAMPLE_FRAMES_OPTIONS:
+            return saved
+        head = saved.split(" ")[0]
+        if saved.lower().startswith("still"):
+            return cls.SAMPLE_FRAMES_OPTIONS[0]
+        if head.isdigit():
+            n = int(head)
+            by_count = {int(o.split(" ")[0]): o for o in cls.SAMPLE_FRAMES_OPTIONS[1:]}
+            if n in by_count:
+                return by_count[n]
+            return by_count[min(by_count, key=lambda k: abs(k - n))]
+        return cls.SAMPLE_FRAMES_OPTIONS[2]
 
     def _apply_lora_name_suffix(self, arch: str):
         """Retag the LoRA name for `arch` — myface_k9b -> myface_krea2 and back.
@@ -33165,9 +33186,9 @@ class LoRATrainerGUI:
                               and self.sample_frames_var.get() or "")
                 _sf = _sf_raw.split(" ")[0]
                 cmd += ["--sample_frames", _sf if _sf.isdigit() else "1"]
-                # "with sound" variants: the samples also carry their generated audio,
-                # decoded through the audio VAE — same file the caching pass uses.
-                if "with sound" in _sf_raw.lower():
+                # Any clip carries its generated audio, decoded through the audio VAE — same
+                # file the caching pass uses. Keyed on the frame count, not the label.
+                if _sf.isdigit() and int(_sf) > 1:
                     _avae = self._krea2_pref("minimax_audio_vae")
                     if _avae:
                         cmd += ["--sample_audio", "--audio_vae", _avae]
