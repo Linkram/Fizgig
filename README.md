@@ -707,6 +707,8 @@ chmod +x run_fizgig.sh
 ./run_fizgig.sh
 ```
 
+Run that from your system Python, not inside a conda environment (`conda deactivate` first): conda bundles its own Tk, which cannot see the system's fonts, so the app comes up with missing text. The installer refuses when conda is active; `FIZGIG_ALLOW_CONDA=1` overrides it.
+
 **VRAM status bar on AMD:** the existing NVIDIA `pynvml` / `nvidia-smi` path is unchanged; AMD readers (`vram_monitor.read_amd_gpu_vram`) run only as a fallback. Windows ROCm uses `typeperf`; Linux ROCm uses the **`amd-smi`** CLI when available ([AMD SMI / ROCm Core SDK](https://rocm.docs.amd.com/projects/amdsmi/en/latest/install/install.html), e.g. `sudo apt install amdrocm-amdsmi`). Fizgig picks the GPU with the largest VRAM total (skips empty iGPU entries). Legacy `rocm-smi` is a fallback. Do not `pip install amdsmi` — the PyPI package is outdated.
 
 Three small models auto-download on first use: InsightFace `buffalo_l` (~300 MB, during install), Florence-2 (~500 MB–1.5 GB, first AI caption), and Helsinki-NLP `opus-mt-en-zh` (~300 MB, first bilingual translation).

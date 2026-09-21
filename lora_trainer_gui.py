@@ -103,7 +103,17 @@ COLORS = {
 
 # Typography
 FONT_FAMILY = "Segoe UI"
-HINT_FONT = (FONT_FAMILY, 10, "italic")   # the explain text under Training-tab controls (Peter, 11 Sep: one point up from 9)
+HINT_FONT = (FONT_FAMILY, 10, "italic")
+
+# Row-list popups (Problem Images, Look Consistency Filter) show this many rows per page.
+# Tk draws nothing past 32,767 px inside a canvas-embedded frame, so a list of every image
+# went blank from row ~256 while the scrollbar kept moving (#140, a 3,500-image dataset).
+ROW_WINDOW_PAGE_SIZE = 200
+# The loss watch's verdict ladder, hardest first — the Problem Images sort/tally order.
+PROBLEM_VERDICT_ORDER = ("excluded", "stuck", "suspect", "watch", "warmup", "exhausted",
+                         "learning", "mid", "easy")
+PROBLEM_VERDICTS = ("excluded", "stuck", "suspect", "watch")      # "Problems only"
+PROBLEM_FILTER_OPTIONS = ("All", "Problems only") + PROBLEM_VERDICT_ORDER   # the explain text under Training-tab controls (Peter, 11 Sep: one point up from 9)
 FONT_MONO = "Consolas"
 
 # Legacy color constants (for backwards compatibility during transition)
@@ -8974,6 +8984,8 @@ class LoRATrainerGUI:
         self._problem_row_ui = {}  # key -> persistent row widgets (in-place refresh; new window = fresh)
         self._problem_last_order = []
         self._problem_img_paths = getattr(self, "_problem_img_paths", {})  # key -> resolved image path
+        self._problem_page = 0
+        self._problem_painted = None   # (page, filter) the rows frame currently shows
 
         head = tk.Frame(win, bg=COLORS["bg_deep"])
         head.pack(fill=tk.X, padx=14, pady=(12, 6))
@@ -8994,6 +9006,25 @@ class LoRATrainerGUI:
                 self._problem_status._wl = wl
                 self._problem_status.config(wraplength=wl)
         win.bind("<Configure>", lambda e: _status_wrap(e) if e.widget is win else None, add="+")
+
+        # Pages + filter (#140). The bar sits outside the canvas; no tk.Text here, so the
+        # global wheel router still finds the rows canvas under the pointer.
+        bar = tk.Frame(win, bg=COLORS["bg_deep"])
+        bar.pack(fill=tk.X, padx=14, pady=(6, 0))
+        self._problem_prev_btn = ttk.Button(bar, text="<< Prev", command=lambda: self._problem_set_page(-1))
+        self._problem_prev_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._problem_page_label = tk.Label(bar, text="", font=(FONT_FAMILY, 10),
+                                            fg=COLORS["text_secondary"], bg=COLORS["bg_deep"])
+        self._problem_page_label.pack(side=tk.LEFT, padx=(0, 8))
+        self._problem_next_btn = ttk.Button(bar, text="Next >>", command=lambda: self._problem_set_page(1))
+        self._problem_next_btn.pack(side=tk.LEFT, padx=(0, 24))
+        tk.Label(bar, text="Show:", font=(FONT_FAMILY, 10), fg=COLORS["text_secondary"],
+                 bg=COLORS["bg_deep"]).pack(side=tk.LEFT, padx=(0, 6))
+        self._problem_filter_var = tk.StringVar(value="All")
+        _fc = ttk.Combobox(bar, textvariable=self._problem_filter_var, state="readonly", width=14,
+                           values=list(PROBLEM_FILTER_OPTIONS))
+        _fc.pack(side=tk.LEFT)
+        _fc.bind("<<ComboboxSelected>>", lambda e: self._problem_set_page(None))
 
         holder = tk.Frame(win, bg=COLORS["bg_deep"])
         holder.pack(fill=tk.BOTH, expand=True, padx=14, pady=(6, 12))
@@ -9053,6 +9084,9 @@ class LoRATrainerGUI:
                 w.destroy()
             self._problem_row_ui = {}
             self._problem_last_order = []
+            self._problem_page = 0
+            self._problem_painted = None
+            self._problem_set_page_bar(1, 0, 0, "All")
             self._problem_status.config(text="No data yet. Enable “Detect problem images” on the Training tab, "
                                              "start a Krea 2 run, and give it 3+ epochs of warmup.")
             return
@@ -9138,7 +9172,17 @@ class LoRATrainerGUI:
         # recreating hundreds of widgets on the main thread every epoch boundary — that rebuild
         # was the window's remaining lag source. Only appearing/disappearing images create or
         # destroy widgets, and the list only re-packs when the sort order actually changed.
-        new_keys = [key for key, _ in items]
+        #
+        # Pages + filter (#140): only the current page's rows exist as widgets — the tally and
+        # status above count every image regardless. A row that leaves the page is destroyed;
+        # _problem_thumbs and _problem_img_paths make re-creating it cost only the widgets.
+        _mode = self._problem_filter_var.get() if hasattr(self, "_problem_filter_var") else "All"
+        visible = [(k, v) for k, v in items if self._problem_filter_pass(v.get("verdict", "mid"), _mode)]
+        _per = ROW_WINDOW_PAGE_SIZE
+        total_pages = max(1, -(-len(visible) // _per))
+        self._problem_page = min(max(int(getattr(self, "_problem_page", 0) or 0), 0), total_pages - 1)
+        page_items = visible[self._problem_page * _per:(self._problem_page + 1) * _per]
+        new_keys = [key for key, _ in page_items]
         key_set = set(new_keys)
         for k in list(self._problem_row_ui):
             if k not in key_set:
@@ -9148,15 +9192,18 @@ class LoRATrainerGUI:
                 except Exception:
                     pass
         thumb_jobs = []
-        for key, s in items:
+        for key, s in page_items:
             ui = self._problem_row_ui.get(key)
             if ui is None:
                 ui = self._problem_build_row(key, thumb_jobs)
                 self._problem_row_ui[key] = ui
             self._problem_update_row(ui, key, s, data, queued_keys, applied_info, style)
-        if new_keys != self._problem_last_order:
+        # A page or filter change starts at the top; the 4 s tick keeps the scroll position.
+        _painted = (self._problem_page, _mode)
+        _jump = getattr(self, "_problem_painted", None) != _painted
+        if new_keys != self._problem_last_order or _jump:
             try:
-                scroll_pos = self._problem_canvas.yview()[0]
+                scroll_pos = 0.0 if _jump else self._problem_canvas.yview()[0]
             except Exception:
                 scroll_pos = 0.0
             for key in new_keys:
@@ -9169,8 +9216,43 @@ class LoRATrainerGUI:
                 self._problem_canvas.yview_moveto(scroll_pos)
             except Exception:
                 pass
+        self._problem_painted = _painted
+        self._problem_set_page_bar(total_pages, len(visible), len(items), _mode)
         if thumb_jobs:
             self._load_thumbs_async(thumb_jobs, self._problem_thumbs)
+
+    @staticmethod
+    def _problem_filter_pass(verdict: str, mode: str) -> bool:
+        """Does a verdict show under the Show: filter? An unknown, trainer-added verdict is
+        never hidden by "Problems only" — the filter must not make a new class vanish."""
+        if mode == "All":
+            return True
+        if mode == "Problems only":
+            return verdict in PROBLEM_VERDICTS or verdict not in PROBLEM_VERDICT_ORDER
+        return verdict == mode
+
+    def _problem_set_page(self, delta):
+        """Prev/Next (delta ±1) or a filter change (None → back to page 1); the paint clamps."""
+        if delta is None:
+            self._problem_page = 0
+        else:
+            self._problem_page = max(0, int(getattr(self, "_problem_page", 0) or 0) + int(delta))
+        self._refresh_problem_images(force=True)
+
+    def _problem_set_page_bar(self, total_pages, n_visible, n_all, mode):
+        lbl = getattr(self, "_problem_page_label", None)
+        if lbl is None:
+            return
+        try:
+            text = f"Page {self._problem_page + 1} of {total_pages}  ·  {n_visible} rows"
+            if mode != "All":
+                text += f" of {n_all}"
+            lbl.config(text=text)
+            self._problem_prev_btn.config(state="normal" if self._problem_page > 0 else "disabled")
+            self._problem_next_btn.config(
+                state="normal" if self._problem_page < total_pages - 1 else "disabled")
+        except Exception:
+            pass
 
     def _problem_build_row(self, key, thumb_jobs):
         """Create one persistent Problem Images row (static widgets only — per-refresh state is
@@ -15263,6 +15345,19 @@ class LoRATrainerGUI:
                                    justify=tk.LEFT, anchor="w", wraplength=820)
         self._ff_status.pack(fill=tk.X, padx=14)
 
+        # Pages (#140): 200 rows a page, marked count for the whole scan so marks on other
+        # pages stay visible. No tk.Text here — the global wheel router keeps working.
+        self._ff_page = 0
+        bar = tk.Frame(win, bg=COLORS["bg_deep"])
+        bar.pack(fill=tk.X, padx=14, pady=(6, 0))
+        self._ff_prev_btn = ttk.Button(bar, text="<< Prev", command=lambda: self._ff_set_page(-1))
+        self._ff_prev_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._ff_page_label = tk.Label(bar, text="", font=(FONT_FAMILY, 10),
+                                       fg=COLORS["text_secondary"], bg=COLORS["bg_deep"])
+        self._ff_page_label.pack(side=tk.LEFT, padx=(0, 8))
+        self._ff_next_btn = ttk.Button(bar, text="Next >>", command=lambda: self._ff_set_page(1))
+        self._ff_next_btn.pack(side=tk.LEFT)
+
         holder = tk.Frame(win, bg=COLORS["bg_deep"])
         holder.pack(fill=tk.BOTH, expand=True, padx=14, pady=(6, 12))
         canvas = tk.Canvas(holder, bg=COLORS["bg_deep"], highlightthickness=0)
@@ -15276,6 +15371,27 @@ class LoRATrainerGUI:
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(rows_id, width=e.width))
         # Wheel: global router (_route_mousewheel) finds this canvas via the pointer.
         self._ff_rows = rows
+        self._ff_canvas = canvas
+        self._ff_update_page_bar()
+
+    def _ff_set_page(self, delta):
+        self._ff_page = max(0, int(getattr(self, "_ff_page", 0) or 0) + int(delta))
+        self._ff_build_rows()          # clamps the page and starts it at the top
+
+    def _ff_update_page_bar(self):
+        lbl = getattr(self, "_ff_page_label", None)
+        if lbl is None:
+            return
+        try:
+            n = len(getattr(self, "_ff_scores", {}) or {})
+            total_pages = max(1, -(-n // ROW_WINDOW_PAGE_SIZE))
+            page = min(max(int(getattr(self, "_ff_page", 0) or 0), 0), total_pages - 1)
+            lbl.config(text=f"Page {page + 1} of {total_pages}  ·  {n} rows  ·  "
+                            f"{len(self._ff_marked)} marked")
+            self._ff_prev_btn.config(state="normal" if page > 0 else "disabled")
+            self._ff_next_btn.config(state="normal" if page < total_pages - 1 else "disabled")
+        except Exception:
+            pass
 
     def _ff_set_status(self, text):
         win = getattr(self, "_ff_win", None)
@@ -15443,6 +15559,7 @@ class LoRATrainerGUI:
             self._ff_set_status(error)
             return
         self._ff_scores = scores
+        self._ff_page = 0                # a new scan starts on page 1
         self._ff_marked &= set(scores)   # drop marks for files that vanished
         self._ff_suggest_btn.config(state="normal")
         scored = [s for s in scores.values() if s is not None]
@@ -15480,6 +15597,7 @@ class LoRATrainerGUI:
         # and yanked the scroll position back to the top.
         self._ff_update_row(path)
         self._ff_apply_btn.config(state="normal" if self._ff_marked else "disabled")
+        self._ff_update_page_bar()
 
     def _ff_update_row(self, path):
         """Repaint one row's marked/unmarked state without rebuilding the list."""
@@ -15516,8 +15634,9 @@ class LoRATrainerGUI:
                             f"(dataset median {med * 100:.0f}%, cutoff {cutoff * 100:.0f}%). "
                             "Review before moving — it flags statistical drift, not certainty.")
         for p in newly:
-            self._ff_update_row(p)
+            self._ff_update_row(p)       # rows on other pages carry the mark, just not the paint
         self._ff_apply_btn.config(state="normal" if self._ff_marked else "disabled")
+        self._ff_update_page_bar()
 
     def _ff_build_rows(self):
         win = getattr(self, "_ff_win", None)
@@ -15530,7 +15649,12 @@ class LoRATrainerGUI:
         # Worst match first; unscoreable (no face) at the bottom — they're a judgement call.
         items = sorted(self._ff_scores.items(),
                        key=lambda kv: (kv[1] is None, kv[1] if kv[1] is not None else 0.0))
-        for path, sim in items:
+        # One page of rows (#140). The page clamps to the list, so a shorter list after a
+        # move lands on its last page rather than an empty one.
+        _per = ROW_WINDOW_PAGE_SIZE
+        total_pages = max(1, -(-len(items) // _per))
+        self._ff_page = min(max(int(getattr(self, "_ff_page", 0) or 0), 0), total_pages - 1)
+        for path, sim in items[self._ff_page * _per:(self._ff_page + 1) * _per]:
             label, color, blurb = self._ff_verdict(sim)
             marked = path in self._ff_marked
             row = tk.Frame(self._ff_rows, bg=COLORS["bg_surface"],
@@ -15579,6 +15703,12 @@ class LoRATrainerGUI:
         if thumb_jobs:
             self._load_thumbs_async(thumb_jobs, self._ff_thumbs)
         self._ff_apply_btn.config(state="normal" if self._ff_marked else "disabled")
+        try:
+            self._ff_rows.update_idletasks()
+            self._ff_canvas.yview_moveto(0.0)
+        except Exception:
+            pass
+        self._ff_update_page_bar()
 
     def _ff_apply_moves(self):
         """Move marked images (+ their caption .txt) to <folder>/excluded_by_look/. Never deletes."""
@@ -15613,13 +15743,6 @@ class LoRATrainerGUI:
                 moved += 1
                 self._ff_scores.pop(p, None)
                 self._ff_marked.discard(p)
-                # Drop just this row — rebuilding the whole list is slow and loses scroll position.
-                ui = self._ff_row_ui.pop(p, None)
-                if ui is not None:
-                    try:
-                        ui["frame"].destroy()
-                    except Exception:
-                        pass
             except Exception as e:
                 # A failed move can leave a half-state behind (shutil.move falls back to
                 # copy+delete when the source is briefly locked, e.g. mid thumbnail decode;
@@ -15631,6 +15754,17 @@ class LoRATrainerGUI:
                 except Exception:
                     pass
                 self._ff_set_status(f"Could not move {os.path.basename(p)}: {e}")
+        # Re-flow the page: the list is shorter, so the slice shifted and the page may have
+        # emptied. Thumbs are cached, so this is cheap; the scroll position is put back.
+        try:
+            _pos = self._ff_canvas.yview()[0]
+        except Exception:
+            _pos = 0.0
+        self._ff_build_rows()
+        try:
+            self._ff_canvas.yview_moveto(_pos)
+        except Exception:
+            pass
         self._ff_apply_btn.config(state="normal" if self._ff_marked else "disabled")
         self._ff_set_status(f"Moved {moved} image(s) to {dest_dir}. "
                             f"{len(self._ff_scores)} image(s) remain in the dataset.")
