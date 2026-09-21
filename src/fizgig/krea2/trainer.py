@@ -965,6 +965,24 @@ class AdaptiveLR:
         self._snapshot(network, optimizer)
 
 
+def _ft_raw_unfit_reason(raw_path: str):
+    """Why a --dit file cannot be fine-tuned, or None. Header read only — free.
+
+    Two shapes are refused: a pre-quantized fp8 checkpoint (.weight_scale keys — the master
+    would be built from unscaled fp8 weights) and a plain-cast fp8 file (F8 tensor dtypes, no
+    scales — there is no bf16 layout to write a full checkpoint into, and the trained bf16
+    weights would have to be cast down unscaled to fit the file's slots)."""
+    from fizgig.krea2.safetensors_utils import MemoryEfficientSafeOpen
+    with MemoryEfficientSafeOpen(raw_path) as f:          # one header read for both tests
+        keys = f.keys()
+        if any(k.endswith(".weight_scale") for k in keys):
+            return "is a pre-quantized fp8 checkpoint (.weight_scale tensors)"
+        n_f8 = sum(1 for k in keys if str(f.header[k].get("dtype", "")).startswith("F8"))
+    if n_f8:
+        return f"stores {n_f8} tensor(s) in an fp8 dtype"
+    return None
+
+
 def _build_bf16_master(raw_path: str, dit) -> dict:
     """CPU bf16 copy of every fp8-patched block Linear — the source of truth for rotation.
 
@@ -1025,19 +1043,18 @@ def _save_full_checkpoint(rotator, raw_path: str, path: str, extra_metadata=None
     26 + 26 GB, which is what tripped MemoryError on a 96 GB box. Now the header comes from the
     RAW's own header (no payload read), trained keys are produced from the master and everything
     else is one get_tensor() read as it is written, so the peak is ~ master + the active window's
-    flushed clones + ONE tensor (~75 MB for a 6144x6144 bf16 Linear). Same contract as the H3
+    flushed clones + ONE tensor (the largest in the RAW is ~0.9 GB). Same contract as the H3
     saver (save_full_checkpoint_h3), same stream_save_file underneath.
     """
     from fizgig.krea2.safetensors_utils import MemoryEfficientSafeOpen, stream_save_file
-    from fizgig.krea2.utils import is_prequantized_fp8
 
-    # Belt and braces (the run-start guard is the real one): a pre-quantized fp8 file has no
-    # bf16 layout to write into, and an F8 source dtype must never be met by a .to(fp8) of an
-    # unscaled bf16 tensor — the _DT map below has no F8 entries on purpose.
-    if is_prequantized_fp8(raw_path):
-        raise RuntimeError(f"[ft-rotation] {os.path.basename(raw_path)} is a pre-quantized fp8 "
-                           "checkpoint (.weight_scale tensors) — a fine-tune checkpoint can only "
-                           "be written over the bf16 RAW it was trained from.")
+    # Belt and braces (the run-start guard is the real one): an fp8 file has no bf16 layout
+    # to write into, and an F8 source dtype must never be met by a .to(fp8) of an unscaled
+    # bf16 tensor — the _DT map below has no F8 entries on purpose.
+    _why = _ft_raw_unfit_reason(raw_path)
+    if _why:
+        raise RuntimeError(f"[ft-rotation] {os.path.basename(raw_path)} {_why} — a fine-tune "
+                           "checkpoint can only be written over the bf16 RAW it was trained from.")
 
     # Said up front: the progress bar sits still for the whole save.
     try:
@@ -1865,15 +1882,14 @@ def train_krea2(
         # A pre-quantized fp8 file cannot be fine-tuned: the bf16 master would be built from
         # unscaled fp8 weights (garbage, trained for an hour before anything complained) and
         # the full checkpoint has no bf16 layout to write into. Header read only — free.
-        from fizgig.krea2.utils import is_prequantized_fp8
-        if is_prequantized_fp8(raw_path):
+        _why = _ft_raw_unfit_reason(raw_path)
+        if _why:
             raise RuntimeError(
-                f"[ft-rotation] --dit points at a pre-quantized fp8 checkpoint "
-                f"({os.path.basename(raw_path)} has .weight_scale tensors). Base-model "
+                f"[ft-rotation] --dit {os.path.basename(raw_path)} {_why}. Base-model "
                 "fine-tuning needs the bf16 RAW checkpoint — the trainer builds its bf16 master "
                 "from the file and writes full checkpoints in the file's layout, and neither is "
-                "possible from unscaled fp8 weights. Point --dit at the RAW (or at a Fizgig "
-                "fine-tune checkpoint made from it).")
+                "possible from fp8 weights. Point --dit at the RAW (or at a Fizgig fine-tune "
+                "checkpoint made from it).")
         # Handoff guards, before our first CUDA call: a back-to-back fine-tune can start
         # while the previous trainer process is still tearing down — VRAM (WDDM demotion is
         # sticky) and RAM (the old process hands back a huge commit) both need to settle.
