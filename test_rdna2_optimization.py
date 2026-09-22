@@ -118,4 +118,3 @@ class RDNA2Tests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'complete'):load_nf4_streamed(path,device='cpu',config=config)
 
 if __name__=='__main__':unittest.main()
-
