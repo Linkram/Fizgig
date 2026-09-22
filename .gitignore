@@ -64,6 +64,7 @@ nul
 # Benchmark scratch (bench_train.py writes LoRAs + results here)
 _bench_out/
 bench_results.json
+benchmarks/*.json
 repair_studio_last_preview.log
 
 # Checkpoint-to-LoRA utility state (per-machine)

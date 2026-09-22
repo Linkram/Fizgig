@@ -64,6 +64,10 @@ if /I not "!GPU_ARCH!"=="gfx1100" (
     if exist "!ROCM_DEVEL_BIN!\rocblas\library" set "ROCBLAS_TENSILE_LIBPATH=!ROCM_DEVEL_BIN!\rocblas\library"
 )
 
+REM Prefer the installed ROCm libraries, matching write_rocm_env.py.
+if exist "%~dp0venv\Lib\site-packages\_rocm_sdk_libraries\bin" set "PATH=%~dp0venv\Lib\site-packages\_rocm_sdk_libraries\bin;%PATH%"
+if exist "%~dp0venv\Lib\site-packages\_rocm_sdk_libraries\bin\rocblas\library" set "ROCBLAS_TENSILE_LIBPATH=%~dp0venv\Lib\site-packages\_rocm_sdk_libraries\bin\rocblas\library"
+
 set "ROCBLAS_USE_HIPBLASLT_BATCHED="
 
 if defined BNB_ROCM_VERSION (

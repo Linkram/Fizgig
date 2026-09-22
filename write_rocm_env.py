@@ -53,7 +53,7 @@ def _bitsandbytes_rocm_libs_available() -> list[Path]:
 
 
 def _windows_rocm_path_prefix(core: Path) -> str | None:
-    """Directories where hipInfo.exe lives (bitsandbytes cuda_specs runs ``hipinfo``)."""
+    """ROCm DLL/tool directories needed by torch, rocBLAS and bitsandbytes."""
     parts: list[str] = []
     bin_dir = core / "bin"
     if bin_dir.is_dir():
@@ -61,6 +61,9 @@ def _windows_rocm_path_prefix(core: Path) -> str | None:
     devel_bin = core.parent / "_rocm_sdk_devel" / "bin"
     if devel_bin.is_dir():
         parts.append(str(devel_bin.resolve()))
+    libraries_bin = core.parent / "_rocm_sdk_libraries" / "bin"
+    if libraries_bin.is_dir():
+        parts.append(str(libraries_bin.resolve()))
     venv_scripts = (SCRIPT_DIR / "venv" / "Scripts").resolve()
     if venv_scripts.is_dir():
         parts.append(str(venv_scripts))
@@ -100,6 +103,9 @@ def _ensure_windows_rocm_on_path() -> None:
     os.environ["PATH"] = prefix + ";" + os.environ.get("PATH", "")
     os.environ.setdefault("ROCM_PATH", str(core.resolve()))
     os.environ.setdefault("HIP_PATH", str(core.resolve()))
+    rocblas_library = core.parent / "_rocm_sdk_libraries" / "bin" / "rocblas" / "library"
+    if rocblas_library.is_dir():
+        os.environ.setdefault("ROCBLAS_TENSILE_LIBPATH", str(rocblas_library.resolve()))
 
 
 def detect_gfx_target() -> str | None:
@@ -259,6 +265,11 @@ def main(argv: list[str] | None = None) -> int:
         path_prefix = _windows_rocm_path_prefix(core)
         if path_prefix:
             bat_lines.append(f'set "PATH={path_prefix};%PATH%"')
+        rocblas_library = core.parent / "_rocm_sdk_libraries" / "bin" / "rocblas" / "library"
+        if rocblas_library.is_dir():
+            bat_lines.append(
+                f'set "ROCBLAS_TENSILE_LIBPATH={rocblas_library.resolve()}"'
+            )
         if gfx:
             bat_lines.append(f'REM GPU gfx target: {gfx}')
         bat_lines.append("")

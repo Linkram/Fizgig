@@ -3046,22 +3046,19 @@ class LoRATrainerGUI:
             return int(m.used), int(m.total)
         except Exception:
             pass
-        if not getattr(self, "_nvidia_smi_missing", False):
-            try:
-                import subprocess
-                out = subprocess.run(
-                    ["nvidia-smi", "-i", str(self._visible_gpu_index()),
-                     "--query-gpu=memory.used,memory.total",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=4,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                used, total = out.stdout.strip().splitlines()[0].split(",")
-                return int(used) * 1024 * 1024, int(total) * 1024 * 1024
-            except FileNotFoundError:
-                self._nvidia_smi_missing = True    # an AMD box: stop spawning it every second
-            except Exception:
-                pass
+        try:
+            import subprocess
+            out = subprocess.run(
+                ["nvidia-smi", "-i", str(self._visible_gpu_index()),
+                 "--query-gpu=memory.used,memory.total",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=4,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            used, total = out.stdout.strip().splitlines()[0].split(",")
+            return int(used) * 1024 * 1024, int(total) * 1024 * 1024
+        except Exception:
+            pass
         try:
             from fizgig.utils.vram_monitor import read_amd_gpu_vram
             return read_amd_gpu_vram()
@@ -3123,21 +3120,11 @@ class LoRATrainerGUI:
             if visible:
                 self._draw_status_segment(self._vram_canvas, u, t, self._vram_peak,
                                           "VRAM", "#3FB950", "#E5534B")  # green → red
-        elif visible and not getattr(self, "_vram_unavailable_drawn", False):
-            # No reader on this box (an AMD card whose counter gives nothing): say so once
-            # rather than leave a stale bar. Cleared the moment a reading arrives.
-            try:
-                c = self._vram_canvas
-                c.delete("all")
-                c.create_rectangle(0, 0, int(c["width"]), int(c["height"]),
-                                   fill=COLORS["bg_deep"], outline="")
-                c.create_text(10, int(c["height"]) // 2, text="VRAM stats unavailable",
-                              anchor="w", fill=COLORS["text_muted"], font=(FONT_FAMILY, 9))
-                self._vram_unavailable_drawn = True
-            except Exception:
-                pass
-        if vram:
-            self._vram_unavailable_drawn = False
+        elif visible:
+            self._vram_canvas.delete("all")
+            self._vram_canvas.create_text(
+                10, 13, text="VRAM stats unavailable", anchor="w",
+                fill=COLORS["text_muted"], font=(FONT_FAMILY, 9))
         if ram:
             u, t = ram
             self._ram_peak = max(self._ram_peak, u)
@@ -4721,8 +4708,7 @@ class LoRATrainerGUI:
         self.entries["LOKR_FACTOR"].pack(side=tk.LEFT)
         self._lokr_factor_hint = tk.Label(
             self._lokr_factor_rowf,
-            text="8 is the sweet spot · 4 = four times the parameters: stronger, a bigger file, "
-                 "and ~5 GB more VRAM with adamw (use adamw8bit) · above 8: just use LoRA",
+            text="8 is the sweet spot · 4 = stronger, bigger files · above 8: just use LoRA",
             font=HINT_FONT, fg=COLORS["text_explain"], bg=COLORS["bg_surface"],
             justify=tk.LEFT)
         self._lokr_factor_hint.pack(side=tk.LEFT, padx=(10, 0))
@@ -9553,6 +9539,22 @@ class LoRATrainerGUI:
         m = _re.match(r'\d+', raw)
         return int(m.group()) if m else 0
 
+    def _resolve_krea2_training_swap(self) -> int:
+        """Resolve Auto precision at launch even when a manual swap count was saved.
+
+        NF4/INT8 own packed weights that cannot use block swapping. Preserve a
+        manual swap count only when the selected base supports it.
+        """
+        raw = self.entries["BLOCKS_SWAP"].get().strip()
+        if raw.lower().startswith("auto") or self._base_precision() != "auto":
+            return self._parse_blocks_swap()
+        self._auto_krea2_strategy()
+        if self.quant_4bit_var.get() or getattr(self, "_auto_quant_int8", ""):
+            self.update_console("[auto] Base Precision selected packed weights; Blocks Swap "
+                                f"resolved to 0 (saved value: {raw}).\n")
+            return 0
+        return self._parse_blocks_swap()
+
     def _auto_krea2_strategy(self) -> int:
         """Choose Krea 2 quantisation AND swap together, then return the swap count.
 
@@ -9564,8 +9566,8 @@ class LoRATrainerGUI:
             fp8, swap 20   3.09 s/it   12.3 GB   49.9% CPU
             NF4, no swap   0.70 s/it   13.8 GB   14.0% CPU
 
-        NF4 is both faster and smaller, so it leads. Only touches the 4-bit toggle when the
-        user has left block swap on Auto — an explicit swap choice is left alone.
+        Auto precision controls the 4-bit toggle. Packed NF4/INT8 weights require zero
+        swap; a saved manual swap value must not prevent resolving Auto precision.
         """
         try:
             import sys as _sys, os as _os
@@ -9576,7 +9578,7 @@ class LoRATrainerGUI:
             return self._auto_krea2_blocks_swap()
 
         try:
-            caps = detect()
+            caps = getattr(self, "_training_gpu_caps", None) or detect()
             # Budget for THIS run's shape — batch size is the largest term (+2.4 GB/image);
             # a single-constant budget let batch 2 sail through the check and OOM.
             try:
@@ -9611,7 +9613,10 @@ class LoRATrainerGUI:
             # faster than NF4 and far more accurate, so it still applies where it fits —
             # briefly making Off mean plain fp8 cost 20 GB+ cards the fastest path for nothing.
             _force = self._krea2_force_quant() if hasattr(self, "quant_4bit_mode_var") else None
-            plan = recommend_krea2_strategy(caps=caps, mp=_mp, batch=_bs, rank=_rk,
+            _snapshot = getattr(self, "_training_gpu_caps", None)
+            plan = recommend_krea2_strategy(caps=caps,
+                                            vram_gb=_snapshot.vram_free_gb if _snapshot is not None else None,
+                                            mp=_mp, batch=_bs, rank=_rk,
                                             force_quant=_force,
                                             network_type=_ntype, lokr_factor=_lf)
         except Exception:
@@ -9640,10 +9645,21 @@ class LoRATrainerGUI:
             try:
                 self.update_console(
                     f"[auto] 4-bit NF4 base turned {'ON' if plan.quant_4bit else 'OFF'} "
-                    "(block swap is on Auto — set it explicitly to control this yourself)\n")
+                    "(Base Precision is Auto; choose a precision explicitly to override)\n")
             except Exception:
                 pass
         return int(plan.blocks_to_swap)
+
+    def _krea2_vram_budget(self):
+        """Use the launch snapshot without entering HIP from Tk again."""
+        caps = getattr(self, "_training_gpu_caps", None)
+        if caps is not None:
+            return max(0.0, min(caps.vram_gb, caps.vram_free_gb) - 1.0)
+        import torch
+        if torch.cuda.is_available():
+            from fizgig.utils.device import auto_available_vram_gib
+            return auto_available_vram_gib()
+        return None
 
     def _auto_krea2_blocks_swap(self) -> int:
         """Pick Krea 2 training block swap from GPU VRAM. Krea 2's RAW DiT is ~14 GB in fp8,
@@ -9651,9 +9667,8 @@ class LoRATrainerGUI:
         in-training preview parks the training DiT on CPU separately, so swap only governs the
         training step. Smaller cards swap progressively. Max swap is 26 (28 main blocks − 2)."""
         try:
-            import torch
-            if torch.cuda.is_available():
-                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            vram_gb = self._krea2_vram_budget()
+            if vram_gb is not None:
                 if vram_gb >= 30:
                     return 0    # 32 GB — no swap; fp8 base (~14 GB) trains resident
                 if vram_gb >= 22:
@@ -9663,7 +9678,7 @@ class LoRATrainerGUI:
                 return 26       # <16 GB — maximum
         except Exception:
             pass
-        return 12  # safe default for an unknown smaller card
+        return 26  # detection failed: use maximum swap
 
     def _auto_krea2_inference_blocks_swap(self) -> int:
         """Pick Krea 2 INFERENCE/preview block swap from GPU VRAM, tuned for the fp8 Turbo.
@@ -9673,9 +9688,8 @@ class LoRATrainerGUI:
         the actual card so the workbench + previews 'just work'. Forward-only (lighter than the
         training step); max swap is 26 (28 main blocks − 2)."""
         try:
-            import torch
-            if torch.cuda.is_available():
-                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            vram_gb = self._krea2_vram_budget()
+            if vram_gb is not None:
                 if vram_gb >= 30:
                     return 0    # 32 GB — Turbo (~22.6 GB peak) fits resident, fastest
                 if vram_gb >= 22:
@@ -9687,7 +9701,7 @@ class LoRATrainerGUI:
                 return 26       # <16 GB — maximum
         except Exception:
             pass
-        return 20  # safe default for an unknown smaller card
+        return 26  # detection failed: use maximum swap
 
     def _auto_training_blocks_swap(self) -> int:
         """Pick training block swap based on GPU VRAM."""
@@ -31476,7 +31490,15 @@ class LoRATrainerGUI:
             errors.append("Save every N epochs must be a valid integer")
 
         try:
-            blocks_swap = self._parse_blocks_swap()
+            # Validate the choice without resolving Auto: resolution touches the GPU
+            # and belongs to launch preflight, not this Tk input-validation callback.
+            _swap_raw = self.entries["BLOCKS_SWAP"].get().strip().lower()
+            blocks_swap = 0 if _swap_raw.startswith("auto") else self._parse_blocks_swap()
+            if (config.get("is_krea2") and blocks_swap > 0
+                    and self._base_precision() == "int8"):
+                errors.append("INT8 cannot use block swap. Set Base Precision and Blocks Swap "
+                              "to Auto for hardware detection, or use INT8 with Blocks Swap 0. "
+                              "Fizgig will not substitute FP8 for this incompatible selection.")
             if blocks_swap < 0:
                 errors.append("Blocks swap must be non-negative")
             elif blocks_swap > config["blocks_swap_max"]:
@@ -31632,6 +31654,8 @@ class LoRATrainerGUI:
 
     def start_training(self):
         """Start training with sequential cache process execution"""
+        if getattr(self, "_training_start_pending", False):
+            return
         # Re-entrancy guard: the Start button stays enabled during a run, so a double-click
         # (or Start during caching) overwrote current_process and ORPHANED the first launch —
         # stop_training only ever kills the current one, and both runs wrote the same
@@ -31713,6 +31737,73 @@ class LoRATrainerGUI:
         self._start_training_launch()
 
     def _start_training_launch(self):
+        """Keep Windows ROCm driver discovery off Tk and out of the GUI process."""
+        import importlib.metadata
+        try:
+            _rocm = (os.environ.get("FIZGIG_GPU_BACKEND", "").lower() == "rocm"
+                     or "+rocm" in importlib.metadata.version("torch").lower())
+        except importlib.metadata.PackageNotFoundError:
+            _rocm = False
+        if not (os.name == "nt" and _rocm and
+                ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_krea2")):
+            self._start_training_launch_ready()
+            return
+        if getattr(self, "_gpu_preflight_running", False):
+            return
+        self._gpu_preflight_running = True
+        self._gpu_preflight_cancelled = False
+        self._training_start_pending = True
+        self._training_gpu_caps = None
+        self._start_training_btn.configure(state=tk.DISABLED)
+        _explicit_int8 = getattr(self, "_base_precision", lambda: "auto")() == "int8"
+        self.update_console("[startup] Reading GPU metadata in a helper process; "
+                            + ("checking explicitly selected INT8...\n" if _explicit_int8
+                               else "kernel probes disabled...\n"))
+        _python = self._venv_python()
+        _env = self._cuda_env_for_subprocess(os.environ.copy())
+        _script = os.path.join(FIZGIG_DIR, "src", "fizgig", "scripts", "gpu_snapshot.py")
+        _command = [_python, _script] + (["--probe-kernels"] if _explicit_int8 else [])
+        _result = []
+
+        def _worker():
+            try:
+                done = subprocess.run(_command, cwd=FIZGIG_DIR, env=_env,
+                                      capture_output=True, text=True, timeout=45,
+                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if done.returncode:
+                    raise RuntimeError((done.stderr or done.stdout)[-1500:])
+                _result.append((json.loads(done.stdout.strip().splitlines()[-1]), None))
+            except Exception as exc:
+                _result.append((None, str(exc)))
+
+        def _poll():
+            if not _result:
+                self.master.after(100, _poll)
+                return
+            self._gpu_preflight_running = False
+            self._training_start_pending = False
+            self._start_training_btn.configure(state=tk.NORMAL)
+            if getattr(self, "_gpu_preflight_cancelled", False):
+                self.update_console("[startup] Training launch cancelled.\n")
+                return
+            data, error = _result[0]
+            if error:
+                self.update_console(f"[startup] GPU metadata check failed: {error}\n")
+                return
+            from fizgig.utils.capabilities import Capabilities
+            self._training_gpu_caps = Capabilities(**data)
+            if not self._training_gpu_caps.has_cuda:
+                self.update_console("[startup] No usable GPU was found; training was not launched.\n")
+                return
+            try:
+                self._start_training_launch_ready()
+            finally:
+                self._training_gpu_caps = None
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.master.after(100, _poll)
+
+    def _start_training_launch_ready(self):
         """Launch training after validations and any caption-worker VRAM release."""
         self._training_start_pending = False
         try:
@@ -31769,7 +31860,8 @@ class LoRATrainerGUI:
                 self.update_console("Block Swap: Auto — the trainer plans swap + checkpointing "
                                     "from free VRAM at launch\n")
             else:
-                blocks_swap = self._parse_blocks_swap()
+                blocks_swap = (self._resolve_krea2_training_swap() if config.get("is_krea2")
+                               else self._parse_blocks_swap())
                 if is_auto:
                     self.update_console(f"Block Swap: Auto detected → {blocks_swap} (based on GPU VRAM)\n")
                 if blocks_swap > config["blocks_swap_max"]:
@@ -32793,14 +32885,9 @@ class LoRATrainerGUI:
         # A value persisted from Klein (or from before it was hidden) must not leak into a
         # Krea 2 run through a control the user can no longer see.
         _auto_i8 = getattr(self, "_auto_quant_int8", "")
-        # An EXPLICIT INT8 pick must not depend on Blocks Swap being on Auto (#97): the auto
-        # strategy is the only writer of _auto_quant_int8, and a manual swap value clears it
-        # (the stale-leak guard in _parse_blocks_swap), so "Base Precision: INT8" plus a
-        # manual swap silently fell back to the fp8 base — which Compile Blocks then dies on
-        # for SM 8.6 cards (no fp8e4nv Triton support). At swap 0 the pick is honoured
-        # directly. At swap N the fp8 fallback stays (INT8 weights don't ride the swap —
-        # that pairing is the OOM the stale-leak guard exists for) but is now SAID, not
-        # silent.
+        # Honour explicit INT8 even with a manual zero swap count. Reject an
+        # incompatible resolved swap count rather than substituting FP8 or sending
+        # a quantization/offload combination that the trainer cannot support.
         try:
             _swap_now = int(str(self.settings.get("BLOCKS_SWAP", 0)).strip() or 0)
         except (TypeError, ValueError):
@@ -32809,6 +32896,9 @@ class LoRATrainerGUI:
             _explicit_i8 = self._base_precision() == "int8"
         except Exception:
             _explicit_i8 = False
+        if (_explicit_i8 or _auto_i8) and _swap_now > 0 and not self.settings.get("QUANT_4BIT", False):
+            raise ValueError("INT8 cannot use block swap. Set Base Precision and Blocks Swap "
+                             "to Auto, or use INT8 with Blocks Swap 0; FP8 was not substituted.")
         if self.settings.get("QUANT_4BIT", False):
             cmd.append("--quantize_4bit")
         elif _explicit_i8 and _swap_now == 0:
@@ -32818,10 +32908,8 @@ class LoRATrainerGUI:
             # more accurate, with exact gradients.
             cmd += ["--quant_int8", _auto_i8]
         elif _explicit_i8:
-            self.update_console(
-                f"[precision] INT8 needs Blocks Swap 0 — INT8 weights don't ride the swap. "
-                f"Running the fp8 base with swap {_swap_now}; set Blocks Swap to 0 or Auto "
-                f"to train on INT8.\n")
+            raise ValueError("INT8 cannot use block swap. Set Base Precision and Blocks Swap "
+                             "to Auto, or use INT8 with Blocks Swap 0; FP8 was not substituted.")
 
         # Per-image loss watch: detection logs/reports stuck images (Problem Images window);
         # per-image LR also throttles them (the trainer runs detection when either flag is on).
@@ -33940,6 +34028,7 @@ class LoRATrainerGUI:
                 self.stop_training()
             except Exception:
                 pass
+        self._status_stop = True
         # Final settings snapshot — some fields only persist via debounced traces or other
         # tabs' events, so closing mid-edit would otherwise drop the last change.
         try:
@@ -33950,13 +34039,6 @@ class LoRATrainerGUI:
             self._stop_caption_worker(silent=True, wait=False)
         except Exception:
             pass
-        # The status loop and its typeperf child (AMD Windows) must not outlive the window.
-        self._status_stop = True
-        try:
-            from fizgig.utils import vram_monitor as _vm
-            _vm.shutdown()
-        except Exception:
-            pass
         try:
             self.master.destroy()
         except Exception:
@@ -33964,6 +34046,7 @@ class LoRATrainerGUI:
 
     def stop_training(self):
         """Stop the current running process"""
+        self._gpu_preflight_cancelled = True
         # Stop samples watcher
         self.stop_samples_watcher()
         # A user Stop invalidates any armed queue-advance/retry timer immediately — the

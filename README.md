@@ -1,5 +1,8 @@
 <h1 align="center">Fizgig — Klein 9B, Krea 2 & MiniMax H3 LoRA Studio</h1>
 
+> Krea 2 training automatically selects optimized NF4 operations on RDNA2 GPUs. See [ROCm training and performance](docs/ROCM_TRAINING.md) for hardware detection, memory planning, and benchmark results.
+
+
 <p align="center">
   <strong>Fine-tune base models on consumer GPUs — down to 16 GB. Fix broken LoRAs without retraining. Remix any LoRA into new variations in seconds.</strong><br>
   A train · fine-tune · repair · explore workbench built end-to-end for <strong>Flux 2 Klein 9B</strong>, <strong>Krea 2</strong> and <strong>MiniMax H3</strong> — training on photos, video, sound and voices, from quick LoRAs to the full base model.
