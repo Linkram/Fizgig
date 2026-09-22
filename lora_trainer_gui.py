@@ -3046,19 +3046,22 @@ class LoRATrainerGUI:
             return int(m.used), int(m.total)
         except Exception:
             pass
-        try:
-            import subprocess
-            out = subprocess.run(
-                ["nvidia-smi", "-i", str(self._visible_gpu_index()),
-                 "--query-gpu=memory.used,memory.total",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=4,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            used, total = out.stdout.strip().splitlines()[0].split(",")
-            return int(used) * 1024 * 1024, int(total) * 1024 * 1024
-        except Exception:
-            pass
+        if not getattr(self, "_nvidia_smi_missing", False):
+            try:
+                import subprocess
+                out = subprocess.run(
+                    ["nvidia-smi", "-i", str(self._visible_gpu_index()),
+                     "--query-gpu=memory.used,memory.total",
+                     "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=4,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                used, total = out.stdout.strip().splitlines()[0].split(",")
+                return int(used) * 1024 * 1024, int(total) * 1024 * 1024
+            except FileNotFoundError:
+                self._nvidia_smi_missing = True    # an AMD box: stop spawning it every second
+            except Exception:
+                pass
         try:
             from fizgig.utils.vram_monitor import read_amd_gpu_vram
             return read_amd_gpu_vram()
@@ -3120,6 +3123,21 @@ class LoRATrainerGUI:
             if visible:
                 self._draw_status_segment(self._vram_canvas, u, t, self._vram_peak,
                                           "VRAM", "#3FB950", "#E5534B")  # green → red
+        elif visible and not getattr(self, "_vram_unavailable_drawn", False):
+            # No reader on this box (an AMD card whose counter gives nothing): say so once
+            # rather than leave a stale bar. Cleared the moment a reading arrives.
+            try:
+                c = self._vram_canvas
+                c.delete("all")
+                c.create_rectangle(0, 0, int(c["width"]), int(c["height"]),
+                                   fill=COLORS["bg_deep"], outline="")
+                c.create_text(10, int(c["height"]) // 2, text="VRAM stats unavailable",
+                              anchor="w", fill=COLORS["text_muted"], font=(FONT_FAMILY, 9))
+                self._vram_unavailable_drawn = True
+            except Exception:
+                pass
+        if vram:
+            self._vram_unavailable_drawn = False
         if ram:
             u, t = ram
             self._ram_peak = max(self._ram_peak, u)
@@ -33930,6 +33948,13 @@ class LoRATrainerGUI:
             pass
         try:
             self._stop_caption_worker(silent=True, wait=False)
+        except Exception:
+            pass
+        # The status loop and its typeperf child (AMD Windows) must not outlive the window.
+        self._status_stop = True
+        try:
+            from fizgig.utils import vram_monitor as _vm
+            _vm.shutdown()
         except Exception:
             pass
         try:
