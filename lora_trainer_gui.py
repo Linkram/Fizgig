@@ -5410,8 +5410,9 @@ class LoRATrainerGUI:
             training_content,
             text="De-distills the base while your LoRA learns: frozen at 1.0 for every training "
                  "step, off for previews and never in your saved file. Circlestone (one file for "
-                 "fl2va and ref2va) trains sharper LoRAs whenever the dataset has stills; Ostris "
-                 "learns a video look faster when the dataset is clips only.",
+                 "fl2va and ref2va) trains sharper LoRAs from photos; Ostris learns a video look "
+                 "faster. For mixed datasets, choose by whether the photos or the videos are the "
+                 "priority.",
             foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
         self._minimax_adapter_hint.grid(row=42, column=0, columnspan=2, sticky=tk.W,
                                         padx=5, pady=(0, 0))
@@ -8616,7 +8617,8 @@ class LoRATrainerGUI:
             _ah.configure(text=(
                 "Under fine-tune: the base trains against the de-distilled forward, off for "
                 "previews, never in the checkpoint (the file you get is a plain H3 fine-tune). "
-                "Circlestone whenever there are stills, Ostris for clips only."
+                "Circlestone for photos, Ostris for videos; for mixed datasets, choose by "
+                "whether the photos or the videos are the priority."
                 if on else self._minimax_adapter_hint_lora))
         if hasattr(self, "_network_type_rowf"):
             self._set_widget_visible(self.labels["NETWORK_TYPE"], not on)
