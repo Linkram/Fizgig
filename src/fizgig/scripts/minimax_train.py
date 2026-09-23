@@ -257,7 +257,7 @@ def setup_parser() -> argparse.ArgumentParser:
                         "yours learns — on for every training step, off for previews. Circlestone's "
                         "file (circlestone-labs/MiniMax-H3-Image-Training-Adapter, the GUI default) "
                         "works on either base; with Ostris's (ostris/minimax_h3_training_adapter, "
-                        "for clips-only datasets) use the fl2va or ref2va file to match --dit. Under --finetune_rotation it rides as forward hooks (same "
+                        "best for videos) use the fl2va or ref2va file to match --dit. Under --finetune_rotation it rides as forward hooks (same "
                         "contract; the checkpoint never contains it).")
     p.add_argument("--tread_ratio", type=float, default=0.0,
                    help="TREAD token routing: this fraction of the video tokens "

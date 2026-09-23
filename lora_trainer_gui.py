@@ -727,10 +727,10 @@ def minimax_likeness_mode(raw):
 # Training adapter (23 Sep 2026, Peter's A/Bs): Circlestone's image adapter trains clearly better
 # H3 LoRAs on any dataset with stills, on fl2va and ref2va alike (one file for both); Ostris's
 # per-base adapters learn a VIDEO look faster (an all-clips style run got there ~3x sooner), because
-# Circlestone deliberately biases the model toward an image-only distribution. Rule: any stills in
-# the dataset -> Circlestone; video only -> Ostris.
-MINIMAX_ADAPTER_CIRCLESTONE = "Circlestone — best when the dataset has stills"
-MINIMAX_ADAPTER_OSTRIS = "Ostris — for video-only datasets"
+# Circlestone deliberately biases the model toward an image-only distribution. Mixed datasets:
+# choose by whether the photos or the videos are the priority (Peter, 23 Sep).
+MINIMAX_ADAPTER_CIRCLESTONE = "Circlestone — best for photos"
+MINIMAX_ADAPTER_OSTRIS = "Ostris — best for videos"
 MINIMAX_ADAPTER_OFF = "Off"
 MINIMAX_ADAPTER_OPTIONS = (MINIMAX_ADAPTER_CIRCLESTONE, MINIMAX_ADAPTER_OSTRIS, MINIMAX_ADAPTER_OFF)
 MINIMAX_CIRCLESTONE_URL = ("https://huggingface.co/circlestone-labs/MiniMax-H3-Image-Training-Adapter/"
@@ -8038,8 +8038,8 @@ class LoRATrainerGUI:
         return stills, clips
 
     def _refresh_minimax_adapter_hint(self, *_a):
-        """The clips-only advice under the adapter dropdown. Rule (Peter, 23 Sep 2026): any
-        stills -> Circlestone; only a clips-only dataset gets the Ostris suggestion."""
+        """The clips-only advice under the adapter dropdown: only a clips-only dataset gets the
+        Ostris suggestion; mixed datasets are the user's call (photos or videos first)."""
         lbl = getattr(self, "_minimax_adapter_clips_hint", None)
         if lbl is None:
             return
@@ -8049,8 +8049,7 @@ class LoRATrainerGUI:
                     and minimax_adapter_choice(self.entries["MINIMAX_ADAPTER"].get()) == "circlestone"):
                 stills, clips = self._minimax_dataset_media_counts()
                 if stills == 0 and clips > 0:
-                    text = ("This dataset is all clips — Ostris usually learns a video look faster. "
-                            "Circlestone is the better pick whenever there are stills.")
+                    text = ("This dataset is all clips — Ostris usually learns a video look faster.")
         except Exception:
             text = ""
         lbl.configure(text=text)
