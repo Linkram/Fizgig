@@ -12,7 +12,7 @@ if "%~1"=="" (
 cd /d "%~1"
 echo Updating Fizgig...
 REM Older installers overwrote the tracked run_fizgig.bat with a console-attached version.
-REM Restore the repo's launcher so it never blocks a pull that touches the file — harmless
+REM Restore the repo's launcher so it never blocks a pull that touches the file - harmless
 REM when the file is already clean.
 git checkout -- run_fizgig.bat 2>nul
 git pull

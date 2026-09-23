@@ -1,8 +1,8 @@
 @echo off
-REM Thin AMD ROCm updater. Pins (BNB_WHEEL, …) live in install_fizgig_rocm.bat —
+REM Thin AMD ROCm updater. Pins (BNB_WHEEL, ...) live in install_fizgig_rocm.bat -
 REM do not duplicate them here; this script reads them after git pull.
 REM
-REM Do NOT use update_fizgig.bat on a ROCm venv — it installs CUDA torch/bitsandbytes.
+REM Do NOT use update_fizgig.bat on a ROCm venv - it installs CUDA torch/bitsandbytes.
 REM
 REM Self-update guard: cmd reads a running .bat by BYTE OFFSET, so git pull rewriting
 REM this file mid-run resumes at a garbage offset. Stage 1 copies to TEMP and re-launches.
@@ -55,7 +55,7 @@ if errorlevel 1 (
     )
 )
 
-REM Shared deps — same path as install_fizgig_rocm.bat ^(not uv_install_deps.py / CUDA^).
+REM Shared deps - same path as install_fizgig_rocm.bat ^(not uv_install_deps.py / CUDA^).
 set "ROCM_REQS=%TEMP%\fizgig_rocm_shared_reqs.txt"
 "venv\Scripts\python.exe" "filter_requirements_rocm.py" "requirements.txt" "!ROCM_REQS!"
 if errorlevel 1 (
@@ -75,14 +75,14 @@ if errorlevel 1 (
 )
 del "!ROCM_REQS!" >nul 2>&1
 
-REM bitsandbytes URL from install_fizgig_rocm.bat ^(single set "BNB_WHEEL=…"^).
+REM bitsandbytes URL from install_fizgig_rocm.bat ^(single set "BNB_WHEEL=..."^).
 set "BNB_WHEEL="
 for /f "usebackq delims=" %%L in (`findstr /I /C:"BNB_WHEEL=" "install_fizgig_rocm.bat"`) do (
     for /f "tokens=2 delims==" %%U in ("%%L") do set "BNB_WHEEL=%%~U"
 )
 set "BNB_WHEEL=!BNB_WHEEL:"=!"
 if not defined BNB_WHEEL (
-    echo WARNING: BNB_WHEEL not found in install_fizgig_rocm.bat — skipping bitsandbytes.
+    echo WARNING: BNB_WHEEL not found in install_fizgig_rocm.bat - skipping bitsandbytes.
 ) else (
     echo Syncing bitsandbytes from installer pin:
     echo   !BNB_WHEEL!
@@ -95,7 +95,7 @@ if not defined BNB_WHEEL (
 )
 
 REM Refresh launcher env. Preserve --experimental when no BNB_ROCM_VERSION= assignment
-REM exists ^(REM text says "omitted"/"unset" without "=" — safe to findstr^).
+REM exists ^(REM text says "omitted"/"unset" without "=" - safe to findstr^).
 set "ROCM_ENV_EXPERIMENTAL=1"
 if exist "rocm_env.bat" (
     findstr /I /C:"BNB_ROCM_VERSION=" "rocm_env.bat" >nul 2>&1
