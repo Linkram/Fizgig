@@ -58,6 +58,19 @@ def plannable_free_vram(device: Optional[Union[str, torch.device]] = None) -> fl
     return free
 
 
+def auto_available_vram_gib() -> float:
+    """Budget Auto against free memory, retaining 1 GiB for display/transients.
+
+    Unused torch cache is reclaimable; live tensors and other GPU users are not.
+    Keep the simulator's ceiling and never exceed physical capacity.
+    """
+    idx = torch.cuda.current_device()
+    free = plannable_free_vram(torch.device("cuda", idx)) * 1e9
+    reclaimable = max(0, torch.cuda.memory_reserved(idx) - torch.cuda.memory_allocated(idx))
+    total = torch.cuda.get_device_properties(idx).total_memory
+    return max(0.0, (min(total, free + reclaimable) / 1024 ** 3) - 1.0)
+
+
 def apply_sim_vram_cap(device: Optional[Union[str, torch.device]] = None):
     """The enforcement half of the simulator: cap this process's torch allocator at the
     simulated card size, so an allocation a real small card could not make OOMs here too

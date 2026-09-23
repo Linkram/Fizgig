@@ -84,6 +84,7 @@ def has_host_c_compiler(platform: Optional[str] = None) -> bool:
 class Capabilities:
     has_cuda: bool = False
     is_rocm: bool = False
+    gcn_arch: str = ""
     device_name: str = "cpu"
     sm: tuple = (0, 0)
     vram_gb: float = 0.0        # card total, as reported
@@ -143,7 +144,7 @@ def _probe_int_mm() -> bool:
 
 
 @functools.lru_cache(maxsize=1)
-def detect() -> Capabilities:
+def detect(probe_kernels: Optional[bool] = None) -> Capabilities:
     caps = Capabilities()
     try:
         import torch
@@ -157,8 +158,13 @@ def detect() -> Capabilities:
 
     caps.has_cuda = True
     caps.is_rocm = is_rocm()
+    if probe_kernels is None:
+        # Normal HIP discovery must not run speculative kernels. Explicit INT8
+        # checks can still opt in from the isolated GUI helper process.
+        probe_kernels = not caps.is_rocm
     props = torch.cuda.get_device_properties(0)
     caps.device_name = props.name
+    caps.gcn_arch = getattr(props, "gcnArchName", "").split(":")[0]
     caps.sm = torch.cuda.get_device_capability(0)
     caps.vram_gb = props.total_memory / (1024 ** 3)
     try:
@@ -171,9 +177,10 @@ def detect() -> Capabilities:
         caps.vram_free_gb = caps.vram_gb
         caps.notes.append("could not read free VRAM — using card total")
 
-    caps.fp8_matmul = _probe_scaled_mm(torch.float8_e4m3fn) if not caps.is_rocm else False
-    caps.int8_matmul = _probe_scaled_mm(torch.int8)     # expected False: _scaled_mm is fp8-only
-    caps.int8_matmul_train = _probe_int_mm()
+    caps.fp8_matmul = _probe_scaled_mm(torch.float8_e4m3fn) if probe_kernels and not caps.is_rocm else False
+    # _scaled_mm does not accept INT8. Do not launch a deliberately invalid kernel.
+    caps.int8_matmul = False
+    caps.int8_matmul_train = _probe_int_mm() if probe_kernels else False
 
     if caps.is_rocm:
         caps.cudnn_attention = False
@@ -183,6 +190,14 @@ def detect() -> Capabilities:
             caps.cudnn_attention = True
         except Exception:
             caps.cudnn_attention = hasattr(__import__("torch").backends.cuda, "cudnn_sdp_enabled")
+
+    if not probe_kernels:
+        # The GUI needs package availability, not DLL loads or experimental GPU kernels.
+        import importlib.util
+        caps.flash_attn = importlib.util.find_spec("flash_attn") is not None
+        caps.bitsandbytes = importlib.util.find_spec("bitsandbytes") is not None
+        caps.notes.append("kernel probes skipped for GUI preflight")
+        return caps
 
     try:
         import flash_attn  # noqa: F401
@@ -576,6 +591,13 @@ def recommend_krea2_strategy(vram_gb: Optional[float] = None,
     _int8_need = estimate_krea2_peak(_INT8_PEAK_GB, mp, batch, rank, network_type, lokr_factor)
     _nf4_need = estimate_krea2_peak(_NF4_PEAK_GB, mp, batch, rank, network_type, lokr_factor)
     _fp8_need = estimate_krea2_peak(_FP8_PEAK_GB, mp, batch, rank, network_type, lokr_factor)
+    if (caps.is_rocm and caps.gcn_arch.startswith("gfx103")
+            and os.environ.get("FIZGIG_RDNA2_LINEAR", "auto") in ("auto", "1", "fp32", "scaled_fp16")
+            and caps.bitsandbytes and vram >= _nf4_need + _HEADROOM_GB):
+        return MemoryStrategy(
+            True, 0, f"RDNA2 NF4 with optimized frozen GEMMs, no swap "
+                     f"(~{_nf4_need:.0f} GB planned, {vram:.1f} GB free); "
+                     "INT8 kernel availability alone does not establish throughput")
     if caps.int8_matmul_train and vram >= _int8_need + _HEADROOM_GB:
         return MemoryStrategy(
             False, 0,
@@ -693,12 +715,14 @@ def should_compile(total_steps: int, quant_4bit: bool, quant_int8: str,
     extensively-validated behaviour there cannot shift; eager checkpointing absorbs both knobs,
     which is why only the compile gate needs them at this strength.
     """
-    caps = caps or detect()
-    if caps.is_rocm:
+    # HIP Auto compilation is disabled regardless of kernel capabilities. Do not
+    # launch INT8 probes just to reach that decision (some HIP libraries abort).
+    if (caps.is_rocm if caps is not None else is_rocm()):
         return False, (
             "ROCm/HIP PyTorch build — Auto leaves torch.compile off "
             "(recompiles per bucket shape on HIP; set Compile Blocks to On to override)"
         )
+    caps = caps or detect()
     vram = vram_gb if vram_gb is not None else (caps.vram_free_gb or caps.vram_gb)
 
     if blocks_to_swap:

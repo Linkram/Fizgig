@@ -169,9 +169,23 @@ def load_dit_for_training(
         loading_device = "cpu"
     else:
         loading_device = "cpu" if blocks_to_swap > 0 else device
-    dit = load_krea2_dit(raw_path, device=device, dtype=dtype, fp8_scaled=fp8_scaled,
-                         loading_device=loading_device, fp8_fast=fp8_fast)
+    # The standard NF4 loader first stages the entire ~26 GB BF16 model in RAM.
+    # Hardware detection enables streaming on RDNA2 through every entry point.
+    from fizgig.modules.rdna2_linear import stream_nf4_enabled
+    _stream_nf4 = quant_4bit and stream_nf4_enabled(device)
+    if _stream_nf4:
+        from fizgig.krea2.nf4_loader import load_nf4_streamed
+        dit = load_nf4_streamed(raw_path, device=device, dtype=dtype)
+    else:
+        dit = load_krea2_dit(raw_path, device=device, dtype=dtype, fp8_scaled=fp8_scaled,
+                             loading_device=loading_device, fp8_fast=fp8_fast)
     dit.requires_grad_(False)  # frozen base (QLoRA-style)
+    if quant_4bit:
+        from fizgig.modules.rdna2_linear import enabled as _rdna2_enabled
+        if _rdna2_enabled(torch.empty(0, device=device, dtype=dtype)):
+            logger.info("[rdna2] NF4 frozen GEMMs: %s; BF16 activations/adapters preserved; "
+                        "set FIZGIG_RDNA2_LINEAR=0 for the original math path",
+                        os.environ.get("FIZGIG_RDNA2_LINEAR", "fp32 (hardware auto)"))
     if quant_int8:
         from fizgig.krea2.utils import KREA2_FP8_OPTIMIZATION_TARGET_KEYS, KREA2_FP8_OPTIMIZATION_EXCLUDE_KEYS
         from fizgig.modules.int8_train import apply_int8_training
@@ -184,7 +198,7 @@ def load_dit_for_training(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info(f"INT8 W8A8 base active: {n_q} Linears; grad_mode={quant_int8}; resident on {device}.")
-    if quant_4bit:
+    if quant_4bit and not _stream_nf4:
         from fizgig.krea2.utils import KREA2_FP8_OPTIMIZATION_TARGET_KEYS, KREA2_FP8_OPTIMIZATION_EXCLUDE_KEYS
         from fizgig.modules.nf4 import apply_nf4_quantization
         n_q = apply_nf4_quantization(
@@ -3102,6 +3116,9 @@ def train_krea2(
     progress_bar = tqdm(total=steps_per_epoch * max_train_epochs, initial=global_step,
                         desc="steps", smoothing=0)
     pending_accum = 0  # micro-batches backward'd since the last optimizer step
+    from fizgig.training.step_diagnostics import StepDiagnostics
+    from fizgig.utils.gpu_backend import is_rocm
+    _step_diagnostics = StepDiagnostics(device, default_steps=3 if is_rocm() else 0)
     # Warm-up reassurance: the first two epochs start slowly (first-sight kernel planning,
     # cuBLAS algorithm picks, allocator + cache warm-up; the cuDNN switch at the epoch-1
     # boundary re-plans every shape in epoch 2). Users watching a crawling bar assume a
@@ -3173,9 +3190,9 @@ def train_krea2(
                 _now = time.time()
                 if _now - _warmup_note_last > 30.0:
                     _warmup_note_last = _now
-                    logger.info("[warm-up] Warm-up phase — the first two epochs start slowly "
-                                "while the GPU plans kernels and fills its caches. Nothing is "
-                                "stuck; full speed arrives from epoch 3.")
+                    logger.info("[warm-up] Early steps may be slower while the GPU plans "
+                                "kernels and fills its caches; warm-up duration depends on "
+                                "the device and bucket shapes.")
             # Excluded images (two failed AI recaptions, still stuck) are skipped ENTIRELY: no
             # forward, no gradient, and no loss recorded — avr_loss stops carrying their permanent
             # error term. Step accounting (bar + global_step) stays consistent for resume math.
@@ -3184,6 +3201,13 @@ def train_krea2(
                 global_step += 1
                 progress_bar.update(1)
                 continue
+            if epoch == start_epoch and i == 0:
+                logger.info("[first-step] forward: precision=%s, blocks_to_swap=%s, "
+                            "latents=%s, text=%s",
+                            "nf4" if quant_4bit else "int8" if quant_int8 else "fp8" if fp8_scaled else "bf16",
+                            blocks_to_swap, tuple(batch["latents"].shape),
+                            tuple(batch["hidden_states"].shape))
+            _step_diagnostics.begin(global_step + 1, batch)
             if slider_pairs:
                 # Image-pair slider step: the training image is the POSITIVE pole, its control
                 # the NEGATIVE. The adapter trains at +1 toward the positive and at -1 toward
@@ -3219,6 +3243,7 @@ def train_krea2(
                                             control_latent=batch.get("latents_control_0"),
                                             min_timestep=min_timestep, max_timestep=max_timestep,
                                             motion_weight=motion_weighted_loss)
+            _step_diagnostics.mark("forward")
             # Per-image LR: scale THIS step's gradient by the image's multiplier (throttle stuck
             # images, boost healthy learned ones). Raw loss is still what gets recorded/averaged below,
             # so avr_loss and the global adaptive-LR watcher see unscaled numbers.
@@ -3229,7 +3254,12 @@ def train_krea2(
             # Divide by the accumulation count so N micro-batches AVERAGE into one update rather
             # than summing (which would scale the effective LR by N).
             _scaled = loss * step_mult if step_mult != 1.0 else loss
+            if epoch == start_epoch and i == 0:
+                logger.info("[first-step] submitting backward")
             (_scaled / accum if accum > 1 else _scaled).backward()
+            _step_diagnostics.mark("backward (includes fused optimizer if enabled)")
+            if epoch == start_epoch and i == 0:
+                logger.info("[first-step] backward returned; optimizer update follows")
             pending_accum += 1
             if fused_backward:
                 # The per-parameter hooks already stepped and freed each grad during backward.
@@ -3238,13 +3268,16 @@ def train_krea2(
                 # Gradient clipping to match the musubi reference (max_grad_norm default 1.0). 0 disables.
                 if max_grad_norm > 0:
                     torch.nn.utils.clip_grad_norm_(params, max_grad_norm)
+                _step_diagnostics.mark("gradient clipping")
                 optimizer.step()
                 if scheduler is not None:
                     scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
+                _step_diagnostics.mark("optimizer/scheduler")
                 pending_accum = 0
                 if ema is not None:
                     ema.update()             # after the clipped step, so the shadow tracks what was applied
+                _step_diagnostics.mark("EMA")
             global_step += 1
             if _vram_after_preview:
                 _vram_after_preview = False

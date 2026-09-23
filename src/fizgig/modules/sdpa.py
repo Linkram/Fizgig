@@ -142,6 +142,9 @@ def _init_ctx() -> None:
     global _SDPA_CTX
     if _SDPA_CTX is None:
         _SDPA_CTX = contextlib.nullcontext
+        from fizgig.utils.gpu_backend import is_rocm
+        if is_rocm() or not torch.cuda.is_available():
+            return  # cuDNN is NVIDIA-only; do not launch a GPU probe on AMD.
         try:
             import torch.nn.functional as _F
             from torch.nn.attention import sdpa_kernel, SDPBackend
