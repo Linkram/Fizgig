@@ -67,8 +67,8 @@ if errorlevel 1 (
 
 :skip_deps
 
-REM ---- Community LoRAs: Krea 2 Turbo LoRA (~470 MB) + Ostris's two MiniMax H3 ----
-REM ---- training adapters (~155 MB each) ----
+REM ---- Community LoRAs: Krea 2 Turbo LoRA (~470 MB) + the MiniMax H3 training ----
+REM ---- adapters: Circlestone (~620 MB) and Ostris's two (~155 MB each) ----
 REM Idempotent: exits instantly for any file already present + linked in
 REM Preferences, so this step is safe to keep across releases. Always downloads
 REM what's missing, whatever family is configured; failure never aborts the

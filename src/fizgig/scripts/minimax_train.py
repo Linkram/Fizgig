@@ -253,10 +253,11 @@ def setup_parser() -> argparse.ArgumentParser:
     p.add_argument("--context_lora_strength", type=float, default=1.0,
                    help="Strength the context LoRA rides at (0.0-2.0)")
     p.add_argument("--training_adapter_path", default=None,
-                   help="Training adapter (Ostris, ostris/minimax_h3_training_adapter): a frozen "
-                        "LoRA at 1.0 that de-distills the base while yours learns — on for every "
-                        "training step, off for previews. Use the fl2va or ref2va file to match "
-                        "--dit. Under --finetune_rotation it rides as forward hooks (same "
+                   help="Training adapter: a frozen LoRA at 1.0 that de-distills the base while "
+                        "yours learns — on for every training step, off for previews. Circlestone's "
+                        "file (circlestone-labs/MiniMax-H3-Image-Training-Adapter, the GUI default) "
+                        "works on either base; with Ostris's (ostris/minimax_h3_training_adapter, "
+                        "for clips-only datasets) use the fl2va or ref2va file to match --dit. Under --finetune_rotation it rides as forward hooks (same "
                         "contract; the checkpoint never contains it).")
     p.add_argument("--tread_ratio", type=float, default=0.0,
                    help="TREAD token routing: this fraction of the video tokens "

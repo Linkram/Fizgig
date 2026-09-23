@@ -144,6 +144,8 @@ colour into the render.
 
 **Optimizer.** Every H3 preset runs **automagic3**, the Automagic v3 optimizer (MIT — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), started at 1e-6. The Optimizer Type dropdown still offers full-precision **adamw**, which measured as the single biggest likeness gain on H3 and remains the right choice when you want a rate that does not move. Krea 2's Optimizer Type row lists it too, with the same rules: the scheduler and Adaptive LR stand down while it owns the rate. It sets its own learning rate from the update signs, one rate for the whole LoRA, rising while the signs hold steady and falling while they alternate, which in practice warms up over the first couple of epochs and then anneals a few percent an epoch. The Learning Rate box is only its start, so leave it at 1e-6 rather than an AdamW number, and the adapter ramp and band multipliers are not applied while it owns the rate. A style set is the case to keep on adamw: its images all share the look being learned, so the signs agree for longer and the controller pushes harder than you want.
 
+**Training adapter.** A frozen LoRA rides at full strength on every training step so the gradient goes into your subject rather than into undoing H3's distillation; it is off for previews and never written into your LoRA. The **Training adapter** dropdown picks which one. **Circlestone** ([circlestone-labs](https://huggingface.co/circlestone-labs/MiniMax-H3-Image-Training-Adapter)) is the default and the one to use whenever the dataset has stills: in A/Bs on the same data it trained sharper, cleaner LoRAs that follow the prompt better, and the one file serves both the fl2va and ref2va bases. **Ostris** ([@ostris](https://github.com/ostris)) is for datasets that are all clips — on a video-only style run it learned the look about three times faster — and the Training tab says so when it sees a clips-only dataset. **Off** trains without one.
+
 **0.25 MP is the default, and it holds up** — four times cheaper per step than 1 MP, and the extra resolution has not paid for itself in testing. Raise it if a specific dataset asks for it.
 
 **Previews default to 768×768, 56-frame clips with sound** — a short watchable clip with the model's generated audio, opened in the gallery as a playable video (never autoplay). Without the audio VAE set, clips render silent; stills and other lengths stay in the dropdown. Set the **Turbo LoRA** in Preferences and previews render in **6 steps instead of 20** — previews only, never the saved LoRA. On a plan that streams blocks (a 24 GB card on the int8 base), clip previews clamp to **22 frames up front** — the plan leaves previews ~4 GB and a 56-frame clip measurably doesn't fit there, so the trainer says so once and renders the 22-frame clip instead of failing its way down to it. A preview that still outgrows VRAM steps itself down a ladder rather than dying — a shorter clip first, then resolution to a 512×512 floor — and the size that fit is saved as the new default.
@@ -260,6 +262,8 @@ Each has a **Download link on its row in Preferences**:
 | Audio VAE *(optional)* | ~605 MB | Sound training and previews with sound |
 | Turbo LoRA *(optional)* | ~780 MB | 6-step previews — `minimax_h3_turbo_v4_step600.safetensors`; you may have it in ComfyUI's loras folder |
 | DiT — reference *(optional)* | ~21 GB | Only for reference distillation (`ref2va`) |
+| Training adapter (Circlestone) | ~620 MB | The default training adapter — one file for both bases |
+| Training adapter (Ostris) *(optional)* | ~155 MB each | fl2va and ref2va files, used when the dropdown says Ostris |
 
 **Yes, you train on the pruned file.** "Pruned" here swaps the AdaLN modulation MLP for a curve table — that branch only sees the timestep, so nothing a LoRA learns lives there. You train against the exact weights you deploy on.
 
@@ -829,7 +833,7 @@ If Fizgig saves you time or helps you make better LoRAs, consider supporting dev
 
 Fizgig is open source under the **[Apache License 2.0](LICENSE)** — free to use, modify, and redistribute, including commercially, with attribution and no warranty. Third-party components under compatible permissive licenses (and other terms where noted) are listed in **[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)**.
 
-The **Automagic v3 optimizer**, the Krea 2 **MMDiT backbone and flow-matching sampler**, and the MiniMax H3 **training adapter** all come from **[@ostris](https://github.com/ostris)** — the first two from [AI-Toolkit](https://github.com/ostris/ai-toolkit) under the MIT licence, the adapter downloaded as a model rather than bundled.
+The **Automagic v3 optimizer**, the Krea 2 **MMDiT backbone and flow-matching sampler**, and Ostris's MiniMax H3 **training adapter** all come from **[@ostris](https://github.com/ostris)** — the first two from [AI-Toolkit](https://github.com/ostris/ai-toolkit) under the MIT licence, the adapter downloaded as a model rather than bundled. The default H3 training adapter comes from **[circlestone-labs](https://huggingface.co/circlestone-labs)**, also downloaded as a model.
 
 Copyright © 2026 Peter Neill.
 

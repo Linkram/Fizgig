@@ -78,7 +78,8 @@ Headless, there is no Preferences tab: **model locations are passed as flags on 
 | Video VAE | [minimax_h3_video_vae_fp16.safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/vae/minimax_h3_video_vae_fp16.safetensors) | `--vae` |
 | Audio VAE *(optional)* | [minimax_h3_audio_vae_fp32.safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/blob/main/vae/minimax_h3_audio_vae_fp32.safetensors) | `--audio_vae` — sound in clips, voice recordings, previews with sound |
 | Turbo LoRA *(optional)* | [minimax_h3_turbo_v4_step600.safetensors](https://huggingface.co/larryvrh/MiniMax-H3-Turbo-Lora/blob/main/minimax_h3_turbo_v4_step600.safetensors) | 6-step previews (`--turbo_lora_path`) |
-| Training adapter *(recommended)* | [minimax_h3_training_adapter_v1.safetensors](https://huggingface.co/ostris/minimax_h3_training_adapter/blob/main/minimax_h3_training_adapter_v1.safetensors) (fl2va) · [ref2va file](https://huggingface.co/ostris/minimax_h3_training_adapter/blob/main/minimax_h3_ref2va_training_adapter_v1.safetensors) | `--training_adapter_path` — match it to `--dit` |
+| Training adapter *(recommended)* | [minimax_h3_image_training_adapter.safetensors](https://huggingface.co/circlestone-labs/MiniMax-H3-Image-Training-Adapter/blob/main/minimax_h3_image_training_adapter.safetensors) (Circlestone, the GUI default — one file for both bases) | `--training_adapter_path` |
+| Training adapter, Ostris *(video-only datasets)* | [minimax_h3_training_adapter_v1.safetensors](https://huggingface.co/ostris/minimax_h3_training_adapter/blob/main/minimax_h3_training_adapter_v1.safetensors) (fl2va) · [ref2va file](https://huggingface.co/ostris/minimax_h3_training_adapter/blob/main/minimax_h3_ref2va_training_adapter_v1.safetensors) | `--training_adapter_path` — match it to `--dit` |
 
 ---
 
@@ -452,7 +453,7 @@ Two things are on with no flag at all: under `--photo_blocks` / `--clip_blocks` 
 **The recipe**
 
 - `--photo_blocks 20-49 --clip_blocks 20-49 --audio_blocks 20-49` — Optimised Likeness Learning: photos, clips and voice all train the identity blocks. Voice was narrowed to `34-49` until 18 Sep 2026; the training adapter and leaving the text token refiner untrained removed the reason for it. Leave all three out to train the whole model.
-- `--training_adapter_path` — the training adapter, frozen at 1.0 for every training step, off for previews and absent from the saved LoRA. Use the fl2va or ref2va file to match `--dit`.
+- `--training_adapter_path` — the training adapter, frozen at 1.0 for every training step, off for previews and absent from the saved LoRA. Circlestone's file works on either base; with Ostris's, use the fl2va or ref2va file to match `--dit`.
 - `--ema_decay 0.98` — weight averaging: checkpoints and previews come from a smoothed average of the weights. `0` turns it off.
 - `--shift 0.666667` — the GUI's **Likeness and Style** training structure, most of the run on nearly-clean images. Unset = the model's own movement-first schedule. `--highnoise_lr_scale` scales the LR of the noisy-half steps and is best left at 1.
 - `--no_train_adaln` — the app always passes it: the deployed pruned builds cannot load AdaLN LoRA keys.

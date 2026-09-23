@@ -622,8 +622,8 @@ def frozen_lora_vram_gb(path: str, bytes_per_elem: int = 2) -> float:
     tensors and are counted here too.
 
     Not a rounding error: the training adapter is on by default in every H3 preset. Fizgig's
-    Preferences download is ostris's v1 (rank 16, 0.155 GB resident); upstream also publishes a
-    v2 at rank 32, which is 0.310 GB if a user points the path at it. This reads whichever file
+    default is Circlestone's (rank 64, 0.62 GB resident); Ostris's v1 is rank 16, 0.155 GB, and
+    his v2 at rank 32 is 0.310 GB if a user points the path at it. This reads whichever file
     is configured rather than assuming either.
     """
     if not path:
@@ -2557,7 +2557,7 @@ def train_minimax(
     # output metadata. Not available under rotation fine-tune.
     context_lora_path: str = None,
     context_lora_strength: float = 1.0,
-    # Training adapter (Ostris's assistant LoRA, ostris/minimax_h3_training_adapter): the
+    # Training adapter (Circlestone's by default, or Ostris's assistant LoRA): the
     # same frozen-layer mechanism at a fixed strength of 1.0, stacked UNDER the context
     # LoRA. De-distills the base while the LoRA learns; off for previews like the context.
     training_adapter_path: str = None,

@@ -724,6 +724,29 @@ def minimax_likeness_mode(raw):
     return "fast"
 
 
+# Training adapter (23 Sep 2026, Peter's A/Bs): Circlestone's image adapter trains clearly better
+# H3 LoRAs on any dataset with stills, on fl2va and ref2va alike (one file for both); Ostris's
+# per-base adapters learn a VIDEO look faster (an all-clips style run got there ~3x sooner), because
+# Circlestone deliberately biases the model toward an image-only distribution. Rule: any stills in
+# the dataset -> Circlestone; video only -> Ostris.
+MINIMAX_ADAPTER_CIRCLESTONE = "Circlestone — best when the dataset has stills"
+MINIMAX_ADAPTER_OSTRIS = "Ostris — for video-only datasets"
+MINIMAX_ADAPTER_OFF = "Off"
+MINIMAX_ADAPTER_OPTIONS = (MINIMAX_ADAPTER_CIRCLESTONE, MINIMAX_ADAPTER_OSTRIS, MINIMAX_ADAPTER_OFF)
+MINIMAX_CIRCLESTONE_URL = ("https://huggingface.co/circlestone-labs/MiniMax-H3-Image-Training-Adapter/"
+                           "blob/main/minimax_h3_image_training_adapter.safetensors")
+
+
+def minimax_adapter_choice(raw):
+    """Dropdown label -> "circlestone" | "ostris" | "off". Anything unrecognised is circlestone."""
+    s = str(raw or "").split("—")[0].strip().lower()
+    if s.startswith("ostris"):
+        return "ostris"
+    if s.startswith("off"):
+        return "off"
+    return "circlestone"
+
+
 # Voice routing — the block set audio-only steps train. SAME AS THE PICTURE since 18 Sep 2026
 # (Peter): there is no separate audio zone any more.
 #
@@ -1044,10 +1067,10 @@ MINIMAX_BUILT_IN_PRESETS = {
         # holdout. More Blocks (6-49 everywhere) is the slower one and stays a dropdown away in
         # any preset.
         "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
-        # Training adapter ships ON (Peter, 2 Sep): measured on the same dataset/seed it hit
-        # 50% likeness seven epochs sooner and peaked higher (61 vs 57). Every H3 preset
-        # inherits this — Style included, the adapter is about the base, not the blocks.
-        "MINIMAX_TRAINING_ADAPTER": True,
+        # Training adapter ships ON (Peter, 2 Sep: the Ostris one reached 50% likeness seven
+        # epochs sooner and peaked higher). Circlestone since 23 Sep — clearly better again on
+        # stills. Every H3 preset inherits it; the dropdown offers Ostris for video-only sets.
+        "MINIMAX_ADAPTER": MINIMAX_ADAPTER_CIRCLESTONE,
         # TREAD token routing ships ON (Peter, 7 Sep, after his A/B): clip steps route half
         # their video tokens around blocks 2-46; photos and clip stills always run in full.
         "MINIMAX_TREAD": True,
@@ -1475,10 +1498,11 @@ DEFAULT_PREFS = {
     # Turbo LoRA — optional, previews only: 6-step in-training samples with the community Turbo
     # applied at ~75% on top of the training adapter, exactly how fast ComfyUI inference runs it.
     "minimax_turbo_lora": "",
-    # Training adapters (Ostris, ostris/minimax_h3_training_adapter) — one per base. The
-    # Training tab's tickbox loads the one matching the selected base, frozen at 1.0, on for
-    # every training step and off for previews. Fetched by the updater and the model
+    # Training adapters, picked by the Training tab's "Training adapter" dropdown and loaded
+    # frozen at 1.0 for every training step, off for previews. Circlestone (the default) is one
+    # file for both bases; Ostris ships one per base. Fetched by the updater and the model
     # downloader; never required.
+    "minimax_circlestone_adapter": "",
     "minimax_training_adapter": "",
     "minimax_ref_training_adapter": "",
     # Output directories — relative to repo root, portable across clones/moves.
@@ -2077,7 +2101,7 @@ class LoRATrainerGUI:
             # Training mode — Fast by default (photos, clips and voice all 20-49): the
             # measured recipe for the character/voice work H3 is for, and the quickest steps.
             "MINIMAX_LIKENESS_MODE": MINIMAX_MODE_FAST,
-            "MINIMAX_TRAINING_ADAPTER": True,
+            "MINIMAX_ADAPTER": MINIMAX_ADAPTER_CIRCLESTONE,
             "MINIMAX_TREAD": True,         # clip steps route half their video tokens (7 Sep)
             "MINIMAX_CLIP_STILL": True,    # each clip's sharpest face frame trains as a photo
             "MINIMAX_DISTILL": False,      # off = ordinary training
@@ -4069,8 +4093,8 @@ class LoRATrainerGUI:
                  "Audio VAE (~605 MB) — train on the sound in video clips, and on voices"),
                 ("minimax_turbo_lora",
                  "Turbo LoRA (~780 MB) — fast 6-step in-training previews"),
-                ("minimax_training_adapter",
-                 "Training adapter (~155 MB) — faster, higher likeness"))
+                ("minimax_circlestone_adapter",
+                 "Training adapter (Circlestone, ~620 MB) — sharper, higher likeness"))
                 if not str(self.prefs.get(key, "") or "").strip()]
             if not missing:
                 return
@@ -5271,6 +5295,10 @@ class LoRATrainerGUI:
             for _cv in self._concept_folder_vars:
                 _cv.trace_add("write", self._auto_save_ds)
                 _cv.trace_add("write", lambda *_a: self._save_last_used_paths())
+        # Concept folders count toward "is this dataset all clips?" for the adapter advice.
+        self.minimax_multiconcept_var.trace_add("write", lambda *_a: self._refresh_minimax_adapter_hint())
+        for _cv in self._concept_folder_vars:
+            _cv.trace_add("write", lambda *_a: self._refresh_minimax_adapter_hint())
 
         # --- Slow blocks (MiniMax only, experimental): depth-dependent LR -------------------
         self._minimax_slow_label = ttk.Label(training_content, text="Slower LR for blocks:")
@@ -5363,25 +5391,39 @@ class LoRATrainerGUI:
         self.entries["MINIMAX_LIKENESS_MODE"].trace_add(
             "write", lambda *_a: self._sync_minimax_likeness_state())
 
-        # --- Training adapter (Ostris) — MiniMax LoRA runs only ---------------------------
-        # A BooleanVar in self.entries so presets/queue/last-train carry it. The builder
-        # resolves the FILE from Preferences per the selected base (fl2va/ref2va); the
-        # tickbox greys out with a pointer when that pref is empty. Independent of the
-        # Context LoRA box: adapter first, then the user's context, then the trainable LoRA.
-        self.entries["MINIMAX_TRAINING_ADAPTER"] = tk.BooleanVar(
-            value=bool(self.settings.get("MINIMAX_TRAINING_ADAPTER", True)))
-        self._minimax_adapter_cb = ttk.Checkbutton(
-            training_content, text="Training adapter — de-distills the base while your LoRA learns",
-            variable=self.entries["MINIMAX_TRAINING_ADAPTER"])
-        self._minimax_adapter_cb.grid(row=42, column=0, columnspan=2, sticky=tk.W,
+        # --- Training adapter — MiniMax runs (LoRA and fine-tune) --------------------------
+        # A StringVar in self.entries so presets/queue/last-train carry it. The builder resolves
+        # the FILE from Preferences: Circlestone is one file for both bases, Ostris one per base.
+        # Independent of the Context LoRA box: adapter first, then the user's context, then the
+        # trainable LoRA.
+        self.entries["MINIMAX_ADAPTER"] = tk.StringVar(
+            value=str(self.settings.get("MINIMAX_ADAPTER", MINIMAX_ADAPTER_CIRCLESTONE)))
+        self._minimax_adapter_cb = ttk.Frame(training_content)     # the row: label + dropdown
+        self._minimax_adapter_cb.grid(row=41, column=0, columnspan=2, sticky=tk.W,
                                       padx=5, pady=(8, 0))
+        ttk.Label(self._minimax_adapter_cb, text="Training adapter:").pack(side=tk.LEFT, padx=(0, 8))
+        self._minimax_adapter_combo = ttk.Combobox(
+            self._minimax_adapter_cb, values=list(MINIMAX_ADAPTER_OPTIONS),
+            textvariable=self.entries["MINIMAX_ADAPTER"], state="readonly", width=46)
+        self._minimax_adapter_combo.pack(side=tk.LEFT)
         self._minimax_adapter_hint = ttk.Label(
             training_content,
-            text="Loads the MiniMax H3 training adapter frozen at 1.0 under your LoRA for every "
-                 "training step, and switches it off for previews and in your saved file.",
+            text="De-distills the base while your LoRA learns: frozen at 1.0 for every training "
+                 "step, off for previews and never in your saved file. Circlestone (one file for "
+                 "fl2va and ref2va) trains sharper LoRAs whenever the dataset has stills; Ostris "
+                 "learns a video look faster when the dataset is clips only.",
             foreground=COLORS["text_explain"], font=HINT_FONT, justify=tk.LEFT, wraplength=720)
-        self._minimax_adapter_hint.grid(row=43, column=0, columnspan=2, sticky=tk.W,
-                                        padx=5, pady=(0, 4))
+        self._minimax_adapter_hint.grid(row=42, column=0, columnspan=2, sticky=tk.W,
+                                        padx=5, pady=(0, 0))
+        # Advice only, never a switch: shown when Circlestone is picked for a clips-only dataset.
+        self._minimax_adapter_clips_hint = ttk.Label(
+            training_content, text="",
+            foreground=COLORS["warning"], font=(FONT_FAMILY, HINT_FONT[1] + 1, "italic"),
+            justify=tk.LEFT, wraplength=720)
+        self._minimax_adapter_clips_hint.grid(row=43, column=0, columnspan=2, sticky=tk.W,
+                                              padx=5, pady=(0, 4))
+        self.entries["MINIMAX_ADAPTER"].trace_add(
+            "write", lambda *_a: self._refresh_minimax_adapter_hint())
         # --- TREAD token routing — MiniMax LoRA runs only, ON by default (7 Sep 2026) -----
         self.entries["MINIMAX_TREAD"] = tk.BooleanVar(
             value=bool(self.settings.get("MINIMAX_TREAD", True)))
@@ -6286,6 +6328,9 @@ class LoRATrainerGUI:
                           # not sit in the box reading as one thing and launching another
                           "MINIMAX_REFMOD_CLIPS", "MINIMAX_REFMOD_CONCEPT", "MINIMAX_REFMOD_TOKEN_CAP",
                           "MINIMAX_REFMOD_AUDIO", "MINIMAX_REFMOD_AUDIO_CONCEPT"}
+    # Variable-driven readonly dropdowns (their entry is the StringVar, not the Combobox) and the
+    # labels they offer — checked by _apply_preset_values the same way.
+    _STRICT_VAR_OPTIONS = {"MINIMAX_ADAPTER": MINIMAX_ADAPTER_OPTIONS}
 
     def _apply_preset_values(self, preset):
         """Apply preset values to the UI (shared by load_default_preset and load_custom_preset)"""
@@ -6328,6 +6373,13 @@ class LoRATrainerGUI:
                     # Some boolean settings (e.g. IMG_IN_TXT_IN_OFFLOADING, PRESERVE_DISTRIBUTION)
                     # are stored in self.entries as BooleanVars — they don't support .delete/.insert.
                     entry.set(bool(value))
+                elif isinstance(entry, tk.Variable) and key in self._STRICT_VAR_OPTIONS \
+                        and str(value) not in self._STRICT_VAR_OPTIONS[key]:
+                    # A variable-driven readonly dropdown: a saved label it no longer offers keeps
+                    # the current choice (same rule as the readonly Comboboxes above).
+                    self.update_console(f"[preset] {key}: saved value {value!r} isn't offered here — "
+                                        f"keeping {entry.get()!r}\n")
+                    continue
                 elif isinstance(entry, tk.Variable):
                     # A StringVar/IntVar entry — e.g. MINIMAX_LIKENESS_MODE, a readonly dropdown
                     # driven by its variable. Without this the fall-through below calls .delete()
@@ -7925,12 +7977,70 @@ class LoRATrainerGUI:
     }
 
     def _minimax_adapter_pref_key(self):
-        """The training-adapter pref that matches the base this run trains on — ref2va when
-        the Training Base dropdown says so or the run is a distillation run (both put --dit
-        on the reference model), fl2va otherwise. Mirrors the --dit choice in the builder."""
-        _ref = bool(self.settings.get("MINIMAX_DISTILL")
-                    or minimax_train_base(self.settings.get("MINIMAX_TRAIN_BASE")) == "ref2va")
+        """The Preferences key for the adapter this run uses, or None when it is Off.
+        Circlestone is one file for both bases. Ostris has one per base: ref2va when the
+        Training Base says so or the run is a distillation run (both put --dit on the reference
+        model), fl2va otherwise — read from the LIVE widgets, so validation (which runs before
+        self.settings is refreshed) checks the base the run will actually use."""
+        _e = self.entries.get("MINIMAX_ADAPTER") if hasattr(self, "entries") else None
+        choice = minimax_adapter_choice(_e.get() if _e is not None
+                                        else self.settings.get("MINIMAX_ADAPTER"))
+        if choice == "off":
+            return None
+        if choice == "circlestone":
+            return "minimax_circlestone_adapter"
+        _bv = getattr(self, "minimax_train_base_var", None)
+        _base = _bv.get() if _bv is not None else self.settings.get("MINIMAX_TRAIN_BASE")
+        _dv = getattr(self, "minimax_distill_var", None)
+        try:
+            _distill = bool(_dv.get()) if _dv is not None else bool(self.settings.get("MINIMAX_DISTILL"))
+        except Exception:
+            _distill = bool(self.settings.get("MINIMAX_DISTILL"))
+        _ref = _distill or minimax_train_base(_base) == "ref2va"
         return "minimax_ref_training_adapter" if _ref else "minimax_training_adapter"
+
+    def _minimax_dataset_media_counts(self):
+        """(stills, clips) across every dataset folder (Start + Multi Concept). Audio ignored."""
+        from fizgig.dataset.image_dataset import IMAGE_EXTENSIONS
+        img = {e.lower() for e in IMAGE_EXTENSIONS}
+        stills = clips = 0
+        for folder in self._dataset_folders():
+            try:
+                for f in os.listdir(folder):
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext in img:
+                        stills += 1
+                    elif ext in self.TRAINING_VIDEO_EXTENSIONS:
+                        clips += 1
+            except (OSError, TypeError):
+                continue
+        return stills, clips
+
+    def _refresh_minimax_adapter_hint(self, *_a):
+        """The clips-only advice under the adapter dropdown. Rule (Peter, 23 Sep 2026): any
+        stills -> Circlestone; only a clips-only dataset gets the Ostris suggestion."""
+        lbl = getattr(self, "_minimax_adapter_clips_hint", None)
+        if lbl is None:
+            return
+        text = ""
+        try:
+            if (self._is_minimax_arch()
+                    and minimax_adapter_choice(self.entries["MINIMAX_ADAPTER"].get()) == "circlestone"):
+                stills, clips = self._minimax_dataset_media_counts()
+                if stills == 0 and clips > 0:
+                    text = ("This dataset is all clips — Ostris usually learns a video look faster. "
+                            "Circlestone is the better pick whenever there are stills.")
+        except Exception:
+            text = ""
+        lbl.configure(text=text)
+        # An empty label still reserves a line, so it only takes grid space while it speaks.
+        try:
+            if text:
+                lbl.grid()
+            else:
+                lbl.grid_remove()
+        except tk.TclError:
+            pass
 
     def _sync_minimax_likeness_state(self):
         """Grey Blocks to Train while the Training mode owns the block choice, and keep both
@@ -8273,7 +8383,7 @@ class LoRATrainerGUI:
         "GRADIENT_ACCUMULATION": "1",     # fused backward consumes grads as they land
         "MAX_GRAD_NORM": "0",             # global clipping is impossible under fused backward
         "NETWORK_TYPE": "LoRA (standard)",  # FT trains the BASE — reset the adapter selector
-        "MINIMAX_TRAINING_ADAPTER": True,   # rides as forward hooks under FT; on like every LoRA preset
+        "MINIMAX_ADAPTER": MINIMAX_ADAPTER_CIRCLESTONE,   # rides as forward hooks under FT
     }
 
     def _on_minimax_ft_toggle(self):
@@ -8378,6 +8488,15 @@ class LoRATrainerGUI:
             entry = self.entries.get(key)
             if entry is None:
                 continue
+            if isinstance(entry, tk.StringVar):         # a dropdown driven by its variable
+                before = entry.get()
+                if key == "MINIMAX_ADAPTER" and minimax_adapter_choice(before) != "off":
+                    continue                            # a deliberate Circlestone/Ostris pick stays
+                if before != val:
+                    entry.set(val)
+                    self.settings[key] = val
+                    changed.append(f"{key.replace('_', ' ').title()}: {before} -> {val}")
+                continue
             if isinstance(entry, tk.BooleanVar):
                 if bool(entry.get()) != bool(val):
                     entry.set(bool(val))
@@ -8469,14 +8588,15 @@ class LoRATrainerGUI:
                 self._set_widget_visible(w, not on)
         # The training adapter stays visible under FT (it rides as forward hooks there —
         # same contract: on for training, off for previews, never in the checkpoint); the FT
-        # recipe ticks it on, like every LoRA preset (Peter, 15 Sep).
+        # recipe turns Off into Circlestone and leaves an Ostris pick alone (Peter, 15 + 23 Sep).
         _ah = getattr(self, "_minimax_adapter_hint", None)
         if _ah is not None:
             if not hasattr(self, "_minimax_adapter_hint_lora"):
                 self._minimax_adapter_hint_lora = _ah.cget("text")
             _ah.configure(text=(
                 "Under fine-tune: the base trains against the de-distilled forward, off for "
-                "previews, never in the checkpoint (the file you get is a plain H3 fine-tune)."
+                "previews, never in the checkpoint (the file you get is a plain H3 fine-tune). "
+                "Circlestone whenever there are stills, Ostris for clips only."
                 if on else self._minimax_adapter_hint_lora))
         if hasattr(self, "_network_type_rowf"):
             self._set_widget_visible(self.labels["NETWORK_TYPE"], not on)
@@ -8749,6 +8869,8 @@ class LoRATrainerGUI:
         # Blocks to Train greys while Optimised Likeness Learning owns it — arch-dependent, so
         # re-sync on every family switch (a Klein session must not leave it locked).
         self._sync_minimax_likeness_state()
+        # The clips-only adapter advice shows and hides itself (text only under MiniMax).
+        self._refresh_minimax_adapter_hint()
         # The Multi Concept sub-rows are owned by its own toggle handler (they are hidden even
         # under MiniMax until the box is ticked), so route them through it rather than the loop.
         if is_minimax:
@@ -10620,6 +10742,13 @@ class LoRATrainerGUI:
                    if os.path.splitext(f)[1].lower() in self.TRAINING_AUDIO_EXTENSIONS)
 
     def _refresh_audio_only_ui(self, *_a):
+        try:
+            self._refresh_minimax_adapter_hint()
+        except Exception:
+            pass
+        return self._refresh_audio_only_ui_inner()
+
+    def _refresh_audio_only_ui_inner(self):
         """Grey the image-shaped training controls when the dataset is voice recordings only.
 
         Only what is STRUCTURALLY meaningless goes grey: Target Megapixels (no pixels to
@@ -19202,26 +19331,35 @@ class LoRATrainerGUI:
                           "ComfyUI's loras folder)",
         )
         mr = self._add_pref_row(
-            mm_card, mr, "Training adapter (fl2va):", "minimax_training_adapter",
-            "OPTIONAL — the training adapter for the standard fl2va base, switched on by the "
-            "'Training adapter' tickbox on the Training tab. A frozen LoRA that de-distills the base "
-            "while yours learns: in our A/B it reached 50% likeness seven epochs sooner and peaked "
-            "higher. On for every training step, off for previews, never in your saved LoRA. The "
-            "updater fetches it; so does the download button below.",
+            mm_card, mr, "Training adapter (Circlestone):", "minimax_circlestone_adapter",
+            "NEEDED when the Training adapter dropdown says Circlestone (the default) — one "
+            "file for both bases (fl2va and ref2va). "
+            "A frozen LoRA that de-distills the base while yours learns: sharper eyes, cleaner skin "
+            "and better prompt-following than Ostris's on any dataset with stills. On for every "
+            "training step, off for previews, never in your saved LoRA. The updater fetches it; so "
+            "does the download button below.",
+            download_url=MINIMAX_CIRCLESTONE_URL,
+            download_note="~620MB — circlestone-labs/MiniMax-H3-Image-Training-Adapter → "
+                          "minimax_h3_image_training_adapter.safetensors",
+        )
+        mr = self._add_pref_row(
+            mm_card, mr, "Training adapter (Ostris fl2va):", "minimax_training_adapter",
+            "OPTIONAL — Ostris's adapter for the standard fl2va base, used when the Training tab's "
+            "adapter dropdown says Ostris: it learns a video look faster than Circlestone when the "
+            "dataset is clips only.",
             download_url="https://huggingface.co/ostris/minimax_h3_training_adapter/blob/main/minimax_h3_training_adapter_v1.safetensors",
             download_note="~155MB — ostris/minimax_h3_training_adapter → minimax_h3_training_adapter_v1.safetensors",
         )
         mr = self._add_pref_row(
-            mm_card, mr, "Training adapter (ref2va):", "minimax_ref_training_adapter",
-            "OPTIONAL — the same adapter for runs on the Reference (ref2va) base: the tickbox picks "
-            "this one automatically when the Training Base dropdown is on ref2va or the run is a "
-            "distillation run.",
+            mm_card, mr, "Training adapter (Ostris ref2va):", "minimax_ref_training_adapter",
+            "OPTIONAL — Ostris's adapter for the Reference (ref2va) base: picked automatically when "
+            "the dropdown says Ostris and the Training Base is ref2va or the run is a distillation run.",
             download_url="https://huggingface.co/ostris/minimax_h3_training_adapter/blob/main/minimax_h3_ref2va_training_adapter_v1.safetensors",
             download_note="~155MB — ostris/minimax_h3_training_adapter → minimax_h3_ref2va_training_adapter_v1.safetensors",
         )
         self._add_fetch_models_row(
             mm_card, mr, "minimax",
-            "Fetches the DiT, text encoder, both VAEs, the Turbo LoRA and both training adapters above, plus the Krea 2 Qwen3-VL captioning "
+            "Fetches the DiT, text encoder, both VAEs, the Turbo LoRA and the three training adapters above, plus the Krea 2 Qwen3-VL captioning "
             "text encoder (~47 GB all in), and fills in these paths for you — plus the small "
             "helper models (Florence-2 captioner, face model for the Look "
             "Filter and likeness scoring, EN→ZH translator, Gizmo's Whisper transcriber — "
@@ -31413,16 +31551,19 @@ class LoRATrainerGUI:
             except ValueError:
                 errors.append("Learning rate must be a valid number")
 
-        # Training adapter (MiniMax): needs the pref for the selected base (LoRA and FT alike).
+        # Training adapter (MiniMax): the chosen adapter's file must be set and exist (LoRA and FT).
         _mm_ft_on = bool(getattr(self, "minimax_finetune_var", None) and self.minimax_finetune_var.get())
-        if (self._is_minimax_arch()
-                and bool(self.entries.get("MINIMAX_TRAINING_ADAPTER")
-                         and self.entries["MINIMAX_TRAINING_ADAPTER"].get())):
+        if self._is_minimax_arch() and not self._is_refmod_arch():
             _ak = self._minimax_adapter_pref_key()
-            if not self._krea2_pref(_ak):
-                errors.append("Training adapter is ticked but its file isn't set in Preferences "
-                              f"({'ref2va' if 'ref' in _ak else 'fl2va'}) — run the updater or the "
-                              "MiniMax download button in Preferences, or untick it")
+            if _ak:
+                _ap = self._krea2_pref(_ak)
+                _row = {"minimax_circlestone_adapter": "Training adapter (Circlestone)",
+                        "minimax_training_adapter": "Training adapter (Ostris fl2va)",
+                        "minimax_ref_training_adapter": "Training adapter (Ostris ref2va)"}[_ak]
+                if not _ap or not os.path.isfile(_ap):
+                    errors.append(f"The {_row} file isn't {'set' if not _ap else 'where Preferences says'} "
+                                  "— run the updater or the MiniMax download button in Preferences, "
+                                  "or set Training adapter to Off")
         # Context LoRA validation (all three families; MiniMax refuses it under fine-tune).
         ctx_path = self.entries.get("CONTEXT_LORA_PATH").get().strip() if "CONTEXT_LORA_PATH" in self.entries else ""
         if ctx_path:
@@ -31844,7 +31985,7 @@ class LoRATrainerGUI:
             "MINIMAX_LIKENESS_MODE": str(self.entries["MINIMAX_LIKENESS_MODE"].get()),
             "MINIMAX_TRAIN_ADALN": bool(self.entries["MINIMAX_TRAIN_ADALN"].get()),
             "MINIMAX_TRAIN_REFINER": bool(self.entries["MINIMAX_TRAIN_REFINER"].get()),
-            "MINIMAX_TRAINING_ADAPTER": bool(self.entries["MINIMAX_TRAINING_ADAPTER"].get()),
+            "MINIMAX_ADAPTER": str(self.entries["MINIMAX_ADAPTER"].get()),
             # experiment/tread: both ticks must be copied here or the builder reads a stale value
             "MINIMAX_TREAD": bool(self.entries["MINIMAX_TREAD"].get()),
             "MINIMAX_CLIP_STILL": bool(self.entries["MINIMAX_CLIP_STILL"].get()),
@@ -33392,11 +33533,12 @@ class LoRATrainerGUI:
         resume_path = (self.settings.get("RESUME_TRAINING") or "").strip()
         if resume_path:
             cmd += ["--resume", resume_path]
-        # Training adapter — Ostris's frozen de-distillation LoRA at 1.0 under everything else,
-        # the file chosen to match the base this run trains on (validation already checked it
-        # exists). Under fine-tune the trainer rides it as forward hooks.
-        if self.settings.get("MINIMAX_TRAINING_ADAPTER"):
-            _adapter = self._krea2_pref(self._minimax_adapter_pref_key())
+        # Training adapter — a frozen de-distillation LoRA at 1.0 under everything else:
+        # Circlestone (one file, both bases) or Ostris (per base), or none (validation already
+        # checked the file). Under fine-tune the trainer rides it as forward hooks.
+        _ak = self._minimax_adapter_pref_key()
+        if _ak:
+            _adapter = self._krea2_pref(_ak)
             if _adapter:
                 cmd += ["--training_adapter_path", _adapter]
         # TREAD token routing (experiment) — LoRA runs only, half the video tokens, blocks 2-46.
