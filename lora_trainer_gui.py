@@ -7999,6 +7999,26 @@ class LoRATrainerGUI:
         _ref = _distill or minimax_train_base(_base) == "ref2va"
         return "minimax_ref_training_adapter" if _ref else "minimax_training_adapter"
 
+    def _fetch_minimax_adapter_now(self, pref_key, row_label):
+        """Download a missing training adapter into models/ and point its Preferences row at
+        it (idempotent — the updater usually got there first). Returns the path, or None."""
+        try:
+            import sys as _sys
+            _sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+            from fizgig.scripts import fetch_turbo_lora as _ftl
+            entry = next((e for e in _ftl.LORAS if e[0] == pref_key), None)
+            if entry is None:
+                return None
+            self.update_console(f"[adapter] {row_label} not set — downloading it now "
+                                "(one-time)...\n")
+            path = _ftl.ensure_lora(*entry, log=lambda m: self.update_console(f"[adapter] {m}\n"))
+            if path and pref_key in self.prefs_vars:
+                self.prefs_vars[pref_key].set(path)
+            return path
+        except Exception as e:
+            self.update_console(f"[adapter] download failed ({type(e).__name__}: {e})\n")
+            return None
+
     def _minimax_dataset_media_counts(self):
         """(stills, clips) across every dataset folder (Start + Multi Concept). Audio ignored."""
         from fizgig.dataset.image_dataset import IMAGE_EXTENSIONS
@@ -31560,6 +31580,10 @@ class LoRATrainerGUI:
                 _row = {"minimax_circlestone_adapter": "Training adapter (Circlestone)",
                         "minimax_training_adapter": "Training adapter (Ostris fl2va)",
                         "minimax_ref_training_adapter": "Training adapter (Ostris ref2va)"}[_ak]
+                if not _ap or not os.path.isfile(_ap):
+                    # First use after a code update that skipped the updater (pods, Linux, a
+                    # plain git pull): fetch it now, once, like the Krea 2 Turbo LoRA fallback.
+                    _ap = self._fetch_minimax_adapter_now(_ak, _row) or _ap
                 if not _ap or not os.path.isfile(_ap):
                     errors.append(f"The {_row} file isn't {'set' if not _ap else 'where Preferences says'} "
                                   "— run the updater or the MiniMax download button in Preferences, "
