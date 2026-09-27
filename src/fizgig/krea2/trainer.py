@@ -169,10 +169,11 @@ def load_dit_for_training(
         loading_device = "cpu"
     else:
         loading_device = "cpu" if blocks_to_swap > 0 else device
-    # The standard NF4 loader first stages the entire ~26 GB BF16 model in RAM.
-    # Hardware detection enables streaming on RDNA2 through every entry point.
-    from fizgig.modules.rdna2_linear import stream_nf4_enabled
-    _stream_nf4 = quant_4bit and stream_nf4_enabled(device)
+    # Select the RDNA2 implementations once, when this model is loaded.
+    from fizgig.modules.rdna2_linear import is_rdna2_device
+    _rdna2 = is_rdna2_device(device)
+    _stream_nf4 = (_rdna2 and quant_4bit
+                   and os.environ.get("FIZGIG_STREAM_NF4", "1") != "0")
     if _stream_nf4:
         from fizgig.krea2.nf4_loader import load_nf4_streamed
         dit = load_nf4_streamed(raw_path, device=device, dtype=dtype)
@@ -180,12 +181,6 @@ def load_dit_for_training(
         dit = load_krea2_dit(raw_path, device=device, dtype=dtype, fp8_scaled=fp8_scaled,
                              loading_device=loading_device, fp8_fast=fp8_fast)
     dit.requires_grad_(False)  # frozen base (QLoRA-style)
-    if quant_4bit:
-        from fizgig.modules.rdna2_linear import enabled as _rdna2_enabled
-        if _rdna2_enabled(torch.empty(0, device=device, dtype=dtype)):
-            logger.info("[rdna2] NF4 frozen GEMMs: %s; BF16 activations/adapters preserved; "
-                        "set FIZGIG_RDNA2_LINEAR=0 for the original math path",
-                        os.environ.get("FIZGIG_RDNA2_LINEAR", "fp32 (hardware auto)"))
     if quant_int8:
         from fizgig.krea2.utils import KREA2_FP8_OPTIMIZATION_TARGET_KEYS, KREA2_FP8_OPTIMIZATION_EXCLUDE_KEYS
         from fizgig.modules.int8_train import apply_int8_training
@@ -209,6 +204,22 @@ def load_dit_for_training(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         logger.info(f"NF4 4-bit base active: {n_q} Linears quantized; DiT resident on {device}.")
+    if _rdna2:
+        # Shared attention and NF4 functions stay unchanged. Only this model's
+        # instances receive alternate forwards; other GPU families never enter here.
+        if quant_4bit and dtype == torch.bfloat16 and os.environ.get("FIZGIG_RDNA2_LINEAR", "1") != "0":
+            from fizgig.modules.rdna2_linear import install_nf4_forward
+            n_q = install_nf4_forward(dit)
+            logger.info("[rdna2] installed FP32 frozen NF4 GEMMs on %d Linears", n_q)
+        if os.environ.get("FIZGIG_RDNA2_ATTENTION", "1") != "0":
+            from fizgig.modules.rdna2_attention import install_attention
+            n_attn = install_attention(dit)
+            logger.info("[rdna2] installed grouped attention on %d Krea 2 modules", n_attn)
+        # This RDNA2 process uses the math SDPA backend. Priming it here avoids
+        # the NVIDIA-only cuDNN probe later, without changing sdpa.py for others.
+        import contextlib
+        from fizgig.modules import sdpa as _sdpa
+        _sdpa._SDPA_CTX = contextlib.nullcontext
     if gradient_checkpointing:
         dit.enable_gradient_checkpointing()
 

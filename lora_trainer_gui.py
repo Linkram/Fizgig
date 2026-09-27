@@ -9719,7 +9719,8 @@ class LoRATrainerGUI:
             return self._auto_krea2_blocks_swap()
 
         try:
-            caps = getattr(self, "_training_gpu_caps", None) or detect()
+            snapshot = getattr(self, "_training_gpu_caps", None)
+            caps = snapshot or detect()
             # Budget for THIS run's shape — batch size is the largest term (+2.4 GB/image);
             # a single-constant budget let batch 2 sail through the check and OOM.
             try:
@@ -9754,9 +9755,13 @@ class LoRATrainerGUI:
             # faster than NF4 and far more accurate, so it still applies where it fits —
             # briefly making Off mean plain fp8 cost 20 GB+ cards the fastest path for nothing.
             _force = self._krea2_force_quant() if hasattr(self, "quant_4bit_mode_var") else None
-            plan = recommend_krea2_strategy(caps=caps, mp=_mp, batch=_bs, rank=_rk,
-                                            force_quant=_force,
-                                            network_type=_ntype, lokr_factor=_lf)
+            plan_args = dict(caps=caps, mp=_mp, batch=_bs, rank=_rk,
+                             force_quant=_force, network_type=_ntype, lokr_factor=_lf)
+            if snapshot is not None:
+                # Only the RDNA2 helper supplies this snapshot. Keep the GUI's
+                # existing detect/recommend path identical on all other cards.
+                plan_args["vram_gb"] = snapshot.vram_free_gb
+            plan = recommend_krea2_strategy(**plan_args)
         except Exception:
             self._auto_quant_int8 = ""   # no strategy ran — a stale INT8 pick must not leak
             return self._auto_krea2_blocks_swap()
@@ -31944,16 +31949,11 @@ class LoRATrainerGUI:
         self.master.after(100, _poll)
 
     def _is_windows_rocm_krea2(self):
-        """Identify the ROCm launch path without importing torch or touching HIP."""
+        """Use the launcher's architecture metadata without importing torch or touching HIP."""
         if os.name != "nt" or not ARCHITECTURES.get(self.architecture_var.get(), {}).get("is_krea2"):
             return False
-        if os.environ.get("FIZGIG_GPU_BACKEND", "").lower() == "rocm":
-            return True
-        import importlib.metadata
-        try:
-            return "+rocm" in importlib.metadata.version("torch").lower()
-        except importlib.metadata.PackageNotFoundError:
-            return False
+        return (os.environ.get("FIZGIG_GPU_BACKEND", "").lower() == "rocm"
+                and os.environ.get("GPU_ARCH", "").lower().startswith("gfx103"))
 
     def _start_training_launch_ready(self):
         """Launch training after validations and any caption-worker VRAM release."""
