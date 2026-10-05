@@ -45,6 +45,14 @@ class FamilyDriver:
         INT8 / NF4 are applied afterwards by families/quant.py to the block map's Linears; the driver only loads."""
         raise NotImplementedError
 
+    def load_quantized_dit(self, path: str, precision: str, device):
+        """Optional streamed base loader. None keeps the existing load-then-quantise path."""
+        return None
+
+    def compile_capabilities(self, device):
+        """Optional metadata snapshot for compile planning. None keeps existing detection."""
+        return None
+
     # ---- block swap (optional) --------------------------------------------------------------------
     def max_blocks_to_swap(self, dit=None) -> int:
         """How many blocks may stream between CPU and GPU; 0 = the family has no block swap."""

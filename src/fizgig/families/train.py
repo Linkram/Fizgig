@@ -721,19 +721,21 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     if desc.compiles and cb != "off":
         from fizgig.utils.capabilities import compile_boundary, should_compile
         q4, q8 = precision == "nf4", ("int8" if precision == "int8" else "")
+        compile_caps = driver.compile_capabilities(device)
         try:
             mp_max = max(w * h / 1e6 for ds in group.datasets for (w, h) in ds.batch_manager.bucket_resos)
         except Exception:
             mp_max = 0.25
         if cb == "auto":
             do_compile, why = should_compile(group.num_train_items * max_train_epochs, q4, q8,
-                                             max(0, blocks_to_swap) if precision != "nf4" else 0, mp=mp_max)
+                                             max(0, blocks_to_swap) if precision != "nf4" else 0,
+                                             mp=mp_max, caps=compile_caps)
             logger.info("[compile] auto: %s - %s", "ENABLED (checkpoint outside)" if do_compile == "outside"
                         else ("ENABLED" if do_compile else "off"), why)
         elif cb == "outside":
             do_compile = "outside"
         else:
-            do_compile = compile_boundary(q4, q8, mp=mp_max)
+            do_compile = compile_boundary(q4, q8, mp=mp_max, caps=compile_caps)
             if do_compile == "outside":
                 logger.info("[compile] on: inside-the-graph won't fit at this token load - compiling with the "
                             "checkpoint OUTSIDE the region instead.")

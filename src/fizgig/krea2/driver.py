@@ -57,6 +57,33 @@ class Krea2Driver(FamilyDriver):
         dit = load_krea2_dit(path, device=device, dtype=DTYPE, fp8_scaled=False, loading_device=device)
         return dit.eval().requires_grad_(False)
 
+    def load_quantized_dit(self, path, precision, device):
+        """Stream NF4 on gfx103* only; all other cards retain the original loader."""
+        import os
+        if precision != "nf4" or os.environ.get("FIZGIG_STREAM_NF4", "1") == "0":
+            return None
+        from fizgig.modules.rdna2_linear import is_rdna2_device
+        if not is_rdna2_device(device):
+            return None
+        from fizgig.krea2.nf4_loader import load_nf4_streamed
+        return load_nf4_streamed(path, device=device, dtype=DTYPE).eval().requires_grad_(False)
+
+    def compile_capabilities(self, device):
+        """Avoid RDNA2 matrix probes before the model's load-time hook runs."""
+        from fizgig.modules.rdna2_linear import is_rdna2_device
+        if not is_rdna2_device(device):
+            return None
+        from fizgig.utils.capabilities import Capabilities
+        caps = Capabilities(has_cuda=True, is_rocm=True)
+        props = torch.cuda.get_device_properties(torch.device(device).index)
+        caps.device_name = props.name
+        caps.vram_gb = props.total_memory / (1024 ** 3)
+        try:
+            caps.vram_free_gb = torch.cuda.mem_get_info(torch.device(device).index)[0] / (1024 ** 3)
+        except Exception:
+            caps.vram_free_gb = caps.vram_gb
+        return caps
+
     def on_base_loaded(self, dit, precision, device):
         """RDNA2 (gfx103*) only: bind the grouped attention and FP32 NF4 GEMMs to this model instance. Every other
         card returns at the ROCm build check, before any device query; the shared attention, NF4 and SDPA code is
