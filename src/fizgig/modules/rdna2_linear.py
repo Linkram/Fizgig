@@ -29,7 +29,11 @@ class _RDNA2NF4Linear(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, packed, state):
         from bitsandbytes.functional import dequantize_nf4
-        ctx.packed, ctx.state, ctx.shape = packed, state, x.shape
+        # Saved tensors are released when backward completes. A plain ctx.packed
+        # reference survives in the last loss graph and retains the entire NF4
+        # base on GPU when a preview parks it on CPU and restores a new copy.
+        ctx.save_for_backward(packed)
+        ctx.state, ctx.shape = state, x.shape
         weight = dequantize_nf4(packed, state).to(x.dtype)
         return matmul(x.reshape(-1, x.shape[-1]), weight.t()).reshape(*x.shape[:-1], weight.shape[0])
 
@@ -37,7 +41,8 @@ class _RDNA2NF4Linear(torch.autograd.Function):
     @torch.autograd.function.once_differentiable
     def backward(ctx, grad):
         from bitsandbytes.functional import dequantize_nf4
-        weight = dequantize_nf4(ctx.packed, ctx.state).to(grad.dtype)
+        (packed,) = ctx.saved_tensors
+        weight = dequantize_nf4(packed, ctx.state).to(grad.dtype)
         dx = matmul(grad.reshape(-1, grad.shape[-1]), weight)
         return dx.reshape(ctx.shape), None, None
 
