@@ -16,6 +16,7 @@ because fp8 matmul is Ada+ while NF4 and int8 go back further.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import logging
 import os
 import shutil
@@ -95,6 +96,7 @@ class Capabilities:
     flash_attn: bool = False       # the flash_attn package
     bitsandbytes: bool = False     # required for NF4
     notes: list = field(default_factory=list)
+    gcn_arch: str = ""
 
     def summary(self) -> str:
         if not self.has_cuda:
@@ -143,7 +145,7 @@ def _probe_int_mm() -> bool:
 
 
 @functools.lru_cache(maxsize=1)
-def detect() -> Capabilities:
+def detect(probe_kernels: Optional[bool] = None) -> Capabilities:
     caps = Capabilities()
     try:
         import torch
@@ -159,6 +161,7 @@ def detect() -> Capabilities:
     caps.is_rocm = is_rocm()
     props = torch.cuda.get_device_properties(0)
     caps.device_name = props.name
+    caps.gcn_arch = getattr(props, "gcnArchName", "")
     caps.sm = torch.cuda.get_device_capability(0)
     caps.vram_gb = props.total_memory / (1024 ** 3)
     try:
@@ -171,9 +174,14 @@ def detect() -> Capabilities:
         caps.vram_free_gb = caps.vram_gb
         caps.notes.append("could not read free VRAM — using card total")
 
-    caps.fp8_matmul = _probe_scaled_mm(torch.float8_e4m3fn) if not caps.is_rocm else False
-    caps.int8_matmul = _probe_scaled_mm(torch.int8)     # expected False: _scaled_mm is fp8-only
-    caps.int8_matmul_train = _probe_int_mm()
+    # Windows ROCm kernel discovery can hang or crash the process. Only run
+    # kernels there when explicitly requested, in the isolated startup helper.
+    if probe_kernels is None:
+        probe_kernels = not (os.name == "nt" and caps.is_rocm)
+    if probe_kernels:
+        caps.fp8_matmul = _probe_scaled_mm(torch.float8_e4m3fn) if not caps.is_rocm else False
+        caps.int8_matmul = _probe_scaled_mm(torch.int8)
+        caps.int8_matmul_train = _probe_int_mm()
 
     if caps.is_rocm:
         caps.cudnn_attention = False
@@ -185,14 +193,22 @@ def detect() -> Capabilities:
             caps.cudnn_attention = hasattr(__import__("torch").backends.cuda, "cudnn_sdp_enabled")
 
     try:
-        import flash_attn  # noqa: F401
-        caps.flash_attn = True
+        if probe_kernels:
+            import flash_attn  # noqa: F401
+            caps.flash_attn = True
+        else:
+            caps.flash_attn = importlib.util.find_spec("flash_attn") is not None
     except Exception:
         pass
 
     try:
-        import bitsandbytes  # noqa: F401
-        caps.bitsandbytes = True
+        if probe_kernels:
+            import bitsandbytes  # noqa: F401
+            caps.bitsandbytes = True
+        else:
+            caps.bitsandbytes = importlib.util.find_spec("bitsandbytes") is not None
+        if not caps.bitsandbytes:
+            caps.notes.append("bitsandbytes missing — NF4 unavailable")
     except Exception:
         caps.notes.append("bitsandbytes missing — NF4 unavailable")
 
