@@ -1,5 +1,6 @@
 """Krea 2 attention forwards installed only on a detected RDNA2 model."""
 
+import os
 import torch
 import torch.nn.functional as F
 from einops import rearrange
@@ -30,7 +31,13 @@ def head_chunk_attention(q, k, v, attn_mask=None, heads_per_chunk=8):
 
 def _sdpa(q, k, v, mask=None):
     if q.shape[1] > 8 and q.shape[-2] >= 512:
-        return head_chunk_attention(q, k, v, mask)
+        heads = int(os.environ.get('FIZGIG_RDNA2_HEADS', '8'))
+        if heads not in (1,2,4,8,12,16):
+            raise ValueError('FIZGIG_RDNA2_HEADS must be 1, 2, 4, 8, 12 or 16')
+        if os.environ.get('FIZGIG_RDNA2_ATTN_IMPL', '') == 'analytical':
+            from .rdna2_experimental_attention import analytical_attention
+            return analytical_attention(q, k, v, mask, heads_per_chunk=heads)
+        return head_chunk_attention(q, k, v, mask, heads_per_chunk=heads)
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
 
 

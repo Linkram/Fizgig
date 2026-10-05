@@ -1,0 +1,86 @@
+{
+  "torch": "2.12.0+rocm7.15.0a20260728",
+  "device": "AMD Radeon RX 6800",
+  "settings": {
+    "resolution": [
+      704,
+      704
+    ],
+    "text_tokens": 64,
+    "rank": 16,
+    "batch": 1,
+    "optimizer": "AdamW8bit",
+    "previews": false,
+    "ema": false
+  },
+  "measurements": [
+    {
+      "variant": "baseline",
+      "median_s": 24.70866930000193,
+      "times_s": [
+        24.690260799980024,
+        24.727077800023835
+      ],
+      "losses": [
+        5.226532936096191,
+        5.226711750030518,
+        5.223114013671875
+      ],
+      "gradients_finite": true,
+      "peak_allocated_gib": 10.52139949798584
+    },
+    {
+      "variant": "heads2",
+      "median_s": 22.303123349993257,
+      "times_s": [
+        22.31794649999938,
+        22.288300199987134
+      ],
+      "losses": [
+        5.226532936096191,
+        5.226711750030518,
+        5.223114013671875
+      ],
+      "gradients_finite": true,
+      "peak_allocated_gib": 10.52121639251709
+    },
+    {
+      "variant": "analytical",
+      "median_s": 22.19418195000617,
+      "times_s": [
+        22.16234589999658,
+        22.226018000015756
+      ],
+      "losses": [
+        5.225857734680176,
+        5.225167274475098,
+        5.192564010620117
+      ],
+      "gradients_finite": true,
+      "peak_allocated_gib": 10.52121639251709
+    },
+    {
+      "variant": "tuned",
+      "median_s": 18.216695049995906,
+      "times_s": [
+        18.212226200004807,
+        18.221163899987005
+      ],
+      "losses": [
+        5.2225341796875,
+        5.22157621383667,
+        5.208773136138916
+      ],
+      "gradients_finite": true,
+      "peak_allocated_gib": 10.52121639251709
+    },
+    {
+      "variant": "mlp-only",
+      "error": "Rejected: shared-memory paging; stopped after warm-up",
+      "warmup_s": 114.81127229999402,
+      "loss": 5.225684642791748,
+      "windows_dedicated_gib": 13.61,
+      "windows_shared_gib": 6.83
+    }
+  ]
+}

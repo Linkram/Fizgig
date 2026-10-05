@@ -1,0 +1,48 @@
+{
+  "torch": "2.12.0+rocm7.15.0a20260728",
+  "device": "AMD Radeon RX 6800",
+  "settings": {
+    "resolution": [
+      704,
+      704
+    ],
+    "text_tokens": 64,
+    "rank": 16,
+    "batch": 1,
+    "optimizer": "AdamW8bit",
+    "previews": false,
+    "ema": false
+  },
+  "measurements": [
+    {
+      "variant": "tuned-sdpa",
+      "median_s": 18.08930615001009,
+      "times_s": [
+        18.129665600019507,
+        18.04894670000067
+      ],
+      "losses": [
+        5.225639820098877,
+        5.224238395690918,
+        5.200628757476807
+      ],
+      "gradients_finite": true,
+      "peak_allocated_gib": 10.52139949798584
+    },
+    {
+      "variant": "tiled",
+      "median_s": 17.358675099996617,
+      "times_s": [
+        17.326966699998593,
+        17.39038349999464
+      ],
+      "losses": [
+        5.225423812866211,
+        5.23026704788208,
+        5.212779521942139
+      ],
+      "gradients_finite": true,
+      "peak_allocated_gib": 10.38620662689209
+    }
+  ]
+}

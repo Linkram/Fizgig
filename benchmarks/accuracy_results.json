@@ -1,0 +1,186 @@
+{
+  "device": "AMD Radeon RX 6800",
+  "torch": "2.12.0+rocm7.15.0a20260728",
+  "checks": [
+    {
+      "label": "6144_1536:forward:0.1:tuned-fp16",
+      "relative_l2_error": 0.0,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:forward:0.1:tiled-fp16",
+      "relative_l2_error": 0.0010082516819238663,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:forward:1e-05:tuned-fp16",
+      "relative_l2_error": 0.0,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:forward:1e-05:tiled-fp16",
+      "relative_l2_error": 0.0030938386917114258,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:dx:0.1:tuned-fp16",
+      "relative_l2_error": 0.0014448848087340593,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:dx:0.1:tiled-fp16",
+      "relative_l2_error": 0.0014448848087340593,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:dx:1e-05:tuned-fp16",
+      "relative_l2_error": 0.003234360832720995,
+      "finite": true
+    },
+    {
+      "label": "6144_1536:dx:1e-05:tiled-fp16",
+      "relative_l2_error": 0.003234360832720995,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:forward:0.1:tuned-fp16",
+      "relative_l2_error": 0.0014449720038101077,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:forward:0.1:tiled-fp16",
+      "relative_l2_error": 0.0014449720038101077,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:forward:1e-05:tuned-fp16",
+      "relative_l2_error": 0.0029080864042043686,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:forward:1e-05:tiled-fp16",
+      "relative_l2_error": 0.0029080864042043686,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:dx:0.1:tuned-fp16",
+      "relative_l2_error": 0.0014285744400694966,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:dx:0.1:tiled-fp16",
+      "relative_l2_error": 0.0014285744400694966,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:dx:1e-05:tuned-fp16",
+      "relative_l2_error": 0.0029111001640558243,
+      "finite": true
+    },
+    {
+      "label": "6144_6144:dx:1e-05:tiled-fp16",
+      "relative_l2_error": 0.0029111001640558243,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:forward:0.1:tuned-fp16",
+      "relative_l2_error": 0.001437655184417963,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:forward:0.1:tiled-fp16",
+      "relative_l2_error": 0.001437655184417963,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:forward:1e-05:tuned-fp16",
+      "relative_l2_error": 0.0029013382736593485,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:forward:1e-05:tiled-fp16",
+      "relative_l2_error": 0.0029013382736593485,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:dx:0.1:tuned-fp16",
+      "relative_l2_error": 0.0,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:dx:0.1:tiled-fp16",
+      "relative_l2_error": 0.0009204901871271431,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:dx:1e-05:tuned-fp16",
+      "relative_l2_error": 0.0,
+      "finite": true
+    },
+    {
+      "label": "6144_16384:dx:1e-05:tiled-fp16",
+      "relative_l2_error": 0.0029348235111683607,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:forward:0.1:tuned-fp16",
+      "relative_l2_error": 0.0,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:forward:0.1:tiled-fp16",
+      "relative_l2_error": 0.0009085543570108712,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:forward:1e-05:tuned-fp16",
+      "relative_l2_error": 0.0,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:forward:1e-05:tiled-fp16",
+      "relative_l2_error": 0.002929016947746277,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:dx:0.1:tuned-fp16",
+      "relative_l2_error": 0.0014355757739394903,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:dx:0.1:tiled-fp16",
+      "relative_l2_error": 0.0014355757739394903,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:dx:1e-05:tuned-fp16",
+      "relative_l2_error": 0.002903618849813938,
+      "finite": true
+    },
+    {
+      "label": "16384_6144:dx:1e-05:tiled-fp16",
+      "relative_l2_error": 0.002903618849813938,
+      "finite": true
+    },
+    {
+      "label": "analytical_attention:output",
+      "relative_l2_error": 1.9916968085453846e-05,
+      "finite": true
+    },
+    {
+      "label": "analytical_attention:dq",
+      "relative_l2_error": 3.8053873140597716e-05,
+      "finite": true
+    },
+    {
+      "label": "analytical_attention:dk",
+      "relative_l2_error": 8.324590453412384e-05,
+      "finite": true
+    },
+    {
+      "label": "analytical_attention:dv",
+      "relative_l2_error": 5.2979048632550985e-05,
+      "finite": true
+    }
+  ]
+}

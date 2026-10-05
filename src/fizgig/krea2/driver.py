@@ -97,7 +97,9 @@ class Krea2Driver(FamilyDriver):
         log = logging.getLogger(__name__)
         if precision == "nf4" and os.environ.get("FIZGIG_RDNA2_LINEAR", "1") != "0":
             from fizgig.modules.rdna2_linear import install_nf4_forward
-            log.info("[rdna2] installed FP32 frozen NF4 GEMMs on %d Linears", install_nf4_forward(dit))
+            mode = os.environ.get("FIZGIG_RDNA2_GEMM", "")
+            label = mode if mode in ("tuned-fp16", "tiled-fp16") else "FP32"
+            log.info("[rdna2] installed %s frozen NF4 GEMMs on %d Linears", label, install_nf4_forward(dit))
         if os.environ.get("FIZGIG_RDNA2_ATTENTION", "1") != "0":
             from fizgig.modules.rdna2_attention import install_attention
             log.info("[rdna2] installed grouped attention on %d Krea 2 modules", install_attention(dit))

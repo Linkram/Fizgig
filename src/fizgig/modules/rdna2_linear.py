@@ -1,8 +1,10 @@
-"""Hardware-selected FP32 GEMMs for frozen NF4 weights on RDNA2.
+"""Hardware-selected GEMMs for frozen NF4 weights on RDNA2.
 
 Keep BF16 model/activation storage. Disable autocast locally so it cannot undo
-the conversion. No global dtype change or persistent FP32 weight cache.
+the conversion. The default is the PR's FP32 path. FP16 experiments are opt-in;
+they change rounding and need training-quality validation.
 """
+import os
 import torch
 import torch.nn as nn
 
@@ -19,8 +21,33 @@ def is_rdna2_device(device):
     return getattr(props, "gcnArchName", "").split(":")[0].startswith("gfx103")
 
 
+def _split_output_fp16(a, b, tile=4096):
+    dtype = a.dtype
+    a, b = a.half(), b.half()
+    return torch.cat([a @ part for part in b.split(tile, dim=1)], dim=1).to(dtype)
+
+
+def _split_reduction_fp16(a, b, tile=4096):
+    dtype = a.dtype
+    a, b = a.half(), b.half()
+    accumulator = None
+    for start in range(0, b.shape[0], tile):
+        partial = (a[:, start:start + tile] @ b[start:start + tile]).float()
+        accumulator = partial if accumulator is None else accumulator + partial
+    return accumulator.to(dtype)
+
+
 def matmul(a, b):
     with torch.autocast(device_type=a.device.type, enabled=False):
+        mode = os.environ.get("FIZGIG_RDNA2_GEMM", "")
+        if mode in ("tuned-fp16", "tiled-fp16"):
+            k, n = b.shape
+            if mode == "tiled-fp16" and (k, n) in ((6144, 1536), (16384, 6144)):
+                return _split_reduction_fp16(a, b)
+            if k == 6144 and n == 16384 and b.stride(0) == 1:
+                return _split_output_fp16(a, b)
+            if (k, n) in ((6144, 6144), (1536, 6144), (6144, 16384)):
+                return (a.half() @ b.half()).to(a.dtype)
         return (a.float() @ b.float()).to(a.dtype)
 
 
