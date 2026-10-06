@@ -4,6 +4,7 @@ its own cache files (arch_id krea2drv - the cache layout differs from the origin
 Facts are the original trainer's (src/fizgig/krea2/trainer.py - removed with the original family on 30 Sep 2026, in git history - utils.py, sampling.py), cited per value.
 """
 from fizgig.families.description import (
+    GENERAL_NEGATIVE,
     FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA,
 )
 
@@ -90,11 +91,24 @@ KREA2 = FamilyDescription(
     precisions=("int8", "nf4", "bf16"),
     auto_precisions=("int8", "nf4"),
     compiles=True,
+    compile_hint=(
+    "Auto (recommended) turns torch.compile on only when this run is long enough to repay it. "
+    "It fuses the per-matmul quantise/dequantise work that bounds the INT8 and NF4 paths — "
+    "2.0× per step on INT8 (0.59 → 0.29 s/step, matching OneTrainer) and 1.28× on "
+    "NF4 (0.71 → 0.56) — but costs a ~90 s compile pause first, so a short run is SLOWER "
+    "overall. Break-even is around 600 steps on INT8, 1200 on NF4. NF4 + compile still fits a 16 GB "
+    "card (verified under a 13.5 GB cap). INT8 + compile fits from ~22 GB free: at high resolution "
+    "the checkpoint automatically moves outside the compiled region, which keeps memory at eager "
+    "levels (~18 GB at 1024px, measured ~27% faster than uncompiled). Requires Triton and, on "
+    "Windows, a C++ compiler (VS Build Tools) — both located automatically. Never used with "
+    "Blocks Swap, since swapping moves weights and compiled graphs assume they stay put."),
     preview_image=True,
     preview_checkpoint_sampling=SamplingSettings(
         "Turbo checkpoint", steps=8, cfg=1.0, sampler="euler", scheduler="simple", options=(("mu", 1.15),),
         note="The distilled Turbo: CFG-free, mu pinned at 1.15, as the original workbench.",
         source="the original Krea 2 workbench engine (removed with the original family)"),
+    int8_attention=True,              # workbench renders: comfy-kitchen's INT8 attention
+    activation_cache=True,            # Turbo Preview: step-1 replay, identical to a full render
     finetune=True,
     workbench=("repair", "explorer", "profiler", "extract", "royale"),
     # the text-fusion boosts (15 Sep 2026, #137): the four text-fusion blocks at x2 / x3, everything else untouched.
@@ -147,6 +161,7 @@ KREA2 = FamilyDescription(
     preview_speed_lora="Krea 2 Turbo LoRA (8-step)",
     preview_steps=8,
     preview_cfg=1.0,
+    preview_negative=GENERAL_NEGATIVE,
     preview_width=1024,
     preview_height=1024,
 
